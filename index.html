@@ -1,0 +1,967 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Noporogue</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&family=Press+Start+2P&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="kw-tooltip"></div>
+
+<!-- NAV BAR — sibling of root, always at top of page -->
+<div id="main-nav" style="display:none;">
+  <div class="nav-bar">
+    <div class="nav-left">
+      <div class="nav-title">NOPOROGUE</div>
+    </div>
+    <div class="nav-tabs">
+      <button class="nav-tab active" id="nav-adventure" onclick="navTo('adventure')">⚔ ADVENTURE</button>
+      <button class="nav-tab" id="nav-town" onclick="navToTown()">🏘 TOWN<span id="quest-badge"></span></button>
+    </div>
+    <div class="nav-right">
+      <div class="nav-gold" id="nav-gold">✦ 0</div>
+      <button id="btn-return-battle" onclick="returnToBattle()" style="display:none;font-family:'Cinzel',serif;font-size:9px;padding:3px 10px;background:rgba(80,30,10,.7);border:1px solid #c06020;color:#d4a843;border-radius:4px;cursor:pointer;letter-spacing:.5px;">⚔ RETURN TO BATTLE</button>
+      <button class="nav-icon-btn" onclick="openAchPanel()" title="Achievements" style="position:relative;">
+        <img src="assets/icons/achievements.png" style="width:24px;height:24px;image-rendering:pixelated;vertical-align:middle;" onerror="this.textContent='🏆';this.style.display='none'">🏆<span class="tab-badge" id="ach-badge" style="display:none;position:absolute;top:-2px;right:-2px;"><img src="assets/icons/alert.png" style="width:16px;height:16px;image-rendering:pixelated;" onerror="this.style.display='none'">0</span>
+      </button>
+      <button class="nav-icon-btn" onclick="openSettings()" title="Settings">⚙</button>
+    </div>
+  </div>
+</div>
+
+<!-- Town locked tooltip -->
+<div id="town-locked-tip" style="display:none;position:fixed;z-index:500;background:#160a02;border:1px solid #6a3010;border-radius:6px;padding:10px 14px;max-width:240px;font-size:10px;color:#c0a060;line-height:1.5;pointer-events:none;"></div>
+
+<div id="root">
+
+<!-- CHAMPION SELECT (adventure tab content) -->
+<div id="select-screen" class="screen active">
+  <div class="cs-header">
+    <div class="cs-title">CREATURES</div>
+    <div class="cs-controls">
+      <span class="cs-gold" id="cs-gold">✦ 0</span>
+      <select class="cs-sort" id="cs-sort" onchange="rebuildChampGrid()">
+        <option value="recent">Recently Unlocked</option>
+        <option value="level">Highest Level</option>
+        <option value="str">Highest STR</option>
+        <option value="agi">Highest AGI</option>
+        <option value="wis">Highest WIS</option>
+        <option value="kills">Most Kills</option>
+        <option value="alpha">Alphabetical</option>
+      </select>
+      <div class="cs-page-ctrl">
+        <button class="cs-page-btn" id="cs-prev" onclick="csChangePage(-1)">◀</button>
+        <span class="cs-page-lbl" id="cs-page-lbl">1 / 1</span>
+        <button class="cs-page-btn" id="cs-next" onclick="csChangePage(1)">▶</button>
+      </div>
+      <span class="cs-total" id="cs-total"></span>
+    </div>
+  </div>
+  <div class="champ-grid" id="champ-grid"></div>
+  <div class="select-btn-row">
+    <button class="btn btn-gold" onclick="confirmChampion()">SELECT CHAMPION →</button>
+  </div>
+</div>
+
+<!-- AREA SELECT -->
+<div id="area-screen" class="screen">
+  <div class="area-title">CHOOSE YOUR DESTINATION</div>
+  <div class="area-champ-row">
+    <span id="area-icon" class="area-champ-icon">🧙</span>
+    <span id="area-champ-nm" class="area-champ-nm">Champion</span>
+    <button class="area-champ-info-btn" onclick="openChampPanel()" title="Champion info">ℹ</button>
+  </div>
+  <div class="area-grid" id="area-grid"></div>
+  <div class="area-btns">
+    <button class="btn btn-dim" style="font-size:9px;padding:5px 12px;" onclick="goToSelect()">← BACK</button>
+    <button class="btn btn-gold" id="area-confirm-btn" onclick="confirmArea()" disabled>ENTER AREA →</button>
+  </div>
+</div>
+
+<!-- QUEST POPUP (shown in-battle instead of navigating away) -->
+<div id="quest-popup-backdrop" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:400;" onclick="closeQuestPopup()"></div>
+<div id="quest-popup" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:401;background:#0f0904;border:1px solid #5a3010;border-radius:10px;padding:18px 20px;min-width:260px;max-width:320px;">
+  <div style="font-family:'Cinzel',serif;font-size:11px;color:#d4a843;letter-spacing:1px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;">
+    <div style="display:flex;align-items:center;gap:6px;">
+      <img src="assets/icons/quest.png" style="width:20px;height:20px;image-rendering:pixelated;" onerror="this.style.display='none'">
+      ACTIVE QUEST
+    </div>
+    <button onclick="closeQuestPopup()" style="background:none;border:1px solid #3a2010;border-radius:4px;color:#7a6030;font-size:12px;cursor:pointer;padding:2px 7px;">✕</button>
+  </div>
+  <div id="qp-title" style="font-family:'Cinzel',serif;font-size:10px;color:#c09030;margin-bottom:6px;"></div>
+  <div id="qp-desc" style="font-size:9px;color:#806040;line-height:1.5;margin-bottom:10px;"></div>
+  <div style="height:3px;background:rgba(0,0,0,.5);border-radius:2px;overflow:hidden;margin-bottom:4px;">
+    <div id="qp-bar" style="height:100%;background:#c09030;border-radius:2px;transition:width .3s;width:0%;"></div>
+  </div>
+  <div id="qp-progress" style="font-size:8px;color:#5a4020;margin-bottom:12px;"></div>
+  <div id="qp-reward" style="font-size:9px;color:#7a9040;margin-bottom:12px;"></div>
+  <div style="display:flex;gap:8px;">
+    <button class="btn btn-dim" style="flex:1;font-size:9px;padding:5px;" onclick="closeQuestPopup()">CLOSE</button>
+    <button class="btn btn-gold" id="qp-claim-btn" style="flex:1;font-size:9px;padding:5px;display:none;" onclick="closeQuestPopupAndClaim()">CLAIM REWARD</button>
+  </div>
+</div>
+
+<!-- GAME -->
+<div id="game-screen" class="screen">
+
+  <!-- TOP BAR -->
+  <div class="top-bar">
+    <!-- Portrait + name + level -->
+    <div class="tb-portrait" id="top-portrait">🧙</div>
+    <div style="display:flex;flex-direction:column;justify-content:center;min-width:0;">
+      <div class="tb-name" id="top-name">Champion</div>
+      <div class="tb-lv" id="top-lv">Lv.1</div>
+      <div class="tb-xp"><div class="tb-xp-fill" id="xp-bar" style="width:0%"></div></div>
+    </div>
+    <div class="tb-divider"></div>
+    <!-- Stat pills -->
+    <div class="tb-stats">
+      <div class="tb-stat">
+        <div class="tb-stat-val str" id="ts-str">20</div>
+        <div class="tb-stat-lbl">STR</div>
+      </div>
+      <div class="tb-stat">
+        <div class="tb-stat-val agi" id="ts-agi">20</div>
+        <div class="tb-stat-lbl">AGI</div>
+      </div>
+      <div class="tb-stat">
+        <div class="tb-stat-val wis" id="ts-wis">20</div>
+        <div class="tb-stat-lbl">WIS</div>
+      </div>
+      <div class="tb-stat">
+        <div class="tb-stat-val deck" id="ts-deck">0/20</div>
+        <div class="tb-stat-lbl">DECK</div>
+      </div>
+    </div>
+    <div class="tb-divider"></div>
+    <!-- Right side: battle counter, gold, quest, controls -->
+    <div style="display:flex;align-items:center;gap:8px;margin-left:auto;flex-shrink:0;">
+      <div class="tb-battle" id="battle-counter">Battle 1 of 1</div>
+      <div class="tb-gold" id="gold-d">✦ 0</div>
+      <div id="quest-indicator" style="display:none;font-family:'Cinzel',serif;font-size:8px;color:#c09030;background:rgba(10,6,1,.85);border:1px solid #5a3010;border-radius:5px;padding:3px 8px;max-width:140px;cursor:pointer;flex-shrink:0;" onclick="openQuestPopup()">
+        <div style="display:flex;align-items:center;gap:4px;color:#6a4010;letter-spacing:.5px;margin-bottom:1px;white-space:nowrap;">
+          <img src="assets/icons/quest.png" style="width:14px;height:14px;image-rendering:pixelated;vertical-align:middle;" onerror="this.style.display='none'">
+          QUEST
+        </div>
+        <div id="quest-indicator-text" style="color:#c0a060;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px;"></div>
+        <div id="quest-indicator-progress" style="color:#7a6030;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px;"></div>
+      </div>
+      <div class="tb-divider"></div>
+      <button class="btn btn-dim" id="btn-pause" onclick="togglePause()" style="display:none;font-size:9px;padding:4px 10px;">PAUSE</button>
+      <button class="btn btn-dim" id="btn-deck-view" onclick="showDeckView()" style="display:none;font-size:9px;padding:4px 10px;">DECK</button>
+      <button class="btn btn-dim" onclick="openSettings()" style="font-size:9px;padding:4px 10px;" title="Settings">⚙</button>
+      <!-- Hidden btn-start — auto-modal triggered from startRun -->
+      <button id="btn-start" style="display:none;"></button>
+      <!-- Hidden innate-btn — actual innate is in player panel -->
+      <button id="innate-btn" style="display:none;" onclick="activateInnate()" disabled></button>
+    </div>
+  </div>
+
+  <!-- COMBAT BODY -->
+  <div class="combat-body">
+
+    <!-- LEFT SIDEBAR: Visual log (pop-out) -->
+    <div class="combat-log-sidebar" id="combat-log-sidebar">
+      <div class="log-tab" onclick="toggleCombatLog()">LOG</div>
+      <div class="log-feed" id="log-area"></div>
+    </div>
+
+    <!-- CENTRE: Combatants + bars -->
+    <div class="combat-centre">
+
+      <div class="combat-row">
+        <!-- PLAYER -->
+        <div class="combatant">
+          <div class="cname" id="p-name">Champion</div>
+          <div class="combatant-inner">
+            <div class="cicon-hp-col">
+              <span class="cicon" id="p-icon">🧙</span>
+              <div class="big-hp-wrap"><div class="big-hp-inner p" id="p-hp-bar" style="width:100%"></div></div>
+              <div class="hp-txt-big" id="p-hp-txt">20/20</div>
+            </div>
+          </div>
+          <!-- Mana bar -->
+          <div class="cbar-row">
+            <span class="cbar-lbl mana">MANA</span>
+            <div class="cbar-track"><div class="cbar-fill mana" id="mana-bar2" style="width:0%"></div></div>
+            <span class="cbar-val" id="mana-val">0/80</span>
+          </div>
+          <!-- Draw bar -->
+          <div class="cbar-row">
+            <span class="cbar-lbl draw">DRAW</span>
+            <div class="cbar-track"><div class="cbar-fill draw" id="draw-bar" style="width:0%"></div></div>
+            <span class="cbar-val" style="color:#6a4010;" id="draw-eta-val"></span>
+          </div>
+          <div class="status-tags" id="p-tags"></div>
+        </div>
+
+        <!-- ENEMY -->
+        <div class="combatant">
+          <div class="cname" id="e-name">Enemy</div>
+          <div class="combatant-inner">
+            <div class="cicon-hp-col">
+              <span class="cicon" id="e-icon">👺</span>
+              <div class="big-hp-wrap"><div class="big-hp-inner e" id="e-hp-bar" style="width:100%"></div></div>
+              <div class="hp-txt-big" id="e-hp-txt">8/8</div>
+            </div>
+          </div>
+          <!-- Enemy draw bar -->
+          <div class="cbar-row">
+            <span class="cbar-lbl draw">DRAW</span>
+            <div class="cbar-track"><div class="cbar-fill draw" id="e-draw-bar" style="width:100%;background:linear-gradient(90deg,#4a1a04,#a04010);"></div></div>
+            <span class="cbar-val" style="color:#6a3818;" id="enemy-eta"></span>
+          </div>
+          <!-- Enemy stats -->
+          <div id="e-stats-row" style="display:flex;gap:10px;justify-content:center;padding-top:2px;">
+            <div style="text-align:center;"><div class="v str" id="e-str" style="font-size:14px;">—</div><div style="font-size:7px;color:#7a6030;">STR</div></div>
+            <div style="text-align:center;"><div class="v agi" id="e-agi" style="font-size:14px;">—</div><div style="font-size:7px;color:#7a6030;">AGI</div></div>
+            <div style="text-align:center;"><div class="v wis" id="e-wis" style="font-size:14px;">—</div><div style="font-size:7px;color:#7a6030;">WIS</div></div>
+          </div>
+          <div class="status-tags" id="e-tags"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- HAND AREA -->
+  <div class="hand-area">
+    <div id="kb-hints" style="display:none;text-align:center;font-size:8px;color:#2a1808;letter-spacing:.5px;font-family:'Cinzel',serif;padding:2px 0;flex-shrink:0;">
+      [1–7] play &nbsp;·&nbsp; [←→] select &nbsp;·&nbsp; [Enter] confirm &nbsp;·&nbsp; [Space] innate &nbsp;·&nbsp; [P] pause &nbsp;·&nbsp; [D] deck &nbsp;·&nbsp; [Esc] close
+    </div>
+    <div class="hand-piles-row">
+      <!-- Innate card — always visible left of hand -->
+      <div id="innate-card" class="innate-card" onclick="activateInnate()">
+        <div class="innate-card-label">INNATE</div>
+        <div class="innate-card-art" id="innate-card-art">⚡</div>
+        <div class="innate-card-name" id="innate-card-name">—</div>
+        <div class="innate-card-desc" id="innate-card-desc"></div>
+        <div id="innate-passive-lbl" class="innate-card-passive-lbl" style="display:none;">PASSIVE</div>
+        <div id="innate-mana-track" class="innate-mana-track" style="display:none;">
+          <div class="innate-mana-fill" id="innate-mana-fill" style="width:0%"></div>
+          <div class="innate-mana-lbl" id="innate-mana-lbl">0 / 0</div>
+        </div>
+      </div>
+
+      <!-- Hand fan -->
+      <div style="text-align:center;flex:1;min-width:0;">
+        <div class="hand-meta">HAND — <span id="hand-cnt">0</span>/7</div>
+        <div class="hand-cards" id="hand-cards"></div>
+      </div>
+
+      <!-- Deck pile -->
+      <div style="display:flex;flex-direction:column;gap:6px;align-items:center;">
+        <div class="pile" onclick="openPilePopup('deck')">
+          <div class="pile-lbl">DECK</div>
+          <div class="pile-cnt" id="deck-cnt">0</div>
+          <div class="pile-hint">tap</div>
+        </div>
+        <div class="pile" onclick="openPilePopup('discard')">
+          <div class="pile-lbl">DISCARD</div>
+          <div class="pile-cnt" id="disc-cnt">0</div>
+          <div id="disc-hint-icon" style="font-size:20px;line-height:1;opacity:.6;"></div>
+          <div class="pile-hint">tap</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- legacy refs -->
+  <div class="battle-zone" style="display:none;"></div>
+  <div class="log-area-legacy" style="display:none;"></div>
+  <div class="res-row" style="display:none;"><div class="res-lbl mana"></div><div class="res-bar-wrap"><div class="res-bar-inner manabar" id="mana-bar2-legacy"></div></div><div class="res-val" id="mana-val-legacy"></div></div>
+
+</div>
+
+<!-- DECK VIEW -->
+<div id="deck-screen" class="screen">
+  <div class="dv-title">YOUR DECK</div>
+  <div class="dv-grid" id="dv-grid"></div>
+  <div class="dv-btns">
+    <button class="btn btn-gold" onclick="continueDeckView()">CONTINUE →</button>
+  </div>
+</div>
+
+<!-- TOWN -->
+<div id="town-screen" class="screen">
+  <div class="town-header">
+    <div style="flex:1;text-align:center;">
+      <div class="town-title">THE TOWN</div>
+      <div class="town-subtitle" id="town-subtitle">Your settlement grows...</div>
+    </div>
+    <div class="town-gold" id="town-gold">✦ 0</div>
+  </div>
+  <div class="town-cards-strip" id="town-cards-strip"></div>
+  <div id="town-summons-banner" style="display:none;flex-shrink:0;"></div>
+  <div class="town-grid" id="town-grid"></div>
+  <!-- Vault panel (popup) -->
+  <div class="town-panel-bg" id="vault-panel-bg" onclick="closeVaultPanel()">
+    <div class="vault-panel-main" onclick="event.stopPropagation()">
+
+      <!-- Header: title + gem slot -->
+      <div class="vault-header">
+        <div class="town-panel-icon">📦</div>
+        <div style="flex:1;">
+          <div class="town-panel-name">THE VAULT</div>
+          <div class="town-panel-sub" id="vault-cap-txt">Your inventory</div>
+        </div>
+        <div class="vault-slot-wrap">
+          <div class="tp-section-label" style="margin-bottom:3px;font-size:7px;text-align:center;">GEM SLOT</div>
+          <div class="building-slot" id="vault-slot"
+            ondragover="event.preventDefault();this.classList.add('drag-over')"
+            ondragleave="this.classList.remove('drag-over')"
+            ondrop="onBuildingDrop(event,'vault')"
+            onclick="onVaultSlotClick()"></div>
+          <div id="vault-slot-hint" style="font-size:7px;color:#5a4020;margin-top:2px;text-align:center;max-width:70px;"></div>
+        </div>
+        <button class="ach-close-btn" onclick="closeVaultPanel()">✕</button><button class="tut-help-btn" onclick="showBuildingTutorial('vault')" title="Help">?</button>
+      </div>
+
+      <!-- Generator bar row — only shows when gem slotted -->
+      <div id="vault-gen-wrap" style="display:none;padding:6px 14px;background:rgba(6,3,1,.6);border-bottom:1px solid #1e1006;flex-shrink:0;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="font-family:'Cinzel',serif;font-size:7px;color:#6a5020;letter-spacing:1px;white-space:nowrap;">GENERATING</span>
+          <div style="flex:1;height:6px;background:rgba(0,0,0,.5);border-radius:3px;overflow:hidden;">
+            <div id="vault-gen-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#3a2808,#c09030);border-radius:3px;transition:width .5s;"></div>
+          </div>
+          <span id="vault-gen-tier" style="font-size:7px;color:#5a4020;white-space:nowrap;"></span>
+        </div>
+      </div>
+
+      <!-- Vault XP level bar -->
+      <div class="vault-level-row">
+        <span class="vault-level-badge" id="vault-level-badge">VAULT Lv.1</span>
+        <div class="vault-xp-wrap"><div class="vault-xp-bar" id="vault-xp-bar" style="width:0%"></div></div>
+        <span class="vault-xp-txt" id="vault-xp-txt"></span>
+      </div>
+
+      <!-- Body: full-width inventory grid -->
+      <div class="vault-body">
+        <div class="vault-grid-col">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px;gap:6px;">
+            <div class="tp-section-label" style="margin-bottom:0;white-space:nowrap;">INVENTORY</div>
+            <div style="display:flex;align-items:center;gap:4px;flex:1;justify-content:flex-end;">
+              <select id="vault-sort-bar" onchange="_vaultPage=0;refreshVaultPanel()" style="background:#0e0802;border:1px solid #3a2010;border-radius:4px;color:#8a6030;font-size:8px;padding:2px 6px;font-family:'Cinzel',serif;cursor:pointer;">
+                <option value="cat">By Type</option>
+                <option value="name">A–Z</option>
+                <option value="count">By Quantity</option>
+                <option value="type">By Category</option>
+              </select>
+              <button id="vault-pg-prev" onclick="vaultPageChange(-1)" style="background:none;border:1px solid #2a1808;border-radius:3px;color:#6a5020;font-size:10px;width:20px;height:20px;cursor:pointer;line-height:1;padding:0;">◀</button>
+              <span id="vault-pg-lbl" style="font-family:'Cinzel',serif;font-size:8px;color:#5a4020;white-space:nowrap;">1/1</span>
+              <button id="vault-pg-next" onclick="vaultPageChange(1)" style="background:none;border:1px solid #2a1808;border-radius:3px;color:#6a5020;font-size:10px;width:20px;height:20px;cursor:pointer;line-height:1;padding:0;">▶</button>
+            </div>
+          </div>
+          <div id="vault-inv-grid" class="vault-inv-grid"></div>
+          <div id="vault-gem-shards-row" class="vault-frags-row"></div>
+        </div>
+        <!-- Inspector drawer — slides in at bottom when item selected -->
+        <div class="vault-inspector-drawer" id="vault-inspector">
+          <div class="vi-row">
+            <div class="vi-icon" id="vi-icon">📦</div>
+            <div class="vi-main" id="vi-main"></div>
+            <button onclick="clearVaultInspector()" style="align-self:flex-start;background:none;border:none;color:#5a4020;font-size:14px;cursor:pointer;padding:0 0 0 8px;line-height:1;">✕</button>
+          </div>
+          <div class="vi-actions" id="vi-actions"></div>
+        </div>
+      </div>
+
+      <!-- Upgrades -->
+      <div class="vault-upgrades-section">
+        <div class="tp-section-label">UPGRADES</div>
+        <div class="vault-upg-grid" id="vault-upg-grid"></div>
+      </div>
+
+      <div id="vault-locked-msg" style="display:none;padding:20px;text-align:center;"></div>
+    </div>
+  </div>
+
+  <!-- Forge panel -->
+  <div class="town-panel-bg" id="forge-panel-bg" onclick="closeBuildingPanel('forge')">
+    <div class="town-panel" onclick="event.stopPropagation()">
+      <div class="town-panel-header">
+        <div class="town-panel-icon">🔨</div>
+        <div style="flex:1;">
+          <div class="town-panel-name">THE FORGE</div>
+          <div class="town-panel-sub">Upgrade cards through tiers: Base → Red → Green → Blue</div>
+        </div>
+        <button class="ach-close-btn" onclick="closeBuildingPanel('forge')">✕</button><button class="tut-help-btn" onclick="showBuildingTutorial('forge')" title="Help">?</button>
+      </div>
+      <div class="town-locked-msg" id="forge-locked-msg" style="display:none;"></div>
+      <div id="forge-inner">
+        <div class="town-panel-slot-row">
+          <div class="tp-section-label">GEM SLOT</div>
+          <div class="building-slot" id="forge-slot" onclick="onBuildingSlotClick('forge')"></div>
+          <div class="tp-slot-hint" id="forge-slot-hint">Slot a gem to boost the Forge</div>
+        </div>
+        <div class="tp-section-label">UPGRADE QUEUE</div>
+        <div id="forge-queue" class="forge-queue"></div>
+        <div class="tp-section-label" style="margin-top:10px;">MATERIALS</div>
+        <div class="forge-mat-row" id="forge-mats"></div>
+        <div class="tp-section-label" style="margin-top:10px;">UPGRADE A CARD</div>
+        <div class="forge-upgrade-targets" id="forge-targets"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Shrine panel -->
+  <div class="town-panel-bg" id="shrine-panel-bg" onclick="closeBuildingPanel('shrine')">
+    <div class="town-panel" onclick="event.stopPropagation()">
+      <div class="town-panel-header">
+        <div class="town-panel-icon">🏮</div>
+        <div style="flex:1;">
+          <div class="town-panel-name">THE SHRINE</div>
+          <div class="town-panel-sub">Grants your champion a blessing at the start of each run</div>
+        </div>
+        <button class="ach-close-btn" onclick="closeBuildingPanel('shrine')">✕</button><button class="tut-help-btn" onclick="showBuildingTutorial('shrine')" title="Help">?</button>
+      </div>
+      <div class="town-locked-msg" id="shrine-locked-msg" style="display:none;"></div>
+      <div id="shrine-inner">
+        <div class="town-panel-slot-row">
+          <div class="tp-section-label">GEM SLOT</div>
+          <div class="building-slot" id="shrine-slot" onclick="onBuildingSlotClick('shrine')"></div>
+          <div class="tp-slot-hint" id="shrine-slot-hint">Slot a gem to enhance blessings</div>
+        </div>
+        <div class="tp-section-label">ACTIVE BLESSING</div>
+        <div id="shrine-blessing-display" class="shrine-bless-display"></div>
+        <div class="tp-section-label" style="margin-top:10px;">CHOOSE A BLESSING</div>
+        <div id="shrine-blessing-list" class="shrine-bless-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bestiary panel -->
+  <div class="town-panel-bg" id="bestiary-panel-bg" onclick="closeBuildingPanel('bestiary')">
+    <div class="town-panel town-panel-bestiary" onclick="event.stopPropagation()">
+      <div class="town-panel-header">
+        <div class="town-panel-icon">📖</div>
+        <div style="flex:1;">
+          <div class="town-panel-name">THE BESTIARY</div>
+          <div class="town-panel-sub" id="bestiary-sub">Records of every creature and location</div>
+        </div>
+        <button class="ach-close-btn" onclick="closeBuildingPanel('bestiary')">✕</button><button class="tut-help-btn" onclick="showBuildingTutorial('bestiary')" title="Help">?</button>
+      </div>
+      <div class="town-locked-msg" id="bestiary-locked-msg" style="display:none;"></div>
+      <div id="bestiary-inner" style="display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;">
+        <div class="bestiary-top-bar">
+          <div class="town-panel-slot-row" style="margin:0;flex:1;">
+            <div class="tp-section-label">GEM SLOT</div>
+            <div class="building-slot" id="bestiary-slot"
+              ondragover="event.preventDefault();this.classList.add('drag-over')"
+              ondragleave="this.classList.remove('drag-over')"
+              ondrop="onBuildingDrop(event,'bestiary')"
+              onclick="onBuildingSlotClick('bestiary')"></div>
+            <div class="tp-slot-hint" id="bestiary-slot-hint">Slot a card to enable passive research</div>
+          </div>
+          <div class="bestiary-tab-row">
+            <button class="bestiary-tab active" id="btab-creatures" onclick="setBestiaryTab('creatures')"><img src="assets/icons/beastiary_creatures.png" class="bestiary-tab-icon" onerror="this.style.display='none'">🦎 CREATURES</button>
+            <button class="bestiary-tab" id="btab-locations" onclick="setBestiaryTab('locations')"><img src="assets/icons/beastiary_locations.png" class="bestiary-tab-icon" onerror="this.style.display='none'">🗺 LOCATIONS</button>
+            <button class="bestiary-tab" id="btab-glossary" onclick="setBestiaryTab('glossary')"><img src="assets/icons/beastiary_glossary.png" class="bestiary-tab-icon" onerror="this.style.display='none'">📖 GLOSSARY</button>
+          </div>
+        </div>
+        <div id="bestiary-creatures-pane" class="bestiary-creatures-layout">
+          <div class="bestiary-creature-grid" id="bestiary-creature-grid"></div>
+          <div class="bc-detail-panel" id="bc-detail-panel">
+            <div class="bc-empty-detail">Select a creature<br>to view its record</div>
+          </div>
+        </div>
+        <div id="bestiary-locations-pane" class="bestiary-pane" style="display:none;max-height:62vh;">
+          <div class="bestiary-location-grid" id="bestiary-location-grid"></div>
+        </div>
+        <div id="bestiary-glossary-pane" class="bestiary-pane" style="display:none;max-height:62vh;">
+          <div id="bestiary-glossary-grid"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+  <!-- Sanctum panel -->
+  <div class="town-panel-bg" id="sanctum-panel-bg" onclick="closeBuildingPanel('sanctum')">
+    <div class="sanctum-panel" onclick="event.stopPropagation()">
+      <!-- Header -->
+      <div class="sanctum-header">
+        <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;">
+          <span style="font-size:22px;">⚗️</span>
+          <div>
+            <div class="town-panel-name">THE SANCTUM</div>
+            <div class="town-panel-sub">Customise starting decks between runs</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;">
+          <div style="text-align:right;">
+            <div style="font-family:'Cinzel',serif;font-size:10px;color:#d4a843;">🃏 <span id="sanctum-frag-count">0</span> Fragments</div>
+            <div style="font-size:7px;color:#5a4020;margin-top:1px;">earned from chests &amp; quests</div>
+          </div>
+          <div class="building-slot" id="sanctum-slot"
+            onclick="onBuildingSlotClick('sanctum')"
+            ondragover="event.preventDefault();this.classList.add('drag-over')"
+            ondragleave="this.classList.remove('drag-over')"
+            ondrop="onBuildingDrop(event,'sanctum')">
+            <span style="color:#3a2810;font-size:18px;">+</span>
+          </div>
+        </div>
+        <button class="ach-close-btn" onclick="closeBuildingPanel('sanctum')" style="margin-left:6px;">✕</button><button class="tut-help-btn" onclick="showBuildingTutorial('sanctum')" title="Help">?</button>
+      </div>
+      <div class="town-locked-msg" id="sanctum-locked-msg" style="display:none;padding:20px;text-align:center;"></div>
+      <div id="sanctum-inner" style="display:flex;flex:1;overflow:hidden;min-height:0;">
+        <!-- Left: champion list -->
+        <div class="sanctum-champ-col">
+          <div class="tp-section-label" style="margin-bottom:6px;">CHAMPIONS</div>
+          <div id="sanctum-champ-tabs" style="display:flex;flex-direction:column;gap:4px;"></div>
+        </div>
+        <!-- Right: tabs + content -->
+        <div class="sanctum-content-col">
+          <!-- Sub-tabs -->
+          <div style="display:flex;gap:4px;margin-bottom:10px;border-bottom:1px solid #1e1006;padding-bottom:8px;">
+            <button class="sanctum-tab active" id="stab-overview"  onclick="setSanctumTab('overview')">👤 Overview</button>
+            <button class="sanctum-tab"        id="stab-deck"      onclick="setSanctumTab('deck')">🃏 Deck</button>
+            <button class="sanctum-tab"        id="stab-upgrades"  onclick="setSanctumTab('upgrades')">⬆ Upgrades</button>
+            <button class="sanctum-tab"        id="stab-training"  onclick="setSanctumTab('training')">🏆 Training</button>
+          </div>
+          <div id="sanctum-overview-pane" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;">
+            <div id="sanctum-overview-body"></div>
+          </div>
+          <div id="sanctum-deck-pane" style="display:none;overflow-y:auto;flex:1;flex-direction:column;">
+            <div id="sanctum-deck-grid"></div>
+          </div>
+          <div id="sanctum-upgrades-pane" style="display:none;overflow-y:auto;flex:1;">
+            <div id="sanctum-upgrades-list"></div>
+          </div>
+          <div id="sanctum-training-pane" style="display:none;overflow-y:auto;flex:1;">
+            <div id="sanctum-training-list"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Market panel -->
+  <div class="town-panel-bg" id="market-panel-bg" onclick="closeBuildingPanel('market')">
+    <div class="town-panel town-panel-wide" onclick="event.stopPropagation()">
+      <div class="town-panel-header">
+        <div class="town-panel-icon">🛒</div>
+        <div style="flex:1;">
+          <div class="town-panel-name">THE MARKET</div>
+          <div class="town-panel-sub">Stock refreshes over time · Prices rise with each purchase</div>
+        </div>
+        <span class="market-gold-val" id="market-gold-val" style="margin-right:10px;">✦ 0</span>
+        <button class="ach-close-btn" onclick="closeBuildingPanel('market')">✕</button><button class="tut-help-btn" onclick="showBuildingTutorial('market')" title="Help">?</button>
+      </div>
+      <div class="town-locked-msg" id="market-locked-msg" style="display:none;"></div>
+      <div id="market-inner" style="overflow-y:auto;max-height:72vh;padding:10px 14px;">
+        <div class="town-panel-slot-row">
+          <div class="tp-section-label">GEM SLOT</div>
+          <div class="building-slot" id="market-slot"
+            ondragover="event.preventDefault();this.classList.add('drag-over')"
+            ondragleave="this.classList.remove('drag-over')"
+            ondrop="onBuildingDrop(event,'market')"
+            onclick="onBuildingSlotClick('market')"></div>
+          <div class="tp-slot-hint" id="market-slot-hint">Slot a card to activate</div>
+        </div>
+        <!-- STOCK section -->
+        <div class="market-section-hdr">
+          <span class="tp-section-label">STOCK</span>
+          <div class="market-mini-refresh-wrap"><div class="market-mini-bar" id="market-stock-bar" style="width:0%"></div></div>
+          <span class="market-mini-eta" id="market-stock-eta">—</span>
+        </div>
+        <div class="market-offers-grid" id="market-stock-grid"></div>
+        <!-- DEALS section -->
+        <div class="market-section-hdr" style="margin-top:12px;">
+          <span class="tp-section-label">DEALS</span>
+          <div class="market-mini-refresh-wrap"><div class="market-mini-bar" id="market-deals-bar" style="width:0%"></div></div>
+          <span class="market-mini-eta" id="market-deals-eta">—</span>
+        </div>
+        <div class="market-offers-grid" id="market-deals-grid"></div>
+        <!-- RARE section -->
+        <div class="market-section-hdr" style="margin-top:12px;">
+          <span class="tp-section-label" style="color:#a080d0;">RARE FIND</span>
+          <div class="market-mini-refresh-wrap"><div class="market-mini-bar" id="market-rare-bar" style="width:0%;background:linear-gradient(90deg,#4a1870,#a060e0);"></div></div>
+          <span class="market-mini-eta" id="market-rare-eta">—</span>
+        </div>
+        <div class="market-offers-grid" id="market-rare-grid"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- BEGIN BATTLE MODAL -->
+<div id="begin-battle-modal" style="display:none;position:fixed;inset:0;z-index:500;background:rgba(0,0,0,.75);align-items:center;justify-content:center;">
+  <div style="background:#0e0802;border:1px solid #6a4010;border-radius:12px;padding:24px 28px;min-width:280px;max-width:400px;width:90%;text-align:center;box-shadow:0 0 60px rgba(0,0,0,.9);animation:tut-slidein .2s ease-out;">
+    <div style="margin-bottom:10px;display:flex;align-items:center;justify-content:center;" id="bbm-enemy-icon">👺</div>
+    <div style="font-family:'Cinzel',serif;font-size:14px;color:#d4a843;letter-spacing:2px;margin-bottom:4px;" id="bbm-enemy-name">Enemy</div>
+    <div style="font-size:9px;color:#5a4020;margin-bottom:14px;" id="bbm-enemy-desc"></div>
+    <div style="display:flex;justify-content:center;gap:12px;margin-bottom:16px;" id="bbm-enemy-stats"></div>
+    <div style="background:rgba(80,40,0,.15);border:1px solid #3a2010;border-radius:6px;padding:8px 12px;margin-bottom:16px;text-align:left;" id="bbm-innate-block" style="display:none;">
+      <div style="font-size:8px;color:#c09030;font-family:'Cinzel',serif;margin-bottom:3px;" id="bbm-innate-name"></div>
+      <div style="font-size:8px;color:#806040;line-height:1.5;" id="bbm-innate-desc"></div>
+    </div>
+    <button class="btn btn-gold" style="width:100%;font-size:13px;padding:12px;" onclick="beginBattleFromModal()">⚔ BEGIN BATTLE</button>
+    <button class="btn btn-dim" style="width:100%;font-size:9px;padding:6px;margin-top:6px;" onclick="showDeckView()">View Deck First</button>
+  </div>
+</div>
+
+<!-- TUTORIAL OVERLAY -->
+<div id="tutorial-overlay" style="display:none;position:fixed;inset:0;z-index:600;background:rgba(0,0,0,.7);align-items:flex-end;justify-content:center;padding-bottom:0;">
+  <div id="tutorial-panel" style="background:#0e0802;border:1px solid #6a4010;border-top-left-radius:12px;border-top-right-radius:12px;width:100%;max-width:660px;padding:18px 20px 20px;position:relative;animation:tut-slidein .25s ease-out;">
+    <div style="display:flex;align-items:flex-start;gap:12px;">
+      <div id="tut-icon" style="font-size:32px;flex-shrink:0;line-height:1;"></div>
+      <div style="flex:1;min-width:0;">
+        <div id="tut-title" style="font-family:'Cinzel',serif;font-size:13px;color:#d4a843;letter-spacing:1px;margin-bottom:6px;"></div>
+        <div id="tut-body" style="font-size:10px;color:#a08060;line-height:1.7;"></div>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end;align-items:center;">
+      <span id="tut-step" style="font-size:8px;color:#4a3010;flex:1;font-family:'Cinzel',serif;"></span>
+      <button onclick="dismissTutorial()" style="font-family:'Cinzel',serif;font-size:9px;padding:6px 14px;border-radius:4px;border:1px solid #3a2010;background:transparent;color:#5a4020;cursor:pointer;">Dismiss</button>
+      <button onclick="dismissAllTutorials()" style="font-family:'Cinzel',serif;font-size:9px;padding:6px 14px;border-radius:4px;border:1px solid #2a1808;background:transparent;color:#3a2010;cursor:pointer;">Disable All Tips</button>
+      <button id="tut-next-btn" onclick="tutorialNext()" style="font-family:'Cinzel',serif;font-size:9px;padding:6px 18px;border-radius:4px;border:1px solid #c09030;background:rgba(30,18,4,.8);color:#d4a843;cursor:pointer;display:none;">Next →</button>
+    </div>
+  </div>
+</div>
+
+<div id="creature-tuner" style="display:none;position:fixed;bottom:16px;right:16px;z-index:9999;background:rgba(10,6,1,.95);border:1px solid #6a4010;border-radius:8px;padding:10px 14px;font-family:'Cinzel',serif;font-size:10px;color:#d4a843;min-width:200px;box-shadow:0 4px 20px rgba(0,0,0,.8);">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+    <span style="letter-spacing:1px;">CREATURE SIZE</span>
+    <button onclick="document.getElementById('creature-tuner').style.display='none'" style="background:none;border:none;color:#5a4020;cursor:pointer;font-size:14px;padding:0 2px;">✕</button>
+  </div>
+  <div style="display:flex;align-items:center;gap:8px;">
+    <input type="range" id="creature-size-slider" min="40" max="320" value="200" step="4"
+      oninput="updateCreatureSize(this.value)"
+      style="flex:1;accent-color:#c09030;">
+    <span id="creature-size-val" style="color:#c09030;min-width:36px;text-align:right;">200px</span>
+  </div>
+  <div style="font-size:7px;color:#4a3010;margin-top:6px;letter-spacing:.5px;">applies to combat + modal portraits</div>
+</div>
+
+<!-- CHEST OPENING OVERLAY -->
+<div id="chest-overlay" style="display:none;position:fixed;inset:0;z-index:400;background:rgba(4,2,0,.96);flex-direction:column;align-items:center;justify-content:center;gap:0;">
+  <div style="font-family:'Cinzel',serif;font-size:12px;color:#7a6030;letter-spacing:4px;margin-bottom:24px;" id="chest-ov-label">OPENING CHEST</div>
+  <div class="chest-ov-icon" id="chest-ov-icon">📦</div>
+  <div class="chest-loot-list" id="chest-loot-list"></div>
+  <button class="btn btn-gold" id="chest-ov-btn" style="display:none;margin-top:20px;font-size:13px;padding:12px 30px;" onclick="closeChestOverlay()">COLLECT LOOT ✦</button>
+</div>
+
+<!-- PILE POPUP -->
+<div class="popup-bg" id="pile-popup" onclick="closePilePopup(event)">
+  <div class="popup-box" onclick="event.stopPropagation()">
+    <div class="popup-title" id="popup-title">DECK</div>
+    <div class="popup-grid" id="popup-grid"></div>
+    <div class="popup-close" onclick="closePilePopup(null)">— CLOSE —</div>
+  </div>
+</div>
+
+<!-- OVERLAYS -->
+<div id="defeat-overlay" style="display:none;position:fixed;inset:0;z-index:150;pointer-events:none;">
+  <div class="defeat-panel">
+    <div class="ov-title defeat">✦ DEFEATED ✦</div>
+    <div class="ov-sub" id="defeat-sub">Lost 10 gold.</div>
+    <div class="defeat-log-hint">↓ Combat log below — review what happened</div>
+    <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;pointer-events:all;">
+      <button class="btn btn-gold" onclick="retryBattle()">RALLY & RETRY</button>
+      <button class="btn btn-dim" onclick="goToHub()">CHANGE CHAMPION</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="victory-overlay">
+  <div class="ov-title victory">✦ VICTORY ✦</div>
+  <div class="ov-sub" id="victory-sub">Enemy defeated!</div>
+  <div class="reward-layout">
+    <div class="reward-box" id="reward-box">
+      <div class="reward-section-title" id="reward-section-title">CHOOSE ONE REWARD</div>
+      <div class="reward-row" id="reward-all-row"></div>
+      <div class="reward-actions" id="reward-actions">
+        <button class="btn btn-dim" style="font-size:10px;" onclick="openDeckPopup()">VIEW DECK</button>
+        <button class="btn btn-dim" style="font-size:10px;" onclick="skipAll()">SKIP</button>
+      </div>
+      <div class="reward-countdown-lbl" id="reward-countdown-lbl"></div>
+      <div class="reward-countdown-wrap"><div class="reward-countdown-bar" id="reward-countdown-bar"></div></div>
+    </div>
+    <div class="next-enemy-box" id="next-enemy-box"></div>
+  </div>
+</div>
+
+<!-- SPOILS CARD PICK -->
+<div id="spoils-overlay" style="display:none;position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.82);align-items:center;justify-content:center;">
+  <div style="background:rgba(10,6,1,.97);border:1px solid #7a5010;border-radius:12px;padding:22px 26px;max-width:480px;width:95%;text-align:center;box-shadow:0 0 40px rgba(0,0,0,.9);">
+    <div style="font-family:'Cinzel',serif;font-size:11px;color:#d4a843;letter-spacing:3px;margin-bottom:4px;">SPOILS OF WAR</div>
+    <div style="font-size:9px;color:#5a4020;margin-bottom:18px;letter-spacing:.5px;">Resources earned from your victory</div>
+    <div id="spoils-rewards-row" style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-bottom:20px;"></div>
+    <div id="spoils-card-earned" style="display:none;margin-bottom:16px;padding:12px;background:rgba(20,10,0,.6);border:1px solid #3a2010;border-radius:8px;">
+      <div style="font-size:8px;color:#7a6030;letter-spacing:1px;margin-bottom:8px;font-family:'Cinzel',serif;">CARD ADDED TO SANCTUM COLLECTION</div>
+      <div id="spoils-card-inner" style="display:flex;align-items:center;justify-content:center;gap:10px;"></div>
+    </div>
+    <button class="btn btn-gold" style="font-size:10px;padding:10px 28px;" onclick="closeSpoilsOverlay()">COLLECT ✦</button>
+  </div>
+</div>
+
+<div id="gold-toast" style="display:none;position:fixed;inset:0;z-index:170;align-items:center;justify-content:center;">
+  <div id="gold-toast-inner" style="background:rgba(10,6,1,.96);border:1px solid #7a5010;border-radius:10px;padding:16px 24px;text-align:center;min-width:240px;max-width:300px;box-shadow:0 0 30px rgba(0,0,0,.8);animation:lu-toast-in .25s ease-out;">
+    <div style="font-family:'Cinzel',serif;font-size:9px;color:#5a4020;letter-spacing:1px;margin-bottom:8px;">ENEMY DEFEATED</div>
+    <div id="gold-toast-amount" style="font-size:26px;color:#d4a843;letter-spacing:2px;font-family:'Cinzel',serif;margin-bottom:2px;">+5 ✦</div>
+    <div style="font-size:8px;color:#5a4020;margin-bottom:12px;">GOLD COLLECTED</div>
+    <div id="gold-toast-next-wrap" style="border-top:1px solid #2a1808;padding-top:10px;margin-bottom:12px;">
+      <div style="font-size:8px;color:#5a4020;font-family:'Cinzel',serif;letter-spacing:.5px;margin-bottom:5px;">NEXT BATTLE</div>
+      <div id="gold-toast-next-icon" style="font-size:22px;margin-bottom:3px;">👺</div>
+      <div id="gold-toast-next" style="font-size:10px;color:#c0a060;font-family:'Cinzel',serif;"></div>
+      <div id="gold-toast-next-hp" style="font-size:8px;color:#5a4020;margin-top:2px;"></div>
+    </div>
+    <div style="height:3px;background:rgba(0,0,0,.4);border-radius:3px;overflow:hidden;">
+      <div id="gold-toast-bar" style="height:100%;width:100%;background:#c09030;border-radius:3px;transition:width .1s linear;"></div>
+    </div>
+    <div id="gold-toast-lbl" style="font-size:8px;color:#5a4020;font-family:'Cinzel',serif;margin-top:5px;letter-spacing:.3px;">Continuing in 3s...</div>
+  </div>
+</div>
+
+<div id="levelup-toast" style="display:none;position:fixed;top:54px;left:50%;transform:translateX(-50%);z-index:160;pointer-events:none;">
+  <div class="lu-toast-box">
+    <div class="lu-toast-title" id="lu-toast-title">LEVEL UP!</div>
+    <div class="lu-toast-stats" id="lu-toast-stats"></div>
+  </div>
+</div>
+
+<!-- ADVENTURER'S BOARD PANEL -->
+<div class="town-panel-bg" id="board-panel-bg" onclick="closeBuildingPanel('board')">
+  <div class="town-panel" onclick="event.stopPropagation()">
+    <div class="town-panel-header">
+      <div class="town-panel-icon">📋</div>
+      <div style="flex:1;">
+        <div class="town-panel-name">ADVENTURER'S BOARD</div>
+        <div class="town-panel-sub">Take on quests for gold, gem shards, and glory</div>
+      </div>
+      <button class="ach-close-btn" onclick="closeBuildingPanel('board')">✕</button><button class="tut-help-btn" onclick="showBuildingTutorial('board')" title="Help">?</button>
+    </div>
+    <div class="town-locked-msg" id="board-locked-msg" style="display:none;"></div>
+    <div id="board-inner">
+      <div id="board-panel" style="padding:12px 14px;overflow-y:auto;max-height:480px;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- SHARD WELL PANEL -->
+<div class="town-panel-bg" id="shard_well-panel-bg" onclick="closeBuildingPanel('shard_well')">
+  <div class="town-panel" onclick="event.stopPropagation()">
+    <div class="town-panel-header">
+      <div class="town-panel-icon">🔮</div>
+      <div style="flex:1;">
+        <div class="town-panel-name">THE SHARD WELL</div>
+        <div class="town-panel-sub">Passively generates Gem Shards over time</div>
+      </div>
+      <button class="ach-close-btn" onclick="closeBuildingPanel('shard_well')">✕</button><button class="tut-help-btn" onclick="showBuildingTutorial('shard_well')" title="Help">?</button>
+    </div>
+    <div class="town-locked-msg" id="shard_well-locked-msg" style="display:none;"></div>
+    <div id="shard_well-inner">
+      <div class="town-panel-slot-row">
+        <div class="tp-section-label">GEM SLOT</div>
+        <div class="building-slot" id="shard_well-slot" onclick="onBuildingSlotClick('shard_well')"></div>
+        <div class="tp-slot-hint" id="shard_well-slot-hint">Slot a gem to increase shard generation rate</div>
+      </div>
+      <div id="shard-well-display" style="padding:10px 0;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- TOOLTIP -->
+<div id="tip"><div class="tip-name" id="tip-name"></div><div class="tip-desc" id="tip-desc"></div><div class="tip-time" id="tip-time"></div></div>
+
+<!-- CHAMPION INFO PANEL (area screen — slides in from left, same pattern as achievements) -->
+<div id="champ-panel-backdrop" style="display:none;position:fixed;inset:0;z-index:350;background:rgba(0,0,0,.5);" onclick="closeChampPanel()"></div>
+<div id="champ-panel" class="champ-panel">
+  <div class="champ-panel-header">
+    <div class="champ-panel-title">CHAMPION</div>
+    <button class="ach-close-btn" onclick="closeChampPanel()">✕</button>
+  </div>
+  <div class="champ-panel-body">
+    <div class="champ-panel-portrait" id="csp-portrait">🧙</div>
+    <div id="csp-name" style="font-family:'Cinzel',serif;font-size:14px;color:#d4a843;letter-spacing:1px;margin-bottom:2px;text-align:center;"></div>
+    <div id="csp-role" style="font-size:8px;color:#7a6030;letter-spacing:2px;margin-bottom:12px;text-align:center;"></div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:12px;">
+      <div style="text-align:center;background:rgba(0,0,0,.3);border-radius:5px;padding:7px 4px;">
+        <div id="csp-level" style="font-family:'Cinzel',serif;font-size:16px;color:#d4a843;"></div>
+        <div style="font-size:7px;color:#5a4020;margin-top:2px;">LVL</div>
+      </div>
+      <div style="text-align:center;background:rgba(0,0,0,.3);border-radius:5px;padding:7px 4px;">
+        <div id="csp-str" style="font-family:'Cinzel',serif;font-size:16px;color:#c05050;"></div>
+        <div style="font-size:7px;color:#5a4020;margin-top:2px;">STR</div>
+      </div>
+      <div style="text-align:center;background:rgba(0,0,0,.3);border-radius:5px;padding:7px 4px;">
+        <div id="csp-agi" style="font-family:'Cinzel',serif;font-size:16px;color:#c0a030;"></div>
+        <div style="font-size:7px;color:#5a4020;margin-top:2px;">AGI</div>
+      </div>
+      <div style="text-align:center;background:rgba(0,0,0,.3);border-radius:5px;padding:7px 4px;">
+        <div id="csp-wis" style="font-family:'Cinzel',serif;font-size:16px;color:#4080c0;"></div>
+        <div style="font-size:7px;color:#5a4020;margin-top:2px;">WIS</div>
+      </div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <div style="display:flex;justify-content:space-between;font-size:8px;color:#5a4020;margin-bottom:3px;">
+        <span>XP</span><span id="csp-xp-txt"></span>
+      </div>
+      <div style="height:4px;background:rgba(0,0,0,.5);border-radius:2px;overflow:hidden;">
+        <div id="csp-xp-bar" style="height:100%;background:#c09030;border-radius:2px;transition:width .3s;width:0%;"></div>
+      </div>
+    </div>
+    <div style="font-family:'Cinzel',serif;font-size:8px;color:#6a5020;letter-spacing:2px;margin-bottom:6px;">INNATE</div>
+    <div style="background:rgba(80,40,0,.15);border:1px solid #2a1808;border-radius:6px;padding:10px;margin-bottom:14px;">
+      <div id="csp-innate-name" style="font-size:9px;color:#c09030;font-family:'Cinzel',serif;margin-bottom:4px;"></div>
+      <div id="csp-innate-desc" style="font-size:8px;color:#806040;line-height:1.5;"></div>
+    </div>
+    <div style="font-family:'Cinzel',serif;font-size:8px;color:#6a5020;letter-spacing:2px;margin-bottom:6px;">DECK <span id="csp-deck-count" style="color:#3a2010;font-size:7px;letter-spacing:0;"></span></div>
+    <div id="csp-deck-summary" style="font-size:8px;color:#806040;line-height:1.8;margin-bottom:16px;"></div>
+  </div>
+  <div class="champ-panel-footer">
+    <button class="btn btn-dim" style="font-size:9px;padding:6px 10px;width:100%;margin-bottom:6px;" onclick="openChampDeckView()">👁 VIEW DECK</button>
+    <button class="btn btn-gold" id="csp-edit-btn" style="font-size:9px;padding:6px 10px;width:100%;display:none;" onclick="openChampSanctum()">✦ EDIT DECK</button>
+  </div>
+</div>
+
+<!-- SETTINGS -->
+<!-- ACHIEVEMENTS SIDE PANEL -->
+<div id="ach-backdrop" style="display:none;position:fixed;inset:0;z-index:350;background:rgba(0,0,0,.5);" onclick="closeAchPanel()"></div>
+<div id="ach-panel" class="ach-panel">
+  <div class="ach-panel-header">
+    <div class="ach-panel-title">ACHIEVEMENTS</div>
+    <button class="ach-close-btn" onclick="closeAchPanel()">✕</button>
+  </div>
+  <div class="ach-filters">
+    <button class="ach-filter active" id="ach-f-all"        onclick="filterAch('all')">ALL</button>
+    <button class="ach-filter"        id="ach-f-claimable"  onclick="filterAch('claimable')">CLAIM ✦</button>
+    <button class="ach-filter"        id="ach-f-inprogress" onclick="filterAch('inprogress')">IN PROGRESS</button>
+    <button class="ach-filter"        id="ach-f-done"       onclick="filterAch('done')">COMPLETED</button>
+  </div>
+  <div class="ach-list" id="ach-list"></div>
+</div>
+
+<button class="settings-btn" onclick="openSettings()">⚙</button>
+<div class="settings-overlay" id="settings-overlay" onclick="if(event.target===this)closeSettings()">
+  <div class="settings-box">
+    <div class="settings-title">SETTINGS</div>
+    <div class="settings-sec">Audio</div>
+    <div class="setting-row"><div class="setting-lbl">Music Volume</div><input class="s-slider" type="range" min="0" max="100" step="5" value="70" id="s-music" oninput="applySetting('music',this.value)"><div class="s-val" id="sv-music">70%</div></div>
+    <div class="setting-row"><div class="setting-lbl">SFX Volume</div><input class="s-slider" type="range" min="0" max="100" step="5" value="85" id="s-sfx" oninput="applySetting('sfx',this.value)"><div class="s-val" id="sv-sfx">85%</div></div>
+    <div class="settings-sec">Gameplay</div>
+    <div class="setting-row"><div class="setting-lbl">Auto-play Speed</div><select class="s-select" id="s-aspeed" onchange="applySetting('aspeed',this.value)"><option value="instant">Instant</option><option value="fast">Fast (0.3s)</option><option value="normal" selected>Normal (0.6s)</option><option value="slow">Slow (1.2s)</option></select></div>
+    <div class="setting-row"><div class="setting-lbl">Combat Log Detail</div><select class="s-select" id="s-logd" onchange="applySetting('logd',this.value)"><option value="brief">Brief</option><option value="normal" selected>Normal</option><option value="verbose">Verbose</option></select></div>
+    <div class="setting-row"><div class="setting-lbl">Confirm Card Play<small>Click once to select, again to play</small></div><label class="toggle"><input type="checkbox" id="s-confirm" onchange="applySetting('confirm',this.checked)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
+    <div class="setting-row"><div class="setting-lbl">Tutorial Tips<small>Show guidance for new systems</small></div><label class="toggle"><input type="checkbox" id="s-tutorial" checked onchange="applySetting('tutorial',this.checked)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
+    <div class="settings-sec">Save Data</div>
+    <div class="setting-row">
+      <div class="setting-lbl">Export Save<small>Copy save string to clipboard</small></div>
+      <button class="btn btn-dim" style="font-size:9px;padding:4px 10px;" onclick="exportSave()">EXPORT</button>
+    </div>
+    <div style="margin-bottom:10px;">
+      <div class="setting-lbl" style="font-size:10px;color:#c0a060;margin-bottom:5px;">Import Save<small style="display:block;font-size:8px;color:#7a6030;margin-top:1px;">Paste a save string and click Load</small></div>
+      <div style="display:flex;gap:6px;align-items:stretch;">
+        <textarea id="s-import-txt" rows="2" style="flex:1;background:#0e0802;border:1px solid #3a2010;border-radius:4px;color:#c0a060;font-size:9px;padding:5px 7px;resize:none;font-family:monospace;" placeholder="Paste save string here..."></textarea>
+        <button class="btn btn-dim" style="font-size:9px;padding:4px 10px;align-self:stretch;" onclick="importSave()">LOAD</button>
+      </div>
+      <div id="s-import-msg" style="font-size:9px;margin-top:4px;min-height:14px;"></div>
+    </div>
+    <div class="setting-row">
+      <div class="setting-lbl">Delete Save<small>Permanently wipe all progress</small></div>
+      <button class="btn btn-red" style="font-size:9px;padding:4px 10px;" id="s-delete-btn" onclick="deleteSaveStep1()">DELETE</button>
+    </div>
+    <div id="s-delete-confirm" style="display:none;background:rgba(80,10,10,.3);border:1px solid #6a1a1a;border-radius:5px;padding:10px 12px;margin-bottom:8px;text-align:center;">
+      <div style="font-family:'Cinzel',serif;font-size:10px;color:#e05050;margin-bottom:4px;">⚠ THIS CANNOT BE UNDONE</div>
+      <div style="font-size:9px;color:#906060;margin-bottom:10px;">All champions, gold, achievements and unlocks will be lost forever.</div>
+      <div style="display:flex;gap:8px;justify-content:center;">
+        <button class="btn btn-red" style="font-size:9px;padding:5px 12px;" onclick="deleteSaveConfirm()">YES, DELETE EVERYTHING</button>
+        <button class="btn btn-dim" style="font-size:9px;padding:5px 12px;" onclick="deleteSaveCancel()">CANCEL</button>
+      </div>
+    </div>
+    <div class="s-close-row"><button class="btn btn-gold" onclick="closeSettings()">CLOSE</button></div>
+  </div>
+</div>
+
+
+  <!-- ── Core engine (defines all functions + empty data stubs) ── -->
+  <script src="game.js"></script>
+
+  <!-- ── Data: keywords, cards, creature decks ── -->
+  <script src="data/cards.js"></script>
+
+  <!-- ── Data: card effects (executeCard, activateInnate, combat helpers) ── -->
+  <script src="data/card_effects.js"></script>
+
+  <!-- ── Data: achievements ── -->
+  <script src="data/achievements.js"></script>
+
+  <!-- ── Data: champions & areas ── -->
+  <script src="data/champions.js"></script>
+  <script src="data/areas.js"></script>
+
+  <!-- ── Data: one file per creature ── -->
+  <script src="data/creatures/abysscrawler.js"></script>
+  <script src="data/creatures/amalgam.js"></script>
+  <script src="data/creatures/ashbat.js"></script>
+  <script src="data/creatures/bandit.js"></script>
+  <script src="data/creatures/cavegrub.js"></script>
+  <script src="data/creatures/corruptionbloom.js"></script>
+  <script src="data/creatures/cursedurn.js"></script>
+  <script src="data/creatures/dragon.js"></script>
+  <script src="data/creatures/drownedsailor.js"></script>
+  <script src="data/creatures/druid.js"></script>
+  <script src="data/creatures/dunecrawler.js"></script>
+  <script src="data/creatures/embergolem.js"></script>
+  <script src="data/creatures/flamesprite.js"></script>
+  <script src="data/creatures/foghast.js"></script>
+  <script src="data/creatures/goblin.js"></script>
+  <script src="data/creatures/golem.js"></script>
+  <script src="data/creatures/grub.js"></script>
+  <script src="data/creatures/harbourmaster.js"></script>
+  <script src="data/creatures/harpy.js"></script>
+  <script src="data/creatures/inksquall.js"></script>
+  <script src="data/creatures/ironsentinel.js"></script>
+  <script src="data/creatures/knight.js"></script>
+  <script src="data/creatures/lavacrawler.js"></script>
+  <script src="data/creatures/lich.js"></script>
+  <script src="data/creatures/lurker.js"></script>
+  <script src="data/creatures/maskedowl.js"></script>
+  <script src="data/creatures/mineghoul.js"></script>
+  <script src="data/creatures/mistraven.js"></script>
+  <script src="data/creatures/moonsquirrel.js"></script>
+  <script src="data/creatures/mudcrab.js"></script>
+  <script src="data/creatures/mycelid.js"></script>
+  <script src="data/creatures/nightentling.js"></script>
+  <script src="data/creatures/orbweaver.js"></script>
+  <script src="data/creatures/orc.js"></script>
+  <script src="data/creatures/paladin.js"></script>
+  <script src="data/creatures/plague.js"></script>
+  <script src="data/creatures/rat.js"></script>
+  <script src="data/creatures/roach.js"></script>
+  <script src="data/creatures/sharknight.js"></script>
+  <script src="data/creatures/siren.js"></script>
+  <script src="data/creatures/skeleton.js"></script>
+  <script src="data/creatures/snake.js"></script>
+  <script src="data/creatures/sporepuff.js"></script>
+  <script src="data/creatures/temple_guardian.js"></script>
+  <script src="data/creatures/thief.js"></script>
+  <script src="data/creatures/tidecrab.js"></script>
+  <script src="data/creatures/toadking.js"></script>
+  <script src="data/creatures/troll.js"></script>
+  <script src="data/creatures/tunnelant.js"></script>
+  <script src="data/creatures/vaultspectre.js"></script>
+  <script src="data/creatures/venomstalker.js"></script>
+  <script src="data/creatures/watcher.js"></script>
+  <script src="data/creatures/waxeffigy.js"></script>
+  <script src="data/creatures/waxhound.js"></script>
+  <script src="data/creatures/waxoasis.js"></script>
+  <script src="data/creatures/waxsoldier.js"></script>
+  <script src="data/creatures/wisp.js"></script>
+  <script src="data/creatures/witch.js"></script>
+  <script src="data/creatures/wretch.js"></script>
+  <script src="data/creatures/wyrm.js"></script>
+
+  <!-- ── Audio system ── -->
+  <script src="audio.js"></script>
+
+  <!-- ── Boot: runs after all data is loaded ── -->
+  <script src="init.js"></script>
+
+</body>
+</html>
