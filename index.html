@@ -26,7 +26,7 @@
       <div class="nav-gold" id="nav-gold">✦ 0</div>
       <button id="btn-return-battle" onclick="returnToBattle()" style="display:none;font-family:'Cinzel',serif;font-size:9px;padding:3px 10px;background:rgba(80,30,10,.7);border:1px solid #c06020;color:#d4a843;border-radius:4px;cursor:pointer;letter-spacing:.5px;">⚔ RETURN TO BATTLE</button>
       <button class="nav-icon-btn" onclick="openAchPanel()" title="Achievements" style="position:relative;">
-        <img src="assets/icons/achievements.png" style="width:24px;height:24px;image-rendering:pixelated;vertical-align:middle;" onerror="this.textContent='🏆';this.style.display='none'">🏆<span class="tab-badge" id="ach-badge" style="display:none;position:absolute;top:-2px;right:-2px;"><img src="assets/icons/alert.png" style="width:16px;height:16px;image-rendering:pixelated;" onerror="this.style.display='none'">0</span>
+        <img src="assets/icons/achievements.png" style="width:24px;height:24px;image-rendering:pixelated;vertical-align:middle;" onerror="this.style.display='none'"><span class="tab-badge" id="ach-badge" style="display:none;position:absolute;top:-2px;right:-2px;"><img src="assets/icons/alert.png" style="width:16px;height:16px;image-rendering:pixelated;" onerror="this.style.display='none'">0</span>
       </button>
       <button class="nav-icon-btn" onclick="openSettings()" title="Settings">⚙</button>
     </div>
@@ -46,7 +46,7 @@
       <span class="cs-gold" id="cs-gold">✦ 0</span>
       <select class="cs-sort" id="cs-sort" onchange="rebuildChampGrid()">
         <option value="recent">Recently Unlocked</option>
-        <option value="level">Highest Level</option>
+        <option value="level" selected>Highest Level</option>
         <option value="str">Highest STR</option>
         <option value="agi">Highest AGI</option>
         <option value="wis">Highest WIS</option>
@@ -175,14 +175,11 @@
 
       <div class="combat-row">
         <!-- PLAYER -->
-        <div class="combatant">
+        <div class="combatant" id="combatant-player">
           <div class="cname" id="p-name">Champion</div>
           <div class="combatant-inner">
-            <div class="cicon-hp-col">
-              <span class="cicon" id="p-icon">🧙</span>
-              <div class="big-hp-wrap"><div class="big-hp-inner p" id="p-hp-bar" style="width:100%"></div></div>
-              <div class="hp-txt-big" id="p-hp-txt">20/20</div>
-            </div>
+            <div class="big-hp-wrap" style="flex:1;"><div class="big-hp-inner p" id="p-hp-bar" style="width:100%"></div></div>
+            <div class="hp-txt-big" id="p-hp-txt">20/20</div>
           </div>
           <!-- Mana bar -->
           <div class="cbar-row">
@@ -197,23 +194,27 @@
             <span class="cbar-val" style="color:#6a4010;" id="draw-eta-val"></span>
           </div>
           <div class="status-tags" id="p-tags"></div>
+          <div class="cicon-wrap"><span class="cicon" id="p-icon">🧙</span></div>
         </div>
 
         <!-- ENEMY -->
-        <div class="combatant">
+        <div class="combatant" id="combatant-enemy">
           <div class="cname" id="e-name">Enemy</div>
           <div class="combatant-inner">
-            <div class="cicon-hp-col">
-              <span class="cicon" id="e-icon">👺</span>
-              <div class="big-hp-wrap"><div class="big-hp-inner e" id="e-hp-bar" style="width:100%"></div></div>
-              <div class="hp-txt-big" id="e-hp-txt">8/8</div>
-            </div>
+            <div class="big-hp-wrap" style="flex:1;"><div class="big-hp-inner e" id="e-hp-bar" style="width:100%"></div></div>
+            <div class="hp-txt-big" id="e-hp-txt">8/8</div>
           </div>
           <!-- Enemy draw bar -->
           <div class="cbar-row">
             <span class="cbar-lbl draw">DRAW</span>
             <div class="cbar-track"><div class="cbar-fill draw" id="e-draw-bar" style="width:100%;background:linear-gradient(90deg,#4a1a04,#a04010);"></div></div>
             <span class="cbar-val" style="color:#6a3818;" id="enemy-eta"></span>
+          </div>
+          <!-- Enemy mana bar -->
+          <div class="cbar-row">
+            <span class="cbar-lbl mana">MANA</span>
+            <div class="cbar-track"><div class="cbar-fill mana" id="e-mana-bar" style="width:0%;background:linear-gradient(90deg,#1a3a7a,#4060c0);"></div></div>
+            <span class="cbar-val" id="e-mana-val">0/0</span>
           </div>
           <!-- Enemy stats -->
           <div id="e-stats-row" style="display:flex;gap:10px;justify-content:center;padding-top:2px;">
@@ -222,6 +223,7 @@
             <div style="text-align:center;"><div class="v wis" id="e-wis" style="font-size:14px;">—</div><div style="font-size:7px;color:#7a6030;">WIS</div></div>
           </div>
           <div class="status-tags" id="e-tags"></div>
+          <div class="cicon-wrap"><span class="cicon" id="e-icon">👺</span></div>
         </div>
       </div>
 
@@ -233,6 +235,7 @@
     <div id="kb-hints" style="display:none;text-align:center;font-size:8px;color:#2a1808;letter-spacing:.5px;font-family:'Cinzel',serif;padding:2px 0;flex-shrink:0;">
       [1–7] play &nbsp;·&nbsp; [←→] select &nbsp;·&nbsp; [Enter] confirm &nbsp;·&nbsp; [Space] innate &nbsp;·&nbsp; [P] pause &nbsp;·&nbsp; [D] deck &nbsp;·&nbsp; [Esc] close
     </div>
+
     <div class="hand-piles-row">
       <!-- Innate card — always visible left of hand -->
       <div id="innate-card" class="innate-card" onclick="activateInnate()">
@@ -283,6 +286,46 @@
   <div class="dv-grid" id="dv-grid"></div>
   <div class="dv-btns">
     <button class="btn btn-gold" onclick="continueDeckView()">CONTINUE →</button>
+  </div>
+</div>
+
+<!-- DECK EDITOR -->
+<div id="deck-edit-screen" class="screen">
+  <div class="de-header">
+    <div class="de-champ-info">
+      <div class="de-portrait" id="de-portrait"></div>
+      <div>
+        <div class="de-champ-name" id="de-champ-name"></div>
+        <div class="de-champ-sub" id="de-champ-sub"></div>
+      </div>
+    </div>
+    <div class="de-header-right">
+      <div class="de-stat-row" id="de-stat-row"></div>
+      <div class="de-gold-row" id="de-gold-row"></div>
+    </div>
+  </div>
+  <div class="de-body">
+    <div class="de-panel de-panel-left">
+      <div class="de-panel-label">DECK <span id="de-deck-size"></span></div>
+      <div class="de-deck-grid" id="de-deck-grid"></div>
+      <div class="de-size-wrap">
+        <div class="de-size-bar"><div class="de-size-fill" id="de-size-fill"></div></div>
+        <div class="de-size-label" id="de-size-label"></div>
+      </div>
+    </div>
+    <div class="de-panel de-panel-right">
+      <div class="de-panel-label" id="de-avail-label">AVAILABLE CARDS</div>
+      <div class="de-avail-tabs" id="de-avail-tabs"></div>
+      <div class="de-avail-grid" id="de-avail-grid"></div>
+    </div>
+  </div>
+  <div class="de-footer">
+    <div class="de-hint" id="de-hint">Select a card in your deck to replace it</div>
+    <div class="de-footer-btns">
+      <button class="btn btn-dim" id="de-undo-btn" onclick="deDeckUndo()" style="display:none;font-size:9px;padding:5px 12px;">↩ Undo</button>
+      <button class="btn btn-dim" onclick="deDeckReset()" style="font-size:9px;padding:5px 12px;">Reset</button>
+      <button class="btn btn-gold" onclick="deDeckDone()" style="font-size:9px;padding:5px 16px;">Done ✓</button>
+    </div>
   </div>
 </div>
 
@@ -458,9 +501,9 @@
             <div class="tp-slot-hint" id="bestiary-slot-hint">Slot a card to enable passive research</div>
           </div>
           <div class="bestiary-tab-row">
-            <button class="bestiary-tab active" id="btab-creatures" onclick="setBestiaryTab('creatures')"><img src="assets/icons/beastiary_creatures.png" class="bestiary-tab-icon" onerror="this.style.display='none'">🦎 CREATURES</button>
-            <button class="bestiary-tab" id="btab-locations" onclick="setBestiaryTab('locations')"><img src="assets/icons/beastiary_locations.png" class="bestiary-tab-icon" onerror="this.style.display='none'">🗺 LOCATIONS</button>
-            <button class="bestiary-tab" id="btab-glossary" onclick="setBestiaryTab('glossary')"><img src="assets/icons/beastiary_glossary.png" class="bestiary-tab-icon" onerror="this.style.display='none'">📖 GLOSSARY</button>
+            <button class="bestiary-tab active" id="btab-creatures" onclick="setBestiaryTab('creatures')"><img src="assets/icons/bestiary_creatures.png" class="bestiary-tab-icon" onerror="this.style.display='none'">🦎 CREATURES</button>
+            <button class="bestiary-tab" id="btab-locations" onclick="setBestiaryTab('locations')"><img src="assets/icons/bestiary_locations.png" class="bestiary-tab-icon" onerror="this.style.display='none'">🗺 LOCATIONS</button>
+            <button class="bestiary-tab" id="btab-glossary" onclick="setBestiaryTab('glossary')"><img src="assets/icons/bestiary_glossary.png" class="bestiary-tab-icon" onerror="this.style.display='none'">📖 GLOSSARY</button>
           </div>
         </div>
         <div id="bestiary-creatures-pane" class="bestiary-creatures-layout">
@@ -815,8 +858,8 @@
     <div id="csp-deck-summary" style="font-size:8px;color:#806040;line-height:1.8;margin-bottom:16px;"></div>
   </div>
   <div class="champ-panel-footer">
-    <button class="btn btn-dim" style="font-size:9px;padding:6px 10px;width:100%;margin-bottom:6px;" onclick="openChampDeckView()">👁 VIEW DECK</button>
-    <button class="btn btn-gold" id="csp-edit-btn" style="font-size:9px;padding:6px 10px;width:100%;display:none;" onclick="openChampSanctum()">✦ EDIT DECK</button>
+    <button class="btn btn-dim" style="font-size:9px;padding:6px 10px;width:100%;margin-bottom:6px;" onclick="closeChampPanel();openChampDeckView()">👁 VIEW DECK</button>
+    <button class="btn btn-gold" id="csp-edit-btn" style="font-size:9px;padding:6px 10px;width:100%;" onclick="closeChampPanel();openChampSanctum()">✦ EDIT DECK</button>
   </div>
 </div>
 
@@ -911,6 +954,7 @@
   <script src="data/creatures/flamesprite.js"></script>
   <script src="data/creatures/foghast.js"></script>
   <script src="data/creatures/goblin.js"></script>
+  <script src="data/creatures/gorby.js"></script>
   <script src="data/creatures/golem.js"></script>
   <script src="data/creatures/grub.js"></script>
   <script src="data/creatures/harbourmaster.js"></script>

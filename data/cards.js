@@ -21,6 +21,10 @@ var KEYWORDS = {
   Condemned: {cls:'cursed',    def:'Each stack increases Retribution damage by +15% (max ×5 stacks, 12s). Applied by Retribution.'},
   Marked:    {cls:'cursed',    def:'Enemy takes 50% more damage from all sources while active. Applied by Death Mark.'},
   Crit:      {cls:'hastened',  def:'A strike that deals double damage. Triggered by chance or special conditions.'},
+  Echo:      {cls:'echo',      def:'If this card is discarded by any effect — innate, overflow, or another card — its Echo effect still triggers at the listed potency.'},
+  Frenzy:    {cls:'hastened',  def:'Stacking draw-speed buff. Each stack = +10% draw speed. Duration shortens as stacks grow (base 2s, ×0.9 per stack). Collapses entirely when the timer runs out or when mana hits 0. Drains 3 mana/s while active.'},
+  Sorcery:   {cls:'drain',     def:'Sorcery X: if you have X or more mana, spend it to trigger the bonus effect listed after Sorcery. If you cannot afford it, only the base effect resolves — no mana is spent.'},
+  Ethereal:  {cls:'echo',      def:'This card vanishes when played or discarded — it does not return to your deck. Ethereal cards are created temporarily by special abilities.'},
 };
 
 // Replace [BracketWord] tokens in effect strings with styled keyword spans.
@@ -70,20 +74,20 @@ var CARDS = {
   // ── Universal basics ──
   strike:      {id:'strike',      name:'Strike',        icon:'⚔️', type:'attack',  unique:false, champ:null,    statId:null,  effect:'Deal 18 damage.'},
   brace:       {id:'brace',       name:'Brace',         icon:'🛡', type:'defense', unique:false, champ:null,    statId:null,  effect:'Apply [Shield] (20) for 5s. On expiry: gain 40 mana.\n[Shield] absorbs direct damage before HP. DoTs bypass it.', effects:[{type:'shield',amt:20,dur:5,onexpiry:'gain_mana',expiry_val:40}]},
+  filler:      {id:'filler',      name:'Dead Weight',   icon:'💀', type:'utility', unique:false, champ:null,    statId:'wis', effect:'Sorcery [all mana]: Draw 1 card.\nFills empty deck slots. Swap this out when you can.'},
 
 
   // ── Starcaller Druid ──
-  void_bolt:   {id:'void_bolt',   name:'Void Bolt',     icon:'🔵', type:'attack',  unique:true,  champ:'druid', statId:'wis', effect:'Deal 12+WIS damage. On discard: draw speed +50% for 1s.', effects:[{type:'dmg_stat',base:12,stat:'wis',div:1}]},
+  void_bolt:   {id:'void_bolt',   name:'Void Bolt',     icon:'🔵', type:'attack',  unique:true,  champ:'druid', statId:'wis', effect:'Deal 12+WIS damage.\n[Echo]: draw speed +50% for 1s.', effects:[{type:'dmg_stat',base:12,stat:'wis',div:1}], onDiscard:[{type:'draw_speed',pct:50,dur:1}]},
 
   drifting_comet:{id:'drifting_comet',name:'Drifting Comet',icon:'💫',type:'attack',unique:true, champ:'druid', statId:'agi', effect:'Deal 16 damage. If auto-played: stun enemy 0.8s instead.'},
   nova_burst:  {id:'nova_burst',  name:'Nova Burst',    icon:'💥', type:'attack',  unique:true,  champ:'druid', statId:'wis', effect:'Deal 15 × cards-in-hand damage (min 15).'},
   focus:       {id:'focus',       name:'Focus',         icon:'🔮', type:'utility', unique:true,  champ:'druid', statId:'wis', effect:'[Drain] 80% of max mana. Draw 2 cards.\n[Drain]: removes mana from your bar.'},
-  stellar_shards:{id:'stellar_shards',name:'Stellar Shards',icon:'✨',type:'attack',unique:true, champ:'druid', statId:'wis', effect:'Deal 7 damage 3 times. Discard other [Stellar Shards] in hand — deal 1 extra hit per discarded copy.'},
   nebula_shield:{id:'nebula_shield',name:'Nebula Ward', icon:'🌌',type:'defense',  unique:true,  champ:'druid', statId:'str', effect:'Apply [Shield] (30) for 6s. On expiry: gain 100 mana.\n[Shield] absorbs direct damage before HP. DoTs bypass it.', effects:[{type:'shield',amt:30,dur:6,onexpiry:'gain_mana',expiry_val:100}]},
-  
+  stellar_shards:{id:'stellar_shards',name:'Stellar Shards',icon:'✨',type:'attack',unique:true, champ:'druid', statId:'wis', effect:'Deal 7 damage 3 times. Discard other [Stellar Shards] in hand — deal 1 extra hit per discarded copy.'},
 
   // ── Cursed Paladin ──
-  retribution: {id:'retribution', name:'Retribution',   icon:'️⚖️', type:'attack',  unique:true,  champ:'paladin',statId:'str', effect:'Deal 15 damage. If enemy is debuffed: deal 30 instead. Add a stack of [Condemned] for 12s. (Max 5)[Condemned]: each stack increases Retribution damage by +15%.'},
+  retribution: {id:'retribution', name:'Retribution',   icon:'⚖️', type:'attack',  unique:true,  champ:'paladin',statId:'str', effect:'Deal 15 damage. If enemy is debuffed: deal 30 instead. Add a stack of [Condemned] for 12s. (Max 5)\n[Condemned]: each stack increases Retribution damage by +15%.'},
   holy_shield: {id:'holy_shield', name:'Aegis',         icon:'🛡️', type:'defense', unique:true,  champ:'paladin',statId:'str', effect:'Apply [Shielded] for 5s.\n[Shielded]: incoming damage drains mana instead of HP.'},
   consecrate:  {id:'consecrate',  name:'Consecrate',    icon:'🕊️', type:'attack',  unique:true,  champ:'paladin',statId:'wis', effect:'Deal 12 damage. Apply [Cursed] for 5s.\n[Cursed]: enemy deals 15% less damage.', effects:[{type:'dmg',base:12}, {type:'cursed',dur:5}, {type:'holy_flame'}]},
 
@@ -132,6 +136,27 @@ var CARDS = {
   death_mark:  {id:'death_mark',  name:'Death Mark',    icon:'🩸', type:'debuff',  unique:true,  champ:'thief', statId:'wis', effect:'Apply [Marked] for 4s.\n[Marked]: enemy takes 50% more damage from all sources.', effects:[{type:'marked',dur:4}]},
 
 
+  // ── Gorby — Conversion archetype ──
+  // gorby_attack is a runtime stub — real instances are created dynamically by activateInnate
+  // and registered as gorby_attack_0..N in CARDS. This entry is the fallback template.
+  gorby_attack:{id:'gorby_attack', name:'Gorby Attack', icon:'👊', type:'attack', unique:false, champ:'gorby', statId:'str',
+    effect:'Deal damage.\n[Ethereal]: vanishes when played or discarded.'},
+  gb_wallop:   {id:'gb_wallop',   name:'Wallop',        icon:'👊', type:'attack',  unique:true, champ:'gorby', statId:'str',
+    effect:'Deal 6+STR/5 damage. Apply Weaken for 4s.',
+    effects:[{type:'dmg_stat',base:6,stat:'str',div:5},{type:'cursed',dur:4}]},
+  gb_gut:      {id:'gb_gut',      name:'Gut Punch',     icon:'💢', type:'attack',  unique:true, champ:'gorby', statId:'str',
+    effect:'Deal 5 damage. Apply Slow for 3s.',
+    effects:[{type:'dmg',base:5},{type:'slow',dur:3}]},
+  gb_brace:    {id:'gb_brace',    name:'Tough It Out',  icon:'🛡', type:'defense', unique:true, champ:'gorby', statId:'str',
+    effect:'Apply Shield (STR×1) for 5s.\nSorcery 25: Gain 20 mana.',
+    effects:[{type:'shield_stat',mult:1,dur:5,onexpiry:'nothing',expiry_val:0},{type:'sorcery',cost:25,type2:'mana',v1:20,v2:0,v3:'none'}]},
+  gb_claw:     {id:'gb_claw',     name:'Frenzy Claw',   icon:'🔥', type:'attack',  unique:true, champ:'gorby', statId:'str',
+    effect:'Deal 4 damage 3 times. Apply 2 Burn for 9s.',
+    effects:[{type:'dmg_multi',hits:3,dmg:4,delay:180},{type:'burn',dpt:2,dur:9}]},
+  gb_rampage:  {id:'gb_rampage',  name:'Rampage',       icon:'💥', type:'attack',  unique:true, champ:'gorby', statId:'str',
+    effect:'Deal 8+STR/4 damage. Apply Vulnerable for 4s.\nSorcery 30: Apply Weaken for 4s.',
+    effects:[{type:'dmg_stat',base:8,stat:'str',div:4},{type:'marked',dur:4},{type:'sorcery',cost:30,type2:'cursed',v1:4,v2:0,v3:'none'}]},
+
   // ── Luna Sciurid ──
   ms_scratch:  {id:'ms_scratch',  name:'Scratch',       icon:'🐾', type:'attack',  unique:true, champ:'moonsquirrel', statId:'agi', effect:'Deal 6+AGI/2 damage. Small and fast — hits add up.', effects:[{type:'dmg_stat',base:6,stat:'agi',div:2}]},
 
@@ -143,10 +168,13 @@ var CARDS = {
 
   // ── Sewers ──
   // Giant Rat (frenzied)
-  gr_gnaw:       {id:'gr_gnaw',       name:'Gnaw',          icon:'🐀', type:'attack',  unique:true, champ:'rat',         statId:'agi', effect:'Deal 4+AGI/3 damage. If you played a card in the last 2s: deal 8 instead.'},
-  gr_dart:       {id:'gr_dart',       name:'Dart',          icon:'⚡', type:'utility', unique:true, champ:'rat',         statId:'agi', effect:'Draw speed +25% for 3s. Gain 10 mana.', effects:[{type:'draw_speed',pct:25,dur:3}, {type:'mana',amt:10}]},
+  // ── Rat — Frenzy archetype ──
+  gr_gnaw:         {id:'gr_gnaw',         name:'Gnaw',           icon:'🐀', type:'attack',  unique:true, champ:'rat', statId:'agi', effect:'Deal 3+AGI/4 damage. Apply 1 Frenzy for 2s.\n[Frenzy]: stacking draw speed buff. Duration shortens with each stack.'},
+  gr_dart:         {id:'gr_dart',         name:'Dart',           icon:'⚡', type:'utility', unique:true, champ:'rat', statId:'agi', effect:'Gain 15 mana. Apply 1 Frenzy for 2s.\n[Frenzy]: stacking draw speed buff. Duration shortens with each stack.', effects:[{type:'mana',amt:15}]},
+  gr_scurry:       {id:'gr_scurry',       name:'Scurry',         icon:'💨', type:'attack',  unique:true, champ:'rat', statId:'agi', effect:'Deal 2× Frenzy stacks damage (min 4).\n[Frenzy]: the higher your stacks, the harder this hits.'},
+  gr_frenzy_surge: {id:'gr_frenzy_surge', name:'Frenzy Surge',   icon:'🔴', type:'utility', unique:true, champ:'rat', statId:'agi', effect:'Gain mana equal to Frenzy stacks × 2 (min 5).\n[Frenzy]: converts your speed into fuel.'},
+  gr_frenzy_burst: {id:'gr_frenzy_burst', name:'Frenzy Burst',   icon:'💥', type:'utility', unique:true, champ:'rat', statId:'agi', effect:'Double your current Frenzy stacks.\n[Frenzy]: the bomb. Use when Frenzy is high.'},
 
-  gr_frenzy_bite:{id:'gr_frenzy_bite',name:'Frenzy Bite',   icon:'🔴', type:'attack',  unique:true, champ:'rat',         statId:'agi', effect:'Deal 6 damage. Permanently reduce your draw interval by 3% (stacks, max 15%).'},
   // Mud Crab (hardened)
   mc2_claw:      {id:'mc2_claw',      name:'Claw Snap',     icon:'🦀', type:'attack',  unique:true, champ:'mudcrab',     statId:'str', effect:'Deal 5+STR/4 damage. If [Shield] is active: deal double.', effects:[{type:'dmg_if_debuff',base:5,high:10}]},
 
@@ -524,7 +552,10 @@ function creatureDeckSize(id){ var c=CREATURES[id]; if(!c) return 10; return c.b
 var CREATURE_DECKS = {
   // ── Sewers ── (STR = total cards, even split)
   // Giant Rat STR 12 = 12: strike×2, brace×2, gnaw×3, dart×3, frenzy_bite×2
-  rat:         {cards:['strike','strike','brace','brace','gr_gnaw','gr_gnaw','gr_gnaw','gr_dart','gr_dart','gr_dart','gr_frenzy_bite','gr_frenzy_bite'], alts:[]},
+  // Giant Rat STR 10 = 10: strike×2, brace×2, gnaw×3, dart×2, scurry×1 | unlocks: frenzy_surge, frenzy_burst
+  rat:         {cards:['strike','strike','brace','brace','gr_gnaw','gr_gnaw','gr_gnaw','gr_dart','gr_dart','gr_scurry'], alts:[]},
+  // Gorby STR 14 = 14: strike×2, brace×2, wallop×4, gut×3, gb_brace×3 | unlocks: frenzy_claw, rampage
+  gorby:       {cards:['strike','strike','brace','brace','gb_wallop','gb_wallop','gb_wallop','gb_wallop','gb_gut','gb_gut','gb_gut','gb_brace','gb_brace','gb_brace'], alts:[]},
   // Mud Crab STR 12 = 12: strike×2, brace×2, claw×3, shell×3, pinch×2
   mudcrab:     {cards:['strike','strike','brace','brace','mc2_claw','mc2_claw','mc2_claw','mc2_shell','mc2_shell','mc2_shell','mc2_pinch','mc2_pinch'], alts:[]},
   // Goblin Scout STR 13 = 13: strike×3, brace×2, slash×3, rush×3, warcry×2

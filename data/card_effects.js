@@ -46,17 +46,18 @@ function _applyPoison(dpt, durMs){
 }
 
 // Stack-or-create Burn (3s tick, bypasses Shield)
+// Apply Burn — non-stacking. Reapplication refreshes duration only, never increases dpt.
+// Burn is a single flat DoT. Use poison for stacking pressure.
 function _applyBurn(dpt, durMs){
   var e=gs.statusEffects.enemy.find(function(s){return s.id==='burn';});
   if(e){
-    e.dpt+=dpt; e.remaining=Math.max(e.remaining,durMs||9000);
-    removeTagByLabel('enemy',e.label);
-    e.label='Burn ('+e.dpt+'/3s)';
-    addTag('enemy','debuff',e.label,0,'dot','Burn: '+e.dpt+' dmg/3s. Bypasses Shield.');
+    // Refresh duration only — do NOT add dpt
+    e.remaining=durMs||9000; e.maxRemaining=durMs||9000;
+    // No tag change needed — label stays the same
   } else {
     gs.statusEffects.enemy.push({id:'burn',label:'Burn ('+dpt+'/3s)',cls:'debuff',stat:'dot',
       remaining:durMs||9000,maxRemaining:durMs||9000,dot:true,dpt:dpt,tickMs:3000,tickAcc:0,
-      desc:'Burn: '+dpt+' dmg/3s. Bypasses Shield.'});
+      desc:'Burn: '+dpt+' dmg/3s. Bypasses Shield. Does not stack — reapplication refreshes duration.'});
     addTag('enemy','debuff','Burn ('+dpt+'/3s)',0,'dot','Burn: '+dpt+' dmg/3s. Bypasses Shield.');
   }
 }
@@ -210,8 +211,8 @@ var EFFECT_TYPES = {
     label:'Apply [Slow]', cat:'debuff',
     desc:'Reduce enemy attack speed for a duration.',
     fields:[{id:'dur', label:'Duration (s)', type:'number', default:4, min:1, max:15}],
-    effectText:  function(v){ return 'Apply [Slow] for '+v.dur+'s.'; },
-    tooltipText: function(v){ return '[Slow]: enemy attack speed reduced by 40%.'; },
+    effectText:  function(v){ return 'Apply Slow for '+v.dur+'s.'; },
+    tooltipText: function(v){ return 'Slow: reduces enemy attack speed by 40%.'; },
     typeHint:'debuff',
     run: function(v,ctx){
       applyStatus('enemy','debuff','Slow',-0.4,'atkspeed',(+v.dur)*1000,'Slow: atk speed -40%.');
@@ -223,8 +224,8 @@ var EFFECT_TYPES = {
     label:'Apply [Cursed]', cat:'debuff',
     desc:'Reduce enemy damage output.',
     fields:[{id:'dur', label:'Duration (s)', type:'number', default:5, min:1, max:20}],
-    effectText:  function(v){ return 'Apply [Cursed] for '+v.dur+'s.'; },
-    tooltipText: function(v){ return '[Cursed]: enemy deals 15% less damage.'; },
+    effectText:  function(v){ return 'Apply Weaken for '+v.dur+'s.'; },
+    tooltipText: function(v){ return 'Weaken: enemy deals 15% less damage.'; },
     typeHint:'debuff',
     run: function(v,ctx){
       applyStatus('enemy','debuff','Cursed',-0.15,'dmg',(+v.dur)*1000,'Cursed: enemy dmg -15%.');
@@ -236,8 +237,8 @@ var EFFECT_TYPES = {
     label:'Apply [Marked]', cat:'debuff',
     desc:'Enemy takes +50% damage from all sources.',
     fields:[{id:'dur', label:'Duration (s)', type:'number', default:4, min:1, max:15}],
-    effectText:  function(v){ return 'Apply [Marked] for '+v.dur+'s.'; },
-    tooltipText: function(v){ return '[Marked]: enemy takes 50% more damage from all sources.'; },
+    effectText:  function(v){ return 'Apply Vulnerable for '+v.dur+'s.'; },
+    tooltipText: function(v){ return 'Vulnerable: enemy takes 50% more damage from all sources.'; },
     typeHint:'debuff',
     run: function(v,ctx){
       applyStatus('enemy','debuff','Marked',0.5,'death_mark',(+v.dur)*1000,'Marked: +50% dmg taken.');
@@ -252,8 +253,8 @@ var EFFECT_TYPES = {
       {id:'dpt', label:'Dmg per 2s',  type:'number', default:6, min:1, max:40},
       {id:'dur', label:'Duration (s)', type:'number', default:8, min:2, max:20}
     ],
-    effectText:  function(v){ return 'Apply [Poison] ('+v.dpt+' dmg/2s) for '+v.dur+'s.'; },
-    tooltipText: function(v){ return '[Poison]: deals damage every 2s. Bypasses [Shield].'; },
+    effectText:  function(v){ return 'Apply '+v.dpt+' Poison for '+v.dur+'s.'; },
+    tooltipText: function(v){ return 'Poison: stacking DoT. Deals damage every 2s, bypasses Shield.'; },
     typeHint:'debuff',
     run: function(v,ctx){
       _applyPoison(+v.dpt,(+v.dur)*1000);
@@ -270,8 +271,8 @@ var EFFECT_TYPES = {
       {id:'div',  label:'Divisor',   type:'number', default:4,   min:1, max:10},
       {id:'dur',  label:'Dur (s)',   type:'number', default:8,   min:2, max:20}
     ],
-    effectText:  function(v){ return 'Apply [Poison] ('+v.base+'+'+v.stat.toUpperCase()+'/'+v.div+' dmg/2s).'; },
-    tooltipText: function(v){ return '[Poison]: deals damage every 2s. Bypasses [Shield].'; },
+    effectText:  function(v){ return 'Apply '+(v.base?v.base+'+':'')+v.stat.toUpperCase()+'/'+v.div+' Poison for '+v.dur+'s.'; },
+    tooltipText: function(v){ return 'Poison: stacking DoT. Deals damage every 2s, bypasses Shield.'; },
     typeHint:'debuff',
     run: function(v,ctx){
       var dpt=+v.base+Math.floor((ctx[v.stat]||0)/+v.div);
@@ -287,8 +288,8 @@ var EFFECT_TYPES = {
       {id:'dpt', label:'Dmg per 3s',  type:'number', default:3, min:1, max:40},
       {id:'dur', label:'Duration (s)', type:'number', default:9, min:3, max:30}
     ],
-    effectText:  function(v){ return 'Apply [Burn] ('+v.dpt+' dmg/3s) for '+v.dur+'s.'; },
-    tooltipText: function(v){ return '[Burn]: deals damage every 3s. Bypasses [Shield].'; },
+    effectText:  function(v){ return 'Apply '+v.dpt+' Burn for '+v.dur+'s.'; },
+    tooltipText: function(v){ return 'Burn: '+v.dpt+' dmg every 3s. Bypasses Shield. Refreshes on reapplication.'; },
     typeHint:'debuff',
     run: function(v,ctx){
       _applyBurn(+v.dpt,(+v.dur)*1000);
@@ -305,8 +306,8 @@ var EFFECT_TYPES = {
       {id:'div',  label:'Divisor',   type:'number', default:3,   min:1, max:10},
       {id:'dur',  label:'Dur (s)',   type:'number', default:9,   min:3, max:30}
     ],
-    effectText:  function(v){ return 'Apply [Burn] ('+v.base+'+'+v.stat.toUpperCase()+'/'+v.div+' dmg/3s).'; },
-    tooltipText: function(v){ return '[Burn]: deals damage every 3s. Bypasses [Shield].'; },
+    effectText:  function(v){ return 'Apply '+(v.base?v.base+'+':'')+v.stat.toUpperCase()+'/'+v.div+' Burn for '+v.dur+'s.'; },
+    tooltipText: function(v){ return 'Burn: '+v.dpt+' dmg every 3s. Bypasses Shield. Refreshes on reapplication.'; },
     typeHint:'debuff',
     run: function(v,ctx){
       var dpt=+v.base+Math.floor((ctx[v.stat]||0)/+v.div);
@@ -416,7 +417,7 @@ var EFFECT_TYPES = {
              :v.onexpiry==='deal_dmg' ?' On expiry: deal '+v.expiry_val+' damage.':'';
       return 'Apply [Shield] ('+v.amt+') for '+v.dur+'s.'+exp;
     },
-    tooltipText: function(v){ return '[Shield] absorbs direct damage before HP. DoTs bypass it.'; },
+    tooltipText: function(v){ return 'Shield: absorbs direct damage before HP. DoTs bypass it.'; },
     typeHint:'defense',
     run: function(v,ctx){
       var amt=+v.amt, dur=(+v.dur)*1000, ev=+v.expiry_val;
@@ -443,7 +444,7 @@ var EFFECT_TYPES = {
              :v.onexpiry==='deal_dmg' ?' On expiry: deal '+v.expiry_val+' damage.':'';
       return 'Apply [Shield] (STR\u00d7'+v.mult+') for '+v.dur+'s.'+exp;
     },
-    tooltipText: function(v){ return '[Shield] absorbs direct damage before HP. DoTs bypass it.'; },
+    tooltipText: function(v){ return 'Shield: absorbs direct damage before HP. DoTs bypass it.'; },
     typeHint:'defense',
     run: function(v,ctx){
       var amt=Math.round(ctx.str*(+v.mult)), dur=(+v.dur)*1000, ev=+v.expiry_val;
@@ -459,8 +460,8 @@ var EFFECT_TYPES = {
     label:'Gain [Dodge]', cat:'buff',
     desc:'Next incoming attack is completely evaded.',
     fields:[],
-    effectText:  function(v){ return 'Apply [Dodge].'; },
-    tooltipText: function(v){ return '[Dodge]: next incoming attack is evaded.'; },
+    effectText:  function(v){ return 'Gain Dodge.'; },
+    tooltipText: function(v){ return 'Dodge: next incoming attack is completely evaded.'; },
     typeHint:'utility',
     run: function(v,ctx){
       gs.playerDodge=true;
@@ -503,8 +504,8 @@ var EFFECT_TYPES = {
     label:'Drain Own Mana', cat:'utility',
     desc:'Spend a portion of your own mana as a cost.',
     fields:[{id:'pct', label:'% of max mana', type:'number', default:30, min:10, max:100}],
-    effectText:  function(v){ return '[Drain] '+v.pct+'% of max mana.'; },
-    tooltipText: function(v){ return '[Drain]: removes mana from your bar.'; },
+    effectText:  function(v){ return 'Drain '+v.pct+'% max mana.'; },
+    tooltipText: function(v){ return 'Drain: removes mana from your bar.'; },
     typeHint:'utility',
     run: function(v,ctx){
       var cost=Math.round(gs.maxMana*(+v.pct/100));
@@ -534,7 +535,7 @@ var EFFECT_TYPES = {
       {id:'amt', label:'Mana stolen', type:'number', default:20, min:5,  max:100},
       {id:'dur', label:'Duration (s)',type:'number', default:3,  min:1,  max:10}
     ],
-    effectText:  function(v){ return 'Steal '+v.amt+' mana from enemy for '+v.dur+'s.'; },
+    effectText:  function(v){ return 'Steal '+v.amt+' mana for '+v.dur+'s.'; },
     tooltipText: function(v){ return 'Temporarily reduces enemy mana pool.'; },
     typeHint:'utility',
     run: function(v,ctx){
@@ -551,7 +552,7 @@ var EFFECT_TYPES = {
     label:'Discard from Hand', cat:'utility',
     desc:'Discard N random cards from your own hand (downside on powerful cards).',
     fields:[{id:'count', label:'Cards discarded', type:'number', default:1, min:1, max:4}],
-    effectText:  function(v){ return 'Discard '+v.count+' random card'+(+v.count>1?'s':'')+' from hand.'; },
+    effectText:  function(v){ return 'Discard '+v.count+' card'+(+v.count>1?'s':'')+' at random.'; },
     tooltipText: function(v){ return 'Discarded cards return to your deck.'; },
     typeHint:'utility',
     run: function(v,ctx){
@@ -573,7 +574,7 @@ var EFFECT_TYPES = {
     label:'Trigger Holy Flame', cat:'utility',
     desc:'Triggers Holy Flame (Paladin innate — applies Burn on debuffs/buffs).',
     fields:[],
-    effectText:  function(v){ return 'Triggers [Holy Flame].'; },
+    effectText:  function(v){ return 'Trigger Holy Flame.'; },
     tooltipText: function(v){ return 'Holy Flame: Paladin innate. Applying debuffs or buffs also applies stacking Burn.'; },
     typeHint:'attack',
     run: function(v,ctx){ triggerHolyFlame(); }
@@ -588,8 +589,8 @@ var EFFECT_TYPES = {
       {id:'base', label:'Normal Dmg', type:'number', default:5,  min:1, max:100},
       {id:'high', label:'Shielded Dmg', type:'number', default:12, min:1, max:200}
     ],
-    effectText:  function(v){ return 'Deal '+v.base+' damage. If [Shield] is active: deal '+v.high+' instead.'; },
-    tooltipText: function(v){ return '[Shield] absorbs direct damage before HP. DoTs bypass it.'; },
+    effectText:  function(v){ return 'Deal '+v.base+' damage. If you have Shield: deal '+v.high+'.'; },
+    tooltipText: function(v){ return 'Shield: absorbs direct damage before HP. DoTs bypass it.'; },
     typeHint:'attack',
     run: function(v,ctx){
       var shielded=gs.playerShield>0;
@@ -606,8 +607,8 @@ var EFFECT_TYPES = {
       {id:'base', label:'Normal Dmg', type:'number', default:8,  min:1, max:100},
       {id:'high', label:'Slowed Dmg', type:'number', default:16, min:1, max:200}
     ],
-    effectText:  function(v){ return 'Deal '+v.base+' damage. If enemy is [Slowed]: deal '+v.high+' instead.'; },
-    tooltipText: function(v){ return '[Slow]: enemy attack speed reduced by 40%.'; },
+    effectText:  function(v){ return 'Deal '+v.base+' damage. If enemy is Slowed: deal '+v.high+'.'; },
+    tooltipText: function(v){ return 'Slow: reduces enemy attack speed by 40%.'; },
     typeHint:'attack',
     run: function(v,ctx){
       var slowed=gs.statusEffects.enemy.some(function(s){return s.stat==='atkspeed'&&s.val<0;});
@@ -624,8 +625,8 @@ var EFFECT_TYPES = {
       {id:'base', label:'Normal Dmg',  type:'number', default:6,  min:1, max:100},
       {id:'high', label:'Poison Dmg',  type:'number', default:14, min:1, max:200}
     ],
-    effectText:  function(v){ return 'Deal '+v.base+' damage. If [Poison] is active: deal '+v.high+' instead.'; },
-    tooltipText: function(v){ return '[Poison]: deals damage every 2s. Bypasses [Shield].'; },
+    effectText:  function(v){ return 'Deal '+v.base+' damage. If enemy has Poison: deal '+v.high+'.'; },
+    tooltipText: function(v){ return 'Poison: stacking DoT. Deals damage every 2s, bypasses Shield.'; },
     typeHint:'attack',
     run: function(v,ctx){
       var poisoned=gs.statusEffects.enemy.some(function(s){return s.id==='poison'&&s.dpt>0;});
@@ -642,8 +643,8 @@ var EFFECT_TYPES = {
       {id:'base', label:'Normal Dmg', type:'number', default:6,  min:1, max:100},
       {id:'high', label:'Burn Dmg',   type:'number', default:14, min:1, max:200}
     ],
-    effectText:  function(v){ return 'Deal '+v.base+' damage. If [Burn] is active: deal '+v.high+' instead.'; },
-    tooltipText: function(v){ return '[Burn]: deals damage every 3s. Bypasses [Shield].'; },
+    effectText:  function(v){ return 'Deal '+v.base+' damage. If enemy has Burn: deal '+v.high+'.'; },
+    tooltipText: function(v){ return 'Burn: '+v.dpt+' dmg every 3s. Bypasses Shield. Refreshes on reapplication.'; },
     typeHint:'attack',
     run: function(v,ctx){
       var burning=gs.statusEffects.enemy.some(function(s){return s.id==='burn'&&s.dpt>0;});
@@ -660,7 +661,7 @@ var EFFECT_TYPES = {
       {id:'base', label:'Normal Dmg',    type:'number', default:8,  min:1, max:100},
       {id:'high', label:'Full Hand Dmg', type:'number', default:18, min:1, max:200}
     ],
-    effectText:  function(v){ return 'Deal '+v.base+' damage. If hand is full: deal '+v.high+' instead.'; },
+    effectText:  function(v){ return 'Deal '+v.base+' damage. Full hand: deal '+v.high+' instead.'; },
     tooltipText: function(v){ return 'Rewards holding cards — pairs well with discard-synergy builds.'; },
     typeHint:'attack',
     run: function(v,ctx){
@@ -719,8 +720,8 @@ var EFFECT_TYPES = {
       {id:'dur',     label:'Duration (s)',  type:'number', default:4, min:1, max:15},
       {id:'ext_dur', label:'Extended (s)',  type:'number', default:8, min:1, max:20}
     ],
-    effectText:  function(v){ return 'Apply [Slow] for '+v.dur+'s. If already [Slowed]: extend to '+v.ext_dur+'s.'; },
-    tooltipText: function(v){ return '[Slow]: enemy attack speed reduced by 40%.'; },
+    effectText:  function(v){ return 'Apply Slow for '+v.dur+'s. Already Slowed: extend to '+v.ext_dur+'s.'; },
+    tooltipText: function(v){ return 'Slow: reduces enemy attack speed by 40%.'; },
     typeHint:'debuff',
     run: function(v,ctx){
       var existing=gs.statusEffects.enemy.find(function(s){return s.stat==='atkspeed'&&s.val<0;});
@@ -777,14 +778,159 @@ var EFFECT_TYPES = {
       dealDamageToEnemy(d);
       addLog(ctx.cardName+'! '+d+' dmg (played '+gs[key]+'×).','dmg');
     }
+  },
+
+  // ── SORCERY ─────────────────────────────────────────
+
+  sorcery: {
+    label:'Sorcery (conditional mana bonus)', cat:'utility',
+    desc:'Pay X mana to trigger a bonus effect. If you cannot afford it, the base card still resolves — only the bonus is skipped.',
+    fields:[
+      {id:'cost',  label:'Mana cost',     type:'number', default:20, min:5,  max:200},
+      {id:'type2', label:'Bonus type',    type:'select', default:'poison',
+       options:['poison','burn','slow','cursed','marked','mana','draw_speed','shield','dodge','heal','stun','dmg','dmg_stat']},
+      // Bonus values — interpreted based on type2
+      {id:'v1', label:'Value 1 (dpt/amt/base)', type:'number', default:3,  min:1, max:100},
+      {id:'v2', label:'Value 2 (dur/div)',       type:'number', default:8,  min:1, max:30},
+      {id:'v3', label:'Value 3 (stat — str/agi/wis)', type:'select', default:'wis',
+       options:['str','agi','wis','none']},
+    ],
+    effectText: function(v){
+      var bonus = _sorceryBonusText(v);
+      return 'Sorcery '+v.cost+': '+bonus;
+    },
+    tooltipText: function(v){
+      return 'Sorcery: pay '+v.cost+' mana to trigger the bonus effect. If you cannot afford it, the bonus is skipped — no mana spent.';
+    },
+    typeHint:'utility',
+    run: function(v,ctx){
+      if(gs.mana >= +v.cost){
+        gs.mana -= +v.cost;
+        // Build a synthetic effect object and dispatch it
+        var inner = _sorceryInnerEffect(v);
+        if(inner){
+          var def = EFFECT_TYPES[inner.type];
+          if(def) def.run(inner, ctx);
+        }
+        addLog(ctx.cardName+' Sorcery! ('+v.cost+' mana)','mana');
+      }
+      // else: silently skip — base card already resolved before this entry
+    }
   }
 
 }; // end EFFECT_TYPES
 
+// Build display text for a sorcery bonus given its field values
+function _sorceryBonusText(v){
+  var t=v.type2, v1=+v.v1, v2=+v.v2, v3=v.v3;
+  if(t==='poison')     return 'Apply '+v1+' Poison for '+v2+'s.';
+  if(t==='burn')       return 'Apply '+v1+' Burn for '+v2+'s.';
+  if(t==='slow')       return 'Apply Slow for '+v1+'s.';
+  if(t==='cursed')     return 'Apply Weaken for '+v1+'s.';
+  if(t==='marked')     return 'Apply Vulnerable for '+v1+'s.';
+  if(t==='mana')       return 'Gain '+v1+' mana.';
+  if(t==='draw_speed') return 'Draw speed +'+v1+'% for '+v2+'s.';
+  if(t==='shield')     return 'Apply Shield ('+v1+') for '+v2+'s.';
+  if(t==='dodge')      return 'Gain Dodge.';
+  if(t==='heal')       return 'Restore '+v1+' HP.';
+  if(t==='stun')       return 'Stun enemy for '+(v1/1000).toFixed(1)+'s.';
+  if(t==='dmg')        return 'Deal '+v1+' damage.';
+  if(t==='dmg_stat')   return 'Deal '+v1+'+'+(v3!=='none'?v3.toUpperCase():'')+'/'+v2+' damage.';
+  return t;
+}
 
+// Build an inner effect object from sorcery fields, for dispatch through EFFECT_TYPES
+function _sorceryInnerEffect(v){
+  var t=v.type2, v1=+v.v1, v2=+v.v2, v3=v.v3;
+  if(t==='poison')     return {type:'poison',     dpt:v1, dur:v2};
+  if(t==='burn')       return {type:'burn',        dpt:v1, dur:v2};
+  if(t==='slow')       return {type:'slow',        dur:v1};
+  if(t==='cursed')     return {type:'cursed',      dur:v1};
+  if(t==='marked')     return {type:'marked',      dur:v1};
+  if(t==='mana')       return {type:'mana',        amt:v1};
+  if(t==='draw_speed') return {type:'draw_speed',  pct:v1, dur:v2};
+  if(t==='shield')     return {type:'shield',      amt:v1, dur:v2, onexpiry:'nothing', expiry_val:0};
+  if(t==='dodge')      return {type:'dodge'};
+  if(t==='heal')       return {type:'heal',        amt:v1};
+  if(t==='stun')       return {type:'stun',        dur:v1};
+  if(t==='dmg')        return {type:'dmg',         base:v1};
+  if(t==='dmg_stat')   return {type:'dmg_stat',    base:v1, div:v2, stat:v3!=='none'?v3:'wis'};
+  return null;
+}
+
+
+// Apply or stack Frenzy on the player.
 // ═══════════════════════════════════════════════════════
-// DATA-DRIVEN DISPATCHER
+// FRENZY — stacking player buff
+// Stack Rule: Stack — each application adds stacks and refreshes duration
+// Duration: 2000ms × 0.9^(stacks-1) — more stacks = shorter window
+// Expiry: Full cleanse — when timer hits 0 the whole thing collapses instantly
+// Mana Sustain: drains 3 mana/s while active — cleansed immediately if mana = 0
 // ═══════════════════════════════════════════════════════
+function _applyFrenzy(stacks){
+  stacks = stacks || 1;
+  var e = gs.statusEffects.player.find(function(s){ return s.id === 'frenzy'; });
+  if(e){
+    e.stacks = (e.stacks||1) + stacks;
+    // Refresh duration for the new total stack count
+    var dur = Math.round(2000 * Math.pow(0.9, e.stacks - 1));
+    e.remaining = dur; e.maxRemaining = dur;
+    _updateFrenzyBonus(e.stacks);
+    _updateFrenzyTag(e.stacks);
+  } else {
+    var initDur = Math.round(2000 * Math.pow(0.9, stacks - 1));
+    gs.statusEffects.player.push({
+      id:'frenzy', label:'Frenzy \xd7'+stacks, cls:'buff', stat:'frenzy',
+      stacks:stacks, remaining:initDur, maxRemaining:initDur, dot:false,
+      desc:'Frenzy: stacking draw speed buff. Collapses when timer expires or mana runs out.'
+    });
+    addTag('player','buff','Frenzy \xd7'+stacks, stacks, 'frenzy',
+      'Frenzy: +10% draw speed per stack. Collapses on expiry or at 0 mana. 3 mana/s drain.');
+    _updateFrenzyBonus(stacks);
+  }
+  if(SETTINGS.logd!=='brief') addLog('Frenzy \xd7'+(e?e.stacks:stacks)+'!','buff');
+}
+
+function _getFrenzyStacks(){
+  var e = gs.statusEffects.player.find(function(s){ return s.id==='frenzy'; });
+  return e ? (e.stacks||0) : 0;
+}
+
+function _updateFrenzyBonus(stacks){
+  // Replace old bonus cleanly to avoid accumulation errors
+  if(gs._frenzyDrawBonus) gs.drawSpeedBonus = Math.max(1,(gs.drawSpeedBonus||1) - gs._frenzyDrawBonus);
+  gs._frenzyDrawBonus = stacks * 0.10;
+  gs.drawSpeedBonus = (gs.drawSpeedBonus||1) + gs._frenzyDrawBonus;
+}
+
+function _clearFrenzy(reason){
+  var e = gs.statusEffects.player.find(function(s){ return s.id==='frenzy'; });
+  if(!e) return;
+  var lbl = e.label;
+  gs.statusEffects.player = gs.statusEffects.player.filter(function(s){ return s.id!=='frenzy'; });
+  removeTagByLabel('player', lbl);
+  // Also clear any old-label tags in case of stale state
+  var el = document.getElementById('p-tags');
+  if(el){ var stale=el.querySelector('[data-label^="Frenzy"]'); if(stale) stale.remove(); }
+  if(gs._frenzyDrawBonus){
+    gs.drawSpeedBonus = Math.max(1,(gs.drawSpeedBonus||1) - gs._frenzyDrawBonus);
+    gs._frenzyDrawBonus = 0;
+  }
+  addLog('Frenzy collapsed'+(reason?' ('+reason+')':'')+'!','debuff');
+}
+
+function _updateFrenzyTag(stacks){
+  var el = document.getElementById('p-tags');
+  var tag = el && el.querySelector('[data-label^="Frenzy"]');
+  var lbl = 'Frenzy \xd7'+stacks;
+  if(tag){ tag.setAttribute('data-label', lbl); tag.textContent = lbl; }
+  else { addTag('player','buff',lbl,stacks,'frenzy','Frenzy: +'+stacks+'0% draw speed. 3 mana/s drain.'); }
+  // Sync label on the status object
+  var e = gs.statusEffects.player.find(function(s){ return s.id==='frenzy'; });
+  if(e) e.label = lbl;
+}
+
+
 
 function executeEffects(effects, pdmgFn, cardId, isAuto, isGhost, markedCrit){
   var s=gs.stats;
@@ -830,6 +976,11 @@ function executeCard(id,isGhost,isAuto){
       gs._spreadingSporesCount=(gs._spreadingSporesCount||0)+1;
       if(gs._spreadingSporesCount%3===0){ applyDoT('enemy','spread_poison',4,2000,6000,'Spreading Spores: 4/2s.'); addLog('Spreading Spores! Poison.','buff'); }
     }
+    // Frenzied — gain 1 Frenzy when playing an attack card (damage tag)
+    if(_pi&&_pi.id==='frenzied'){
+      var _tags=getCardTags(c);
+      if(_tags.indexOf('damage')!==-1) _applyFrenzy(1);
+    }
     // Effigy — first card each battle refunds its mana cost
     if(gs._effigyFree){ gs._effigyFree=false; gs.mana=Math.min(gs.maxMana,gs.mana+(c&&c.manaCost||10)); addLog('Effigy: first card is free!','mana'); }
   }
@@ -873,12 +1024,23 @@ function executeCard(id,isGhost,isAuto){
     dealDamageToEnemy(strikeDmg);
     if(markedCrit){ spawnFloatNum('enemy','CRIT!',false,'crit-num'); addLog('Strike CRIT! (Shadow Mark) — '+strikeDmg+' dmg!','innate'); }
   }
+  else if(id==='filler'){
+    // Dead Weight — spend all current mana to draw 1 card
+    var fillerMana=gs.mana;
+    if(fillerMana>0){
+      gs.mana=0;
+      doDraw(null,false);
+      addLog('Dead Weight: spent '+fillerMana+' mana to draw 1 card.','draw');
+    } else {
+      addLog('Dead Weight: no mana to spend.','sys');
+    }
+  }
   else if(id==='gr_gnaw'){
-    // Time-based conditional: bonus damage if played within 2s of last card
-    var gn=pdmg(4+Math.floor(agi/3));
-    if(gs._lastCardTime&&(Date.now()-gs._lastCardTime)<2000) gn=pdmg(8);
-    gs._lastCardTime=Date.now();
-    dealDamageToEnemy(gn); addLog('Gnaw! '+gn+' dmg'+(gn>=pdmg(8)?' (fast bonus!)':'')+'.','dmg');
+    // Core generator: damage + 1 Frenzy stack
+    var gnawDmg=pdmg(3+Math.floor(agi/4));
+    dealDamageToEnemy(gnawDmg);
+    _applyFrenzy(1);
+    addLog('Gnaw! '+gnawDmg+' dmg + Frenzy.','dmg');
   }
   else if(id==='sk_march'){
     // Permanently reduces drawIntervalBase each play (per-run mutation)
@@ -1034,11 +1196,30 @@ function executeCard(id,isGhost,isAuto){
     dealDamageToEnemy(pdmg(12+Math.floor(agi/3))); gs.enemyCardCount=0;
     addTag('player','buff','Ambush Reset',0,'','Ambush Strike: Poison Ambush will trigger on the next card.'); addLog('Ambush Strike! '+(12+Math.floor(agi/3))+' dmg \u2014 Poison Ambush resets!','innate');
   }
-  else if(id==='gr_frenzy_bite'){
-    // Permanently mutates drawIntervalBase (per-run stat)
-    dealDamageToEnemy(pdmg(6)); if(!gs._frenzyBiteStacks) gs._frenzyBiteStacks=0;
-    if(gs._frenzyBiteStacks<5){ gs._frenzyBiteStacks++; gs.drawIntervalBase=Math.max(500,(gs.drawIntervalBase||2000)*0.97); }
-    addLog('Frenzy Bite! 6 dmg + draw interval -3% (\xd7'+gs._frenzyBiteStacks+').','buff');
+  else if(id==='gr_scurry'){
+    // Payoff: deal 2 × Frenzy stacks damage (min 4)
+    var scurryStacks=_getFrenzyStacks();
+    var scurryDmg=pdmg(Math.max(4, scurryStacks*2));
+    dealDamageToEnemy(scurryDmg);
+    addLog('Scurry! '+scurryDmg+' dmg'+(scurryStacks>0?' (\xd7'+scurryStacks+' Frenzy)':'')+'.','dmg');
+  }
+  else if(id==='gr_frenzy_surge'){
+    // Bridge: mana = Frenzy stacks × 2. Converts tempo into resources.
+    var fStacks=_getFrenzyStacks();
+    var manaGain=Math.max(5,fStacks*2);
+    gs.mana=Math.min(gs.maxMana,gs.mana+manaGain);
+    addLog('Frenzy Surge! +'+manaGain+' mana ('+fStacks+'\xd7 Frenzy).','mana');
+  }
+  else if(id==='gr_frenzy_burst'){
+    // Payoff unlock: double current Frenzy stacks
+    var fNow=_getFrenzyStacks();
+    if(fNow>0){
+      _applyFrenzy(fNow);
+      addLog('Frenzy Burst! \xd7'+fNow+' \u2192 \xd7'+_getFrenzyStacks()+' Frenzy!','innate');
+    } else {
+      _applyFrenzy(1);
+      addLog('Frenzy Burst! No Frenzy to double \u2014 gained 1 stack.','buff');
+    }
   }
   else if(id==='mc_mycelium'){
     // Sets _myceliumBurst flag read by the Spreading Spores innate loop
@@ -1110,6 +1291,56 @@ function activateInnate(){
     }
   } else if(gs.champId==='thief'){
     doDraw('ghost_shadow_mark',false); addLog('\u2756 SHADOW MARK! A spectral card appears in hand.','innate');
+  } else if(gs.champId==='gorby'){
+    // Convert all attack cards in hand into Ethereal Gorby Attacks
+    // Formula: resolvedDamage × effectCount (multi-hit uses total damage)
+    var converted=0;
+    var s=gs.stats;
+    gs.hand.forEach(function(item,i){
+      var c=CARDS[item.id];
+      if(!c||item.ghost) return;
+      var tags=getCardTags(c);
+      if(tags.indexOf('damage')===-1) return; // skip non-damage cards
+
+      // Resolve base damage
+      var baseDmg=0;
+      if(c.effects){
+        for(var ei=0;ei<c.effects.length;ei++){
+          var e=c.effects[ei];
+          if(e.type==='dmg'){baseDmg=+e.base; break;}
+          if(e.type==='dmg_stat'){baseDmg=+e.base+Math.floor((s[e.stat]||0)/+e.div); break;}
+          if(e.type==='dmg_multi'){baseDmg=(+e.dmg)*(+e.hits); break;}
+          if(e.type==='dmg_crit'||e.type==='dmg_if_debuff'||e.type==='dmg_if_slowed'||
+             e.type==='dmg_if_poison'||e.type==='dmg_if_burn'||e.type==='dmg_if_shielded'||
+             e.type==='dmg_if_full_hand'||e.type==='dmg_first_card'){baseDmg=+e.base; break;}
+        }
+      }
+      if(baseDmg<=0) return; // no damage value found
+
+      // Count effects (excluding sorcery cost as its own effect — it's a modifier)
+      var effectCount=c.effects ? c.effects.length : 1;
+      var finalDmg=Math.max(1,Math.round(baseDmg*effectCount));
+
+      // Register a temporary Gorby Attack card in CARDS
+      var gId='gorby_attack_'+i;
+      CARDS[gId]={
+        id:gId, name:'Gorby Attack', icon:'\ud83d\udc4a', type:'attack',
+        unique:false, champ:'gorby', statId:'str', manaCost:0,
+        effect:'Deal '+finalDmg+' damage.\n[Ethereal]: vanishes when played or discarded.',
+        effects:[{type:'dmg',base:finalDmg}],
+        _gorbyTemp:true
+      };
+      // Replace the hand item in-place — ghost:true means it won't go to discard
+      gs.hand[i]={id:gId, ghost:true};
+      converted++;
+      addLog('Converted '+c.name+' \u2192 Gorby Attack ('+finalDmg+' dmg).','innate');
+    });
+    if(converted===0){
+      addLog('\u2756 GORBY: No attack cards to convert!','innate');
+      gs.mana+=ch.innateCost; // refund
+    } else {
+      addLog('\u2756 GORBY converts '+converted+' card'+(converted>1?'s':'')+'!','innate');
+    }
   }
   updateAll(); renderHand(); renderPiles(); checkEnd();
 }

@@ -645,8 +645,19 @@ function getCreaturePlayable(id){
 
 function buildStartDeck(champId){
   var c=getCreaturePlayable(champId);
-  var base=c&&c.startDeck ? c.startDeck.slice() : CREATURES_PLAYABLE.thief.startDeck.slice();
   var mods=getSanctumMods(champId);
+
+  // If the deck editor has saved an override, use it directly
+  if(mods.deckOverride && mods.deckOverride.length > 0){
+    var base = mods.deckOverride.slice();
+    // Pad to current STR cap with filler if needed
+    var cp=getChampPersist(champId);
+    var cap=calcDeckCap(cp.stats.str);
+    while(base.length<cap) base.push('filler');
+    return base;
+  }
+
+  var base=c&&c.startDeck ? c.startDeck.slice() : CREATURES_PLAYABLE.thief.startDeck.slice();
   // Apply removals
   (mods.removed||[]).forEach(function(r){
     for(var i=0;i<(r.copies||1);i++){
@@ -663,6 +674,10 @@ function buildStartDeck(champId){
   (mods.extras||[]).forEach(function(e){
     for(var i=0;i<(e.copies||1);i++) base.push(e.cardId);
   });
+  // Pad with filler cards up to current STR-based deck cap
+  var cp=getChampPersist(champId);
+  var cap=calcDeckCap(cp.stats.str);
+  while(base.length<cap) base.push('filler');
   return base;
 }
 
@@ -873,7 +888,8 @@ function rebuildChampGrid(){
           +'<span class="wis">+'+ch.growth.wis+' WIS</span>'
           +'<span style="color:#4a3010;">/ lv</span>'
         +'</div>'
-        +'<div class="innate-box"><div class="innate-lbl">✦ '+ch.innateName+'</div><div class="innate-txt">'+ch.innateDesc+'</div></div>';
+        +'<div class="innate-box"><div class="innate-lbl">✦ '+ch.innateName+'</div><div class="innate-txt">'+ch.innateDesc+'</div></div>'
+        +'<button class="champ-card-info-btn" onclick="event.stopPropagation();selectChamp(\''+id+'\');openChampPanel();" title="Champion info">ℹ</button>';
     }
 
     grid.appendChild(d);
@@ -950,6 +966,7 @@ function navToTown(){
 
 function navTo(tab){
   if(tab==='adventure'){
+    if(gs&&gs.running){ addLog('Finish the battle first.','sys'); return; }
     showScreen('select-screen');
   } else if(tab==='town'){
     openTown();
@@ -1061,12 +1078,312 @@ function openChampDeckView(){
 }
 
 function openChampSanctum(){
-  _sanctumChamp=selectedChampId;
-  navTo('town');
-  setTimeout(function(){
-    if(PERSIST.town.buildings.sanctum&&PERSIST.town.buildings.sanctum.unlocked) openBuilding('sanctum');
-  },120);
+  // Now routes to the new deck editor
+  openDeckEditor(selectedChampId);
 }
+
+// ═══════════════════════════════════════════════════════
+// DECK EDITOR
+// ═══════════════════════════════════════════════════════
+var _deChampId = null;
+var _deDeck    = [];   // current working deck (array of card ids, mutable)
+var _deHistory = [];   // stack of previous deck states for undo
+var _deSelected= -1;   // index in _deDeck that is selected for replacement
+var _deTab     = 'unlocks'; // active available-cards tab
+var MAX_CARD_COPIES = 5; // max copies of any one card (Dead Weight exempt)
+
+function openDeckEditor(champId){
+  _deChampId  = champId;
+  _deDeck     = buildStartDeck(champId).slice();
+  _deHistory  = [];
+  _deSelected = -1;
+  _deTab      = 'unlocks';
+
+  var ch = getCreaturePlayable(champId);
+  var cp = getChampPersist(champId);
+
+  // Header
+  setCreatureImg(document.getElementById('de-portrait'), champId, ch.icon, '36px');
+  document.getElementById('de-champ-name').textContent = ch.name;
+  document.getElementById('de-champ-sub').textContent  = 'Lv.' + cp.level;
+  document.getElementById('de-stat-row').innerHTML =
+    '<span class="de-stat de-stat-str">'+Math.round(cp.stats.str)+' STR</span>'+
+    '<span class="de-stat de-stat-agi">'+Math.round(cp.stats.agi)+' AGI</span>'+
+    '<span class="de-stat de-stat-wis">'+Math.round(cp.stats.wis)+' WIS</span>';
+  document.getElementById('de-gold-row').innerHTML =
+    goldImgHTML('12px') + ' ' + PERSIST.gold;
+
+  // Highlight filler on first visit
+  _highlightFillerCards(champId);
+
+  _deRender();
+  showScreen('deck-edit-screen');
+  showNav(false);
+}
+
+function _deCardArtHTML(cardId, card){
+  if(!card) return '<span style="font-size:18px;">?</span>';
+  if(card.champ){
+    var src = 'assets/creatures/'+card.champ+'.png';
+    return '<img src="'+src+'" style="width:100%;height:100%;object-fit:contain;image-rendering:pixelated;transform:scaleX(-1);" onerror="this.style.display=\'none\'">';
+  }
+  return '<span style="font-size:18px;">'+(card.icon||'?')+'</span>';
+}
+
+function _deRender(){
+  _deRenderDeck();
+  _deRenderAvail();
+  _deRenderFooter();
+}
+
+function _deRenderDeck(){
+  var cp  = getChampPersist(_deChampId);
+  var cap = calcDeckCap(cp.stats.str);
+  var grid = document.getElementById('de-deck-grid');
+  grid.innerHTML = '';
+
+  // Count copies in working deck
+  var counts = {};
+  _deDeck.forEach(function(id){ counts[id] = (counts[id]||0)+1; });
+
+  _deDeck.forEach(function(cardId, idx){
+    var card = CARDS[cardId];
+    var isFiller = cardId === 'filler';
+    var isSelected = idx === _deSelected;
+
+    var d = document.createElement('div');
+    d.className = 'de-card' + (isFiller?' de-filler':'') + (isSelected?' de-selected':'');
+    d.innerHTML =
+      '<div class="de-card-art">'+_deCardArtHTML(cardId, card)+'</div>'+
+      '<div class="de-card-name">'+(card?card.name:cardId)+'</div>'+
+      (counts[cardId]>1?'<div class="de-copy-count">×'+counts[cardId]+'</div>':'');
+
+    (function(i){ d.onclick = function(){ _deSelectSlot(i); }; })(idx);
+
+    // Apply filler glow on first visit
+    if(isFiller && !PERSIST['filler_seen_'+_deChampId]) d.classList.add('filler-glow');
+
+    grid.appendChild(d);
+  });
+
+  // Update size bar
+  var used = _deDeck.length;
+  document.getElementById('de-size-fill').style.width = Math.min(100,Math.round(used/cap*100))+'%';
+  document.getElementById('de-size-label').textContent = used + ' / ' + cap + ' slots used';
+  document.getElementById('de-deck-size').textContent  = '(' + used + ')';
+
+  // Mark filler as seen
+  if(_deDeck.indexOf('filler') === -1 || PERSIST['filler_seen_'+_deChampId]){
+    PERSIST['filler_seen_'+_deChampId] = true;
+    savePersist();
+  }
+}
+
+function _deSelectSlot(idx){
+  _deSelected = (_deSelected === idx) ? -1 : idx;
+  _deRender();
+}
+
+function _deRenderAvail(){
+  var ch  = getCreaturePlayable(_deChampId);
+  var cp  = getChampPersist(_deChampId);
+  var mods = getSanctumMods(_deChampId);
+  var purchased = mods.purchasedUnlocks || [];
+
+  // Build tabs
+  var tabsEl = document.getElementById('de-avail-tabs');
+  tabsEl.innerHTML = '';
+  ['unlocks','universal','collection'].forEach(function(tab){
+    var btn = document.createElement('button');
+    btn.className = 'de-tab' + (tab===_deTab?' active':'');
+    btn.textContent = tab === 'unlocks' ? 'UNLOCKS' : tab === 'universal' ? 'UNIVERSAL' : 'COLLECTION';
+    btn.onclick = function(){ _deTab = tab; _deRenderAvail(); };
+    tabsEl.appendChild(btn);
+  });
+
+  var grid = document.getElementById('de-avail-grid');
+  grid.innerHTML = '';
+  var labelEl = document.getElementById('de-avail-label');
+
+  // Count copies in current working deck
+  var deckCounts = {};
+  _deDeck.forEach(function(id){ deckCounts[id] = (deckCounts[id]||0)+1; });
+
+  if(_deTab === 'unlocks'){
+    labelEl.textContent = 'CHAMPION CARDS';
+    // Starting cards + unlockable cards
+    var startCards  = (ch.startDeck||[]).filter(function(id){ return CARDS[id]&&CARDS[id].champ===_deChampId; });
+    var uniqStart   = startCards.filter(function(id,i){ return startCards.indexOf(id)===i; });
+    var rewards     = ch.cardRewards||[];
+    var allChamp    = uniqStart.concat(rewards.filter(function(id){ return uniqStart.indexOf(id)===-1; }));
+
+    if(!allChamp.length){
+      grid.innerHTML = '<div style="font-size:8px;color:#3a2810;grid-column:1/-1;padding:8px;text-align:center;">No champion-specific cards yet.</div>';
+      return;
+    }
+
+    allChamp.forEach(function(cardId){
+      var card = CARDS[cardId]; if(!card) return;
+      var isReward    = rewards.indexOf(cardId) !== -1;
+      var isPurchased = purchased.indexOf(cardId) !== -1;
+      var canBuy      = isReward && !isPurchased && cp.level >= 5;
+      var isLocked    = isReward && !isPurchased;
+      var buyGold     = 50; // cost to unlock a progression card
+      var atMax       = deckCounts[cardId] >= MAX_CARD_COPIES;
+
+      var d = document.createElement('div');
+      d.className = 'de-acard de-acard-champ' + (isLocked?' de-acard-locked':'');
+      d.innerHTML =
+        '<div class="de-acard-art">'+_deCardArtHTML(cardId, card)+'</div>'+
+        '<div class="de-acard-name">'+card.name+'</div>'+
+        (isLocked && canBuy   ? '<span class="de-buy-badge">'+buyGold+'g</span>' : '')+
+        (isLocked && !canBuy  ? '<span class="de-lock-badge">Lv.5</span>' : '')+
+        (!isLocked && atMax   ? '<span class="de-maxed-badge">MAX</span>' : '');
+
+      if(isLocked && canBuy){
+        d.onclick = function(){ _deBuyUnlock(cardId, buyGold); };
+      } else if(!isLocked && !atMax){
+        (function(id){ d.onclick = function(){ _deSwap(id); }; })(cardId);
+      }
+      grid.appendChild(d);
+    });
+
+  } else if(_deTab === 'universal'){
+    labelEl.textContent = 'UNIVERSAL CARDS';
+    ['strike','brace'].forEach(function(cardId){
+      var card = CARDS[cardId]; if(!card) return;
+      var atMax = deckCounts[cardId] >= MAX_CARD_COPIES;
+      var d = document.createElement('div');
+      d.className = 'de-acard' + (atMax?' de-acard-locked':'');
+      d.innerHTML =
+        '<div class="de-acard-art">'+_deCardArtHTML(cardId, card)+'</div>'+
+        '<div class="de-acard-name">'+card.name+'</div>'+
+        (atMax ? '<span class="de-maxed-badge">MAX</span>' : '');
+      if(!atMax){ (function(id){ d.onclick = function(){ _deSwap(id); }; })(cardId); }
+      grid.appendChild(d);
+    });
+
+  } else { // collection
+    labelEl.textContent = 'COLLECTION';
+    var pool = PERSIST.sanctum && PERSIST.sanctum.unlockedCards || {};
+    var poolIds = Object.keys(pool).filter(function(id){
+      var c = CARDS[id];
+      return pool[id]>0 && c && (!c.champ || c.champ===_deChampId);
+    });
+    if(!poolIds.length){
+      grid.innerHTML = '<div style="font-size:8px;color:#3a2810;grid-column:1/-1;padding:8px;text-align:center;">No collected cards available.</div>';
+      return;
+    }
+    poolIds.forEach(function(cardId){
+      var card = CARDS[cardId]; if(!card) return;
+      var atMax = deckCounts[cardId] >= MAX_CARD_COPIES;
+      var d = document.createElement('div');
+      d.className = 'de-acard' + (atMax?' de-acard-locked':'');
+      d.innerHTML =
+        '<div class="de-acard-art">'+_deCardArtHTML(cardId, card)+'</div>'+
+        '<div class="de-acard-name">'+card.name+'</div>'+
+        '<div class="de-copy-count">'+pool[cardId]+' owned</div>'+
+        (atMax ? '<span class="de-maxed-badge">MAX</span>' : '');
+      if(!atMax){ (function(id){ d.onclick = function(){ _deSwap(id); }; })(cardId); }
+      grid.appendChild(d);
+    });
+  }
+}
+
+function _deSwap(incomingId){
+  if(_deSelected === -1){
+    // No slot selected — auto-select first filler or first available slot
+    var fillerIdx = _deDeck.indexOf('filler');
+    if(fillerIdx !== -1){ _deSelected = fillerIdx; }
+    else { document.getElementById('de-hint').textContent = 'Select a card in your deck first'; return; }
+  }
+  // Check max copies (filler exempt)
+  var counts = {};
+  _deDeck.forEach(function(id){ counts[id]=(counts[id]||0)+1; });
+  if(incomingId !== 'filler' && (counts[incomingId]||0) >= MAX_CARD_COPIES){
+    document.getElementById('de-hint').textContent = 'Max '+MAX_CARD_COPIES+' copies of any card'; return;
+  }
+
+  // Save history for undo
+  _deHistory.push(_deDeck.slice());
+  if(_deHistory.length > 20) _deHistory.shift();
+
+  _deDeck[_deSelected] = incomingId;
+  _deSelected = -1;
+  _deSave();
+  _deRender();
+}
+
+function _deBuyUnlock(cardId, goldCost){
+  if(PERSIST.gold < goldCost){ showTownToast('Not enough gold (need '+goldCost+').'); return; }
+  var mods = getSanctumMods(_deChampId);
+  if(!mods.purchasedUnlocks) mods.purchasedUnlocks = [];
+  if(mods.purchasedUnlocks.indexOf(cardId) !== -1) return;
+  PERSIST.gold -= goldCost;
+  mods.purchasedUnlocks.push(cardId);
+  savePersist();
+  showTownToast('Unlocked '+CARDS[cardId].name+'!');
+  _deRenderAvail();
+  document.getElementById('de-gold-row').innerHTML = goldImgHTML('12px')+' '+PERSIST.gold;
+}
+
+function deDeckUndo(){
+  if(!_deHistory.length) return;
+  _deDeck = _deHistory.pop();
+  _deSelected = -1;
+  _deSave();
+  _deRender();
+}
+
+function deDeckReset(){
+  if(!confirm('Reset '+getCreaturePlayable(_deChampId).name+'\'s deck to default?')) return;
+  var mods = getSanctumMods(_deChampId);
+  mods.swaps=[]; mods.extras=[]; mods.removed=[];
+  savePersist();
+  _deHistory = [];
+  _deDeck = buildStartDeck(_deChampId).slice();
+  _deSelected = -1;
+  _deRender();
+  showTownToast('Deck reset to default.');
+}
+
+function deDeckDone(){
+  // Save the working deck back to sanctum mods
+  _deSave();
+  showScreen('area-screen');
+  showNav(true);
+  updateNavBar('adventure');
+}
+
+function _deSave(){
+  // Reconstruct sanctum mods from the diff between default deck and working deck
+  var ch      = getCreaturePlayable(_deChampId);
+  var mods    = getSanctumMods(_deChampId);
+  var defDeck = (ch.startDeck||[]).slice();
+
+  // Build new extras/removed/swaps from scratch by comparing working vs default
+  var working = _deDeck.slice();
+  var def     = defDeck.slice();
+
+  // Simple approach: store working deck directly as a flat override
+  // We use a new field `deckOverride` to avoid breaking the existing swap/extras system
+  mods.deckOverride = working;
+  savePersist();
+}
+
+function _deRenderFooter(){
+  var undoBtn = document.getElementById('de-undo-btn');
+  undoBtn.style.display = _deHistory.length ? '' : 'none';
+  var hint = document.getElementById('de-hint');
+  if(_deSelected !== -1){
+    var selCard = CARDS[_deDeck[_deSelected]];
+    hint.textContent = (selCard ? selCard.name : 'slot') + ' selected — choose a replacement';
+  } else {
+    hint.textContent = 'Select a card in your deck to replace it';
+  }
+}
+
+
 
 // ═══════════════════════════════════════════════════════
 // CHAMPION INFO PANEL
@@ -1099,9 +1416,8 @@ function openChampPanel(){
   document.getElementById('csp-deck-summary').textContent=Object.keys(counts).map(function(id){
     var c=CARDS[id]; return (counts[id]>1?counts[id]+'× ':'')+((c&&c.name)||id);
   }).join('\n');
-  // Edit button
-  var canEdit=PERSIST.town&&PERSIST.town.buildings&&PERSIST.town.buildings.sanctum&&PERSIST.town.buildings.sanctum.unlocked;
-  document.getElementById('csp-edit-btn').style.display=canEdit?'':'none';
+  // Edit button — always available, no building gate
+  document.getElementById('csp-edit-btn').style.display='';
   // Open
   document.getElementById('champ-panel').classList.add('open');
   document.getElementById('champ-panel-backdrop').style.display='block';
@@ -1183,19 +1499,25 @@ function matImgHTML(matId, size){
 
 // ── Combat Background ──────────────────────────────────────────────────
 function setCombatBackground(areaId){
-  var gs_el = document.getElementById('game-screen');
-  if(!gs_el) return;
+  var playerPanel = document.getElementById('combatant-player');
+  var enemyPanel  = document.getElementById('combatant-enemy');
+  var gs_el       = document.getElementById('game-screen');
+  if(gs_el) gs_el.style.backgroundImage='';
+  if(!playerPanel||!enemyPanel) return;
   var src = 'assets/backgrounds/' + areaId + '.png';
   var img = new Image();
   img.onload = function(){
-    gs_el.style.backgroundImage = 'url('+src+')';
-    gs_el.style.backgroundSize  = 'cover';
-    gs_el.style.backgroundPosition = 'center';
-    gs_el.style.backgroundRepeat = 'no-repeat';
+    var url = 'url('+src+')';
+    playerPanel.style.backgroundImage    = url;
+    playerPanel.style.backgroundSize     = '200% 100%';
+    playerPanel.style.backgroundPosition = 'left center';
+    enemyPanel.style.backgroundImage     = url;
+    enemyPanel.style.backgroundSize      = '200% 100%';
+    enemyPanel.style.backgroundPosition  = 'right center';
   };
   img.onerror = function(){
-    // No image for this area — clear to solid colour from area def
-    gs_el.style.backgroundImage = '';
+    playerPanel.style.backgroundImage = '';
+    enemyPanel.style.backgroundImage  = '';
   };
   img.src = src;
 }
@@ -3062,6 +3384,24 @@ function showLevelUpToast(level, gains){
 // ═══════════════════════════════════════════════════════
 var _deckReturnScreen='game-screen';
 
+// Highlight filler cards the first time a champion's deck view is opened with them
+function _highlightFillerCards(champId){
+  var seenKey='filler_seen_'+(champId||'run');
+  var alreadySeen=PERSIST[seenKey];
+  var grid=document.getElementById('dv-grid');
+  if(!grid) return;
+  var hasUnseenFiller=false;
+  grid.querySelectorAll('.dv-wrap').forEach(function(wrap){
+    var card=wrap.querySelector('.card');
+    if(!card) return;
+    var title=card.querySelector('.card-title');
+    if(title&&title.textContent.trim()==='Dead Weight'){
+      if(!alreadySeen){ card.classList.add('filler-glow'); hasUnseenFiller=true; }
+    }
+  });
+  if(hasUnseenFiller){ PERSIST[seenKey]=true; savePersist(); }
+}
+
 function showDeckView(){
   _deckReturnScreen='game-screen';
   stopLoops();
@@ -3075,6 +3415,7 @@ function showDeckView(){
     grid.appendChild(wrap);
   });
   showScreen('deck-screen');
+  _highlightFillerCards(gs&&gs.champId);
 }
 
 function showDeckViewForChamp(champId){
@@ -3089,6 +3430,7 @@ function showDeckViewForChamp(champId){
     grid.appendChild(wrap);
   });
   showScreen('deck-screen');
+  _highlightFillerCards(champId);
 }
 
 function continueDeckView(){
@@ -3133,34 +3475,76 @@ function cardEffectFontSize(effectText){
   return              'font-size:6px;line-height:2.0;';
 }
 
+// Card art — champion sprite if card has a champ, emoji fallback for universals
+function cardArtHTML(cardId, emoji, manaCost, champId){
+  var html='';
+  if(champId){
+    var csrc='assets/creatures/'+champId+'.png';
+    html='<img class="card-champ-art" src="'+csrc+'" alt="" onerror="this.style.display=\'none\';">';
+  }
+  html+='<span class="card-emoji-icon"'+(champId?' style="opacity:0;"':'')+'>'+emoji+'</span>';
+  if(manaCost) html+='<div class="card-mana-badge">'+manaCost+'</div>';
+  return html;
+}
+
+function getCardIdentityLabel(c){
+  if(!c||!c.champ) return 'Universal';
+  var cr=CREATURES&&CREATURES[c.champ];
+  return cr ? cr.name : c.champ.charAt(0).toUpperCase()+c.champ.slice(1);
+}
+
+function getCardTags(c){
+  if(!c) return ['unique'];
+  var tags=[];
+  var DMG={dmg:1,dmg_stat:1,dmg_multi:1,dmg_if_debuff:1,dmg_if_hp_low:1,dmg_crit:1,dmg_if_shielded:1,dmg_if_slowed:1,dmg_if_poison:1,dmg_if_burn:1,dmg_if_full_hand:1,dmg_first_card:1,dmg_scaling_played:1,poison_detonate:1,burn_detonate:1};
+  var DEB={slow:1,cursed:1,marked:1,poison:1,poison_stat:1,burn:1,burn_stat:1,steal_mana:1,bonus_effect_if_slowed:1,discard_hand:1};
+  var BUF={mana:1,draw_speed:1,shield:1,shield_stat:1,dodge:1,heal:1,draw_speed_permanent:1,draw_cards:1,mana_if_debuffed:1};
+  var effects=(c.effects||[]).concat(c.onDiscard||[]);
+  effects.forEach(function(e){
+    if(DMG[e.type]) tags.push('damage');
+    if(DEB[e.type]) tags.push('debuff');
+    if(BUF[e.type]) tags.push('buff');
+    if(e.type==='sorcery'&&e.type2){
+      if(DMG[e.type2]) tags.push('damage');
+      if(DEB[e.type2]) tags.push('debuff');
+      if(BUF[e.type2]) tags.push('buff');
+    }
+  });
+  var seen={}; tags=tags.filter(function(t){return seen[t]?false:(seen[t]=true);});
+  if(!tags.length) tags=['unique'];
+  return tags;
+}
+
+function buildTagsHTML(tags){
+  return tags.map(function(tag){
+    return '<span class="card-tag card-tag-'+tag+'" title="'+tag+'"></span>';
+  }).join('');
+}
+
 function buildCardHTML(id,isGhost){
   var c=CARDS[id];
-  if(!c) c={name:id,icon:'💢',type:'attack',unique:false,effect:'?',champ:null,statId:null,manaCost:0};
+  if(!c) c={name:id,icon:'?',type:'attack',unique:false,effect:'?',champ:null,statId:null,manaCost:0};
   var statCls=c.statId?'card-stat-'+c.statId:'card-stat-none';
   var mechanic=renderKeywords((c.effect||'').split('\n')[0]||'');
   var manaCost=c.manaCost!=null?c.manaCost:0;
   var fzStyle=cardEffectFontSize(c.effect);
-  return '<div class="card '+statCls+(isGhost?' ghost':'')+(id&&id.startsWith('ghost_')?' ghost':'')+'" style="position:relative;">'
-    +(isGhost||id.startsWith('ghost_')?'<div class="ghost-badge">👻</div>':'')
+  var tags=getCardTags(c);
+  var tagsHTML=buildTagsHTML(tags);
+  var identity=getCardIdentityLabel(c);
+  return '<div class="card '+statCls+(isGhost?' ghost':'')+(id&&id.startsWith('ghost_')?' ghost':'')+'">'
+    +(isGhost||id.startsWith('ghost_')?'<div class="ghost-badge"></div>':'')
     +'<div class="card-title">'+c.name+'</div>'
+    +'<div class="card-identity">'+identity+'</div>'
     +'<div class="card-art">'
-    +cardArtHTML(id, c.icon, manaCost)
+    +cardArtHTML(id, c.icon, manaCost, c.champ||null)
     +'</div>'
     +'<div class="card-effect" style="'+fzStyle+'">'+mechanic+'</div>'
-    +'<div class="card-type-bar '+c.type+'">'      +(c.champ&&CREATURES[c.champ]?'<span class="card-champ-icon">'+creatureImgHTML(c.champ,CREATURES[c.champ].icon||'','14px')+'</span>':'')      +c.type.toUpperCase()    +'</div>'    +'</div>';
+    +'<div class="card-type-bar">'+tagsHTML+'</div>'
+    +'</div>';
 }
 
 
 // Card art — tries assets/cards/backgrounds/{cardId}.png over the emoji icon
-function cardArtHTML(cardId, emoji, manaCost){
-  var src = 'assets/cards/backgrounds/' + cardId + '.png';
-  var onerr = "this.parentNode.classList.remove('has-card-art');";
-  var onld  = "this.parentNode.classList.add('has-card-art');";
-  return '<img class="card-bg-img" src="'+src+'" onerror="'+onerr+'" onload="'+onld+'">'
-    + '<span class="card-emoji-icon">'+emoji+'</span>'
-    + (manaCost?'<div class="card-mana-badge">'+manaCost+'◈</div>':'');
-}
-
 // ═══════════════════════════════════════════════════════
 // RENDER
 // ═══════════════════════════════════════════════════════
@@ -3188,17 +3572,20 @@ function renderHand(newId){
     d.style.cssText='transform:rotate('+rot+'deg) translateY('+drop+'px);transform-origin:bottom center;z-index:'+i+';position:relative;'+(i>0?'margin-left:-38px;':'');
 
     var cEffect=cd?(cd.effect||''):'';
-    // Only show the first line — keywords have tooltips, explain row is removed
     var mechanic=renderKeywords((cEffect.split('\n')[0])||'');
     var fzStyle=cardEffectFontSize(cEffect);
     var manaCost=cd&&cd.manaCost!=null?cd.manaCost:0;
-    d.innerHTML=(isGhost?'<div class="ghost-badge">👻</div>':'')
+    var rTags=getCardTags(cd||{});
+    var rTagsHTML=buildTagsHTML(rTags);
+    var rIdentity=getCardIdentityLabel(cd||null);
+    d.innerHTML=(isGhost?'<div class="ghost-badge"></div>':'')
       +'<div class="card-title">'+(cd?cd.name:item.id)+'</div>'
+      +'<div class="card-identity">'+rIdentity+'</div>'
       +'<div class="card-art">'
-      +cardArtHTML(item.id, cd?cd.icon:'?', manaCost)
+      +cardArtHTML(item.id, cd?cd.icon:'?', manaCost, cd&&cd.champ?cd.champ:null)
       +'</div>'
       +'<div class="card-effect" style="'+fzStyle+'">'+mechanic+'</div>'
-      +'<div class="card-type-bar '+(cd?cd.type:'')+'">'        +(cd&&cd.champ&&CREATURES[cd.champ]?'<span class="card-champ-icon">'+creatureImgHTML(cd.champ,CREATURES[cd.champ].icon||'','14px')+'</span>':'')        +(cd?cd.type.toUpperCase():'')      +'</div>';
+      +'<div class="card-type-bar">'+rTagsHTML+'</div>';
 
     // Hover — lift and straighten via JS (overrides static fan transform)
     d.addEventListener('mouseenter',function(){
@@ -3718,9 +4105,67 @@ function buildTownGrid(){
       +'</div>';
     grid.appendChild(card);
   });
+
+  // ── Champions roster card — always visible once any champion is unlocked ──
+  if(PERSIST.unlockedChamps&&PERSIST.unlockedChamps.length>0){
+    var champCard=document.createElement('div');
+    champCard.className='building-card';
+    champCard.onclick=function(){ openTownChampRoster(); };
+    var champIcons=PERSIST.unlockedChamps.slice(0,4).map(function(id){
+      var c=CREATURES[id]; return c?creatureImgHTML(id,c.icon,'28px'):'';
+    }).join('');
+    champCard.innerHTML='<div class="bc-icon" style="font-size:28px;">'+champIcons+'</div>'
+      +'<div class="bc-body">'
+        +'<div class="bc-name">CHAMPIONS</div>'
+        +'<div class="bc-desc">View and manage your roster. Edit decks, check stats, review innates.</div>'
+        +'<div class="bc-status bc-status-active">'+PERSIST.unlockedChamps.length+' unlocked</div>'
+      +'</div>';
+    grid.appendChild(champCard);
+  }
 }
 
 // ── Drag-drop handler ──
+function openTownChampRoster(){
+  // Show a modal listing all unlocked champions — click one to open their info panel
+  var modal=document.getElementById('town-champ-roster-modal');
+  if(!modal){
+    modal=document.createElement('div');
+    modal.id='town-champ-roster-modal';
+    modal.style.cssText='position:fixed;inset:0;z-index:400;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;';
+    modal.onclick=function(e){ if(e.target===modal) closeTownChampRoster(); };
+    document.body.appendChild(modal);
+  }
+  var html='<div style="background:#0e0804;border:1px solid #5a3810;border-radius:10px;width:340px;max-height:80vh;display:flex;flex-direction:column;overflow:hidden;">'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #2a1808;flex-shrink:0;">'
+      +'<span style="font-family:Cinzel,serif;font-size:13px;color:#d4a843;letter-spacing:2px;">CHAMPIONS</span>'
+      +'<button onclick="closeTownChampRoster()" style="background:none;border:none;color:#5a4020;font-size:14px;cursor:pointer;padding:2px 6px;">✕</button>'
+    +'</div>'
+    +'<div style="overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:8px;scrollbar-width:thin;scrollbar-color:#2a1808 transparent;">';
+  PERSIST.unlockedChamps.forEach(function(id){
+    var ch=CREATURES[id]; if(!ch) return;
+    var cp=getChampPersist(id);
+    html+='<div onclick="closeTownChampRoster();selectedChampId=\''+id+'\';openChampPanel();" '
+      +'style="display:flex;align-items:center;gap:10px;background:rgba(0,0,0,.3);border:1px solid #2a1808;border-radius:7px;padding:8px 10px;cursor:pointer;transition:border-color .15s;" '
+      +'onmouseover="this.style.borderColor=\'#8a6020\'" onmouseout="this.style.borderColor=\'#2a1808\'">'
+      +'<div style="flex-shrink:0;">'+creatureImgHTML(id,ch.icon,'40px')+'</div>'
+      +'<div style="flex:1;min-width:0;">'
+        +'<div style="font-family:Cinzel,serif;font-size:10px;color:#d4a843;">'+ch.name+'</div>'
+        +'<div style="font-size:7px;color:#7a6030;margin-top:1px;">Lv.'+cp.level+' &nbsp;·&nbsp; '+Math.round(cp.stats.str)+' STR &nbsp;·&nbsp; '+Math.round(cp.stats.agi)+' AGI &nbsp;·&nbsp; '+Math.round(cp.stats.wis)+' WIS</div>'
+        +(cp.lastArea?'<div style="font-size:7px;color:#4a3010;margin-top:1px;">Last: '+cp.lastArea+'</div>':'')
+      +'</div>'
+      +'<div style="font-size:9px;color:#5a4020;flex-shrink:0;">ℹ</div>'
+      +'</div>';
+  });
+  html+='</div></div>';
+  modal.innerHTML=html;
+  modal.style.display='flex';
+}
+
+function closeTownChampRoster(){
+  var modal=document.getElementById('town-champ-roster-modal');
+  if(modal) modal.style.display='none';
+}
+
 function onBuildingDrop(ev,buildingId){
   ev.preventDefault();
   var cardId=ev.dataTransfer.getData('cardId');
@@ -7858,6 +8303,7 @@ document.addEventListener('keydown',function(e){
     if(modal==='tutorial'){ dismissTutorial(); return; }
     if(modal==='settings'){ closeSettings(); return; }
     if(screen==='deck-screen'){ continueDeckView(); return; }
+    if(screen==='deck-edit-screen'){ deDeckDone(); return; }
     return;
   }
 
