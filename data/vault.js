@@ -35,6 +35,105 @@
 //
 // ════════════════════════════════════════════════════════════════
 
+// ── Chest loot tables ─────────────────────────────────────────────────────
+// Each chest: { rolls, rolls_key, table: [{w, type, id?, qty?, tier?}] }
+// rolls_key = bonus rolls when opened with matching area key
+var CHEST_LOOT_TABLES={
+  chest_sewers:{rolls:2,rolls_key:3,table:[
+    {w:40,type:'material',id:'slick_stone',   qty:[3,8]},
+    {w:19,type:'loot',    id:'key_sewers',    qty:1},
+    {w:16,type:'gold',                        qty:[10,25]},
+    {w:10,type:'material',id:'rancid_bile',   qty:[1,2]},
+    {w:8, type:'gemShards',                   qty:1},
+    {w:7, type:'champcard',                   qty:1},
+  ]},
+  chest_bog:{rolls:2,rolls_key:3,table:[
+    {w:35,type:'material',id:'bog_iron',      qty:[4,10]},
+    {w:17,type:'loot',    id:'key_bog',       qty:1},
+    {w:16,type:'gold',                        qty:[15,35]},
+    {w:12,type:'material',id:'leech_oil',     qty:[1,3]},
+    {w:8, type:'gemShards',                   qty:1},
+    {w:12,type:'champcard',                   qty:1},
+  ]},
+  chest_crypt:{rolls:2,rolls_key:3,table:[
+    {w:33,type:'material',id:'bone_dust',     qty:[5,12]},
+    {w:15,type:'loot',    id:'key_crypt',     qty:1},
+    {w:18,type:'gold',                        qty:[15,40]},
+    {w:13,type:'material',id:'grave_iron',    qty:[2,4]},
+    {w:8, type:'gemShards',                   qty:1},
+    {w:13,type:'champcard',                   qty:1},
+  ]},
+  chest_forest:{rolls:3,rolls_key:4,table:[
+    {w:29,type:'material',id:'thornwood_resin',qty:[6,14]},
+    {w:12,type:'loot',    id:'key_forest',    qty:1},
+    {w:18,type:'gold',                        qty:[20,50]},
+    {w:16,type:'material',id:'harpy_talon',   qty:[2,5]},
+    {w:8, type:'gemShards',                   qty:[1,2]},
+    {w:17,type:'champcard',                   qty:[1,2]},
+  ]},
+  chest_cave:{rolls:3,rolls_key:4,table:[
+    {w:27,type:'material',id:'thornwood_resin',qty:[7,15]},
+    {w:12,type:'loot',    id:'key_cave',      qty:1},
+    {w:18,type:'gold',                        qty:[20,55]},
+    {w:16,type:'material',id:'harpy_talon',   qty:[3,6]},
+    {w:8, type:'gemShards',                   qty:[1,2]},
+    {w:19,type:'champcard',                   qty:[1,2]},
+  ]},
+  chest_ruins:{rolls:4,rolls_key:5,table:[
+    {w:22,type:'material',id:'stone_cipher',  qty:[8,18]},
+    {w:9, type:'loot',    id:'key_ruins',     qty:1},
+    {w:18,type:'gold',                        qty:[30,70]},
+    {w:14,type:'material',id:'vault_bronze',  qty:[3,7]},
+    {w:10,type:'material',id:'arcane_residue',qty:[1,2]},
+    {w:8, type:'gemShards',                   qty:[1,2]},
+    {w:19,type:'champcard',                   qty:[1,2]},
+  ]},
+  chest_dragon:{rolls:4,rolls_key:5,table:[
+    {w:20,type:'material',id:'dragonscale',   qty:[4,9]},
+    {w:9, type:'loot',    id:'key_dragon',    qty:1},
+    {w:18,type:'gold',                        qty:[35,80]},
+    {w:18,type:'material',id:'smelt_slag',    qty:[1,3]},
+    {w:9, type:'material',id:'ember_grit',    qty:[10,20]},
+    {w:12,type:'gemShards',                   qty:[2,3]},
+    {w:14,type:'champcard',                   qty:[1,2]},
+  ]},
+  chest_bone:{rolls:4,rolls_key:5,table:[
+    {w:20,type:'material',id:'grave_iron',    qty:[4,9]},
+    {w:9, type:'loot',    id:'key_bone',      qty:1},
+    {w:18,type:'gold',                        qty:[35,80]},
+    {w:18,type:'material',id:'cursed_essence',qty:[1,3]},
+    {w:9, type:'material',id:'bone_dust',     qty:[10,20]},
+    {w:12,type:'gemShards',                   qty:[2,3]},
+    {w:14,type:'champcard',                   qty:[1,2]},
+  ]},
+  chest_astral:{rolls:5,rolls_key:6,table:[
+    {w:14,type:'material',id:'null_stone',    qty:[2,5]},
+    {w:7, type:'loot',    id:'key_astral',    qty:1},
+    {w:16,type:'gold',                        qty:[50,120]},
+    {w:14,type:'material',id:'mist_silk',     qty:[5,12]},
+    {w:11,type:'material',id:'void_splinter', qty:[15,30]},
+    {w:12,type:'gemShards',                   qty:[2,4]},
+    {w:26,type:'champcard',                   qty:[2,3]},
+  ]},
+  chest_mist:{rolls:2,rolls_key:3,table:[
+    {w:33,type:'material',id:'thornwood_resin',qty:[5,12]},
+    {w:17,type:'loot',    id:'key_mist',      qty:1},
+    {w:16,type:'gold',                        qty:[15,40]},
+    {w:13,type:'material',id:'harpy_talon',   qty:[1,3]},
+    {w:8, type:'gemShards',                   qty:1},
+    {w:13,type:'champcard',                   qty:1},
+  ]},
+  chest_wax:{rolls:2,rolls_key:3,table:[
+    {w:36,type:'material',id:'amber_wax',     qty:[4,10]},
+    {w:19,type:'loot',    id:'key_wax',       qty:1},
+    {w:19,type:'gold',                        qty:[12,30]},
+    {w:8, type:'material',id:'wax_crystal',   qty:[1,2]},
+    {w:5, type:'gemShards',                   qty:1},
+    {w:13,type:'champcard',                   qty:1},
+  ]},
+};
+
+
 function openVaultPanel(){
   refreshVaultPanel();
   document.getElementById('vault-panel-bg').classList.add('show');

@@ -216,7 +216,6 @@ var PERSIST={
     buildings:{
       vault:{unlocked:false, slottedCard:null},
       forge:{unlocked:false,slottedCard:null,queue:[],assignedChamp:null},
-      shrine:{unlocked:false,slottedCard:null,activeBlessing:null},
       bestiary:{unlocked:false,slottedCard:null},
       shard_well:{unlocked:false,slottedCard:null},
       sanctum:   {unlocked:false,slottedCard:null},
@@ -367,6 +366,19 @@ function loadPersist(){
     }
   }catch(e){}
 }
+function checkBestiaryAutoUnlock(){
+  var b=PERSIST.town.buildings.bestiary;
+  if(!b||b.unlocked) return;
+  var cost=BUILDING_UNLOCK_COSTS.bestiary;
+  if(!cost) return;
+  if(PERSIST.seenEnemies.length>=cost.seenCount){
+    b.unlocked=true;
+    savePersist();
+    showTownToast('✦ The Bestiary is now open!');
+    buildTownGrid();
+  }
+}
+
 function trackSeen(id){
   if(PERSIST.seenEnemies.indexOf(id)===-1){
     PERSIST.seenEnemies.push(id);
@@ -2003,9 +2015,7 @@ function startBattle(){
     }
   }
   for(var i=0;i<startCards;i++) doDraw(null,true);
-  applyShrineBlessing(); // apply shrine buff (sets gs flags)
-  // Mana Font applied here after applyShrineBlessing sets _blessingManaStart
-  if(gs._blessingManaStart){ gs.mana=Math.round(gs.maxMana*gs._blessingManaStart); gs._blessingManaStart=0; }
+
   startLoops();
 }
 function startLoops(){ stopLoops(); tickTimer=setInterval(gameTick,100); scheduleEnemyAction(); }
@@ -4306,11 +4316,6 @@ var BUILDINGS = {
     desc:'Upgrades cards through gem tiers — Ruby, Emerald, Sapphire and beyond.',
     unlocked:false,
   },
-  shrine: {
-    id:'shrine', name:'The Shrine', icon:'🏮',
-    desc:'Grants your champion small blessings at the start of each run.',
-    unlocked:false,
-  },
   bestiary: {
     id:'bestiary', name:'The Bestiary', icon:'📖',
     desc:'Reveals full stats, innates, and tactics for every enemy you\'ve encountered.',
@@ -4426,6 +4431,208 @@ function leaveTown(){
 
 function buildTownCardsStrip(){ /* town card strip UI removed — gem slots deprecated */ }
 
+// ── Building unlock costs ─────────────────────────────────────────────────
+var BUILDING_UNLOCK_COSTS = {
+  forge:    { achId:'rising_power',  desc:'Reach level 3 — the Forge unlocks automatically.' },
+  board:    { achId:'battle_hardened', desc:'Reach level 5 — the Adventurer\'s Board unlocks automatically.' },
+  bestiary: { seenCount:10, gold:100, desc:'Unlocked by encountering 10 different enemies, or purchase for 100 gold.' },
+  market:   { gold:150, desc:'Purchase The Market for 150 gold to buy chests.' },
+  sanctum:  { gold:250, desc:'Purchase The Sanctum for 250 gold to customise champion decks and relics.' },
+  shard_well:{ gold:300, desc:'Purchase the Shard Well for 300 gold.' },
+  expedition_hall:{ gold:400, desc:'Purchase the Expedition Hall for 400 gold.' },
+};
+
+function tryUnlockBuilding(id){
+  var cost=BUILDING_UNLOCK_COSTS[id];
+  if(!cost) return;
+  var b=PERSIST.town.buildings[id];
+  if(!b||b.unlocked) return;
+
+  if(cost.seenCount){
+    var seen=PERSIST.seenEnemies.length;
+    if(seen>=cost.seenCount){
+      // Free unlock
+    } else if(cost.gold&&PERSIST.gold>=cost.gold){
+      PERSIST.gold-=cost.gold;
+      document.getElementById('town-gold').textContent='✦ '+PERSIST.gold;
+    } else {
+      showTownToast('See '+(cost.seenCount-seen)+' more enemies, or need '+cost.gold+'g to buy.');
+      return;
+    }
+  } else if(cost.achId){
+    var ach=ACHIEVEMENTS.find(function(a){return a.id===cost.achId;});
+    if(!ach||!isAchComplete(ach)){
+      showTownToast('Achievement required to unlock this building.');
+      return;
+    }
+  } else if(cost.gold){
+    if(PERSIST.gold<cost.gold){ showTownToast('Need ✦'+cost.gold+' gold.'); return; }
+    PERSIST.gold-=cost.gold;
+    document.getElementById('town-gold').textContent='✦ '+PERSIST.gold;
+  }
+
+  b.unlocked=true;
+  savePersist();
+  showTownToast('✦ '+(BUILDINGS[id]?BUILDINGS[id].name:id)+' unlocked!');
+  buildTownGrid();
+  openBuilding(id);
+}
+
+// ── Building XP / level ───────────────────────────────────────────────────
+var VAULT_XP_PER_LEVEL = [100,200,350,550,800,1100,1500,2000,2600,3300];
+
+function getBuildingXpToNext(level){
+  // 100 base, increasing per level
+  return Math.round(100 * Math.pow(1.4, level - 1));
+}
+
+function getBuildingLevel(id){
+  return (PERSIST.town.buildingLevel&&PERSIST.town.buildingLevel[id])||1;
+}
+
+function addBuildingXp(id, xp){
+  if(!PERSIST.town.buildings[id]||!PERSIST.town.buildings[id].unlocked) return;
+  if(!PERSIST.town.buildingXp) PERSIST.town.buildingXp={};
+  if(!PERSIST.town.buildingLevel) PERSIST.town.buildingLevel={};
+  PERSIST.town.buildingXp[id]=(PERSIST.town.buildingXp[id]||0)+xp;
+  var level=PERSIST.town.buildingLevel[id]||1;
+  var toNext=getBuildingXpToNext(level);
+  while(PERSIST.town.buildingXp[id]>=toNext){
+    PERSIST.town.buildingXp[id]-=toNext;
+    PERSIST.town.buildingLevel[id]=(PERSIST.town.buildingLevel[id]||1)+1;
+    level=PERSIST.town.buildingLevel[id];
+    toNext=getBuildingXpToNext(level);
+    showTownToast((BUILDINGS[id]?BUILDINGS[id].name:id)+' reached level '+level+'!');
+    if(id==='vault') PERSIST.town.vaultLevel=level;
+  }
+}
+
+function grantAreaClearBuildingXp(areaLevel){
+  var xp=10+areaLevel*2;
+  var blds=PERSIST.town.buildings;
+  Object.keys(blds).forEach(function(id){
+    if(blds[id]&&blds[id].unlocked) addBuildingXp(id, xp);
+  });
+}
+
+// ── Shard Well panel ──────────────────────────────────────────────────────
+function refreshShardWellPanel(){
+  showLockedBuildingUI('shard_well');
+  var b=PERSIST.town.buildings.shard_well;
+  if(!b||!b.unlocked) return;
+  var inner=document.getElementById('shard_well-inner');
+  if(!inner) return;
+
+  var souls=PERSIST.soulShards||0;
+  var rate=getShardWellRate();
+  var canSummon=souls>=SOUL_SHARDS_PER_PULL;
+
+  inner.innerHTML='<div style="padding:12px 14px;">'
+    +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">'
+      +'<span style="font-size:32px;">🔮</span>'
+      +'<div>'
+        +'<div style="font-family:Cinzel,serif;font-size:14px;color:#d4a843;">'+souls+' Soul Shards</div>'
+        +'<div style="font-size:9px;color:#6a5020;margin-top:2px;">Generating 1 every '+(rate/60)+' min</div>'
+      +'</div>'
+    +'</div>'
+    +'<button onclick="doEternalPull()" '+(canSummon?'':'disabled')
+      +' style="font-family:Cinzel,serif;font-size:10px;padding:8px 20px;border-radius:4px;'
+      +'border:1px solid '+(canSummon?'#c09030':'#3a2010')+';background:rgba(30,18,4,.9);'
+      +'color:'+(canSummon?'#d4a843':'#4a3010')+';cursor:'+(canSummon?'pointer':'not-allowed')+';width:100%;">'
+      +(canSummon?'✦ SUMMON ('+SOUL_SHARDS_PER_PULL+' Shards)':'Need '+(SOUL_SHARDS_PER_PULL-souls)+' more Shards')
+    +'</button>'
+    +'<div id="summon-result" style="margin-top:12px;"></div>'
+  +'</div>';
+}
+
+
+// ── Building panel management ─────────────────────────────────────────────
+
+function refreshBuildingPanel(id){
+  if(id==='vault') refreshVaultPanel();
+  else if(id==='forge') refreshForgePanel();
+  else if(id==='bestiary') refreshBestiaryPanel();
+  else if(id==='market') refreshMarketPanel();
+  else if(id==='sanctum') refreshSanctumPanel();
+  else if(id==='board') refreshBoardPanel();
+  else if(id==='shard_well') refreshShardWellPanel();
+  else if(id==='expedition_hall') refreshExpeditionHallPanel();
+}
+
+function openBuilding(id){
+  playSelectSfx();
+  if(id==='vault'){ openVaultPanel(); showTutorial('vault_intro'); return; }
+  var panelBg=document.getElementById(id+'-panel-bg');
+  if(!panelBg) return;
+  panelBg.classList.add('show');
+  refreshBuildingPanel(id);
+  showTutorial(id+'_intro');
+}
+
+function closeBuildingPanel(id){
+  var panelBg=document.getElementById(id+'-panel-bg');
+  if(panelBg) panelBg.classList.remove('show');
+  buildTownCardsStrip();
+  buildTownGrid();
+}
+
+function showLockedBuildingUI(id){
+  var cost=BUILDING_UNLOCK_COSTS[id];
+  if(!cost) return;
+  var inner=document.getElementById(id+'-inner');
+  var lockMsg=document.getElementById(id+'-locked-msg');
+  if(!inner||!lockMsg) return;
+  var b=PERSIST.town.buildings[id];
+  if(b&&b.unlocked){ lockMsg.style.display='none'; inner.style.display=''; return; }
+  lockMsg.style.display='block'; inner.style.display='none';
+
+  var btnHtml='';
+  if(cost.seenCount){
+    var seen=PERSIST.seenEnemies.length;
+    var seenMet=seen>=cost.seenCount;
+    var canBuy=cost.gold&&PERSIST.gold>=cost.gold;
+    var pct=Math.min(100,Math.round((seen/cost.seenCount)*100));
+    btnHtml='<div class="town-unlock-desc">'+cost.desc+'</div>'
+      +'<div style="margin:8px 0 4px;">'
+        +'<div style="display:flex;justify-content:space-between;margin-bottom:3px;">'
+          +'<span style="font-size:8px;color:#6a5020;">Enemies encountered</span>'
+          +'<span style="font-family:Cinzel,serif;font-size:9px;color:'+(seenMet?'#d4a843':'#7a6030')+';">'+seen+' / '+cost.seenCount+'</span>'
+        +'</div>'
+        +'<div style="height:4px;background:rgba(0,0,0,.5);border-radius:2px;overflow:hidden;">'
+          +'<div style="height:100%;width:'+pct+'%;background:'+(seenMet?'#c09030':'linear-gradient(90deg,#3a2010,#8a5020)')+';border-radius:2px;"></div>'
+        +'</div>'
+      +'</div>'
+      +(seenMet
+        ?'<button class="btn btn-gold" style="font-size:10px;margin-top:4px;" data-bid="'+id+'" onclick="tryUnlockBuilding(this.dataset.bid)">UNLOCK FREE →</button>'
+        :'<div class="lock-or-divider">— or —</div>'
+          +'<button class="btn btn-dim" style="font-size:10px;"'+(canBuy?'data-bid="'+id+'" onclick="tryUnlockBuilding(this.dataset.bid)"':' disabled')+'>'
+            +'✦ '+cost.gold+'g to unlock now'
+          +'</button>'
+          +(canBuy?'':'<div style="font-size:8px;color:#3a2010;margin-top:3px;">Need '+(cost.gold-PERSIST.gold)+'g more</div>'));
+  } else if(cost.achId){
+    var ach=ACHIEVEMENTS.find(function(a){return a.id===cost.achId;});
+    var prog=ach?getAchProgress(ach):{current:0,needed:20};
+    btnHtml='<div class="town-unlock-desc">'+cost.desc+'</div>'
+      +'<div style="font-size:9px;color:#7a6030;margin-bottom:8px;">Progress: '+prog.current+'/'+prog.needed+'</div>'
+      +(isAchComplete(ach)
+        ?'<button class="btn btn-gold" style="font-size:10px;" data-bid="'+id+'" onclick="tryUnlockBuilding(this.dataset.bid)">UNLOCK FREE</button>'
+        :'<div style="font-size:9px;color:#4a3010;">Complete the achievement to unlock</div>');
+  } else {
+    btnHtml='<div class="town-unlock-cost">'+cost.gold+' gold</div>'
+      +'<div class="town-unlock-desc">'+cost.desc+'</div>'
+      +(PERSIST.gold>=cost.gold
+        ?'<button class="btn btn-gold" style="font-size:10px;" data-bid="'+id+'" onclick="tryUnlockBuilding(this.dataset.bid)">PURCHASE</button>'
+        :'<div style="font-size:9px;color:#4a3010;">Not enough gold (have '+PERSIST.gold+'g)</div>');
+  }
+
+  lockMsg.innerHTML='<div style="text-align:center;padding:20px 10px;">'
+    +'<div style="font-size:28px;margin-bottom:10px;">🔒</div>'
+    +'<div style="font-family:Cinzel,serif;font-size:11px;color:#6a5020;margin-bottom:12px;letter-spacing:1px;">LOCKED</div>'
+    +btnHtml
+    +'</div>';
+}
+
+
 function isBuildingVisible(id){
   var b=PERSIST.town.buildings[id];
   if(b&&b.unlocked) return true; // always show unlocked
@@ -4444,9 +4651,8 @@ function isBuildingVisible(id){
     var totalGoldEarned=(PERSIST.achievements&&PERSIST.achievements['gold_earned'])||0;
     // Fallback: just check if they've done at least one run (vault unlocked = first run done)
     // Show shrine early, others progressively
-    if(id==='shrine') return true; // always visible once vault unlocked
     if(id==='bestiary') return PERSIST.seenEnemies.length>=3||PERSIST.gold>=50;
-    if(id==='market') return PERSIST.town.buildings.shrine&&PERSIST.town.buildings.shrine.unlocked;
+    if(id==='market') return PERSIST.town.buildings.bestiary&&PERSIST.town.buildings.bestiary.unlocked||PERSIST.gold>=150;
     if(id==='sanctum') return PERSIST.town.buildings.bestiary&&PERSIST.town.buildings.bestiary.unlocked||PERSIST.gold>=150;
     if(id==='shard_well') return PERSIST.town.buildings.market&&PERSIST.town.buildings.market.unlocked||PERSIST.gold>=200;
     if(id==='expedition_hall') return PERSIST.town.buildings.sanctum&&PERSIST.town.buildings.sanctum.unlocked||PERSIST.gold>=250;
@@ -4600,936 +4806,13 @@ function buildTownGrid(){
     grid.appendChild(card);
   });
 
-  // ── Champions roster card — always visible once any champion is unlocked ──
-  if(PERSIST.unlockedChamps&&PERSIST.unlockedChamps.length>0){
-    var champCard=document.createElement('div');
-    champCard.className='building-card';
-    champCard.onclick=function(){ openTownChampRoster(); };
-    var champIcons=PERSIST.unlockedChamps.slice(0,4).map(function(id){
-      var c=CREATURES[id]; return c?creatureImgHTML(id,c.icon,'28px'):'';
-    }).join('');
-    champCard.innerHTML='<div class="bc-icon" style="font-size:28px;">'+champIcons+'</div>'
-      +'<div class="bc-body">'
-        +'<div class="bc-name">CHAMPIONS</div>'
-        +'<div class="bc-desc">View and manage your roster. Edit decks, check stats, review innates.</div>'
-        +'<div class="bc-status bc-status-active">'+PERSIST.unlockedChamps.length+' unlocked</div>'
-      +'</div>';
-    grid.appendChild(champCard);
-  }
+  
 }
 
-// ── Drag-drop handler ──
-function openTownChampRoster(){
-  // Show a modal listing all unlocked champions — click one to open their info panel
-  var modal=document.getElementById('town-champ-roster-modal');
-  if(!modal){
-    modal=document.createElement('div');
-    modal.id='town-champ-roster-modal';
-    modal.style.cssText='position:fixed;inset:0;z-index:400;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;';
-    modal.onclick=function(e){ if(e.target===modal) closeTownChampRoster(); };
-    document.body.appendChild(modal);
-  }
-  var html='<div style="background:#0e0804;border:1px solid #5a3810;border-radius:10px;width:340px;max-height:80vh;display:flex;flex-direction:column;overflow:hidden;">'
-    +'<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #2a1808;flex-shrink:0;">'
-      +'<span style="font-family:Cinzel,serif;font-size:13px;color:#d4a843;letter-spacing:2px;">CHAMPIONS</span>'
-      +'<button onclick="closeTownChampRoster()" style="background:none;border:none;color:#5a4020;font-size:14px;cursor:pointer;padding:2px 6px;">✕</button>'
-    +'</div>'
-    +'<div style="overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:8px;scrollbar-width:thin;scrollbar-color:#2a1808 transparent;">';
-  PERSIST.unlockedChamps.forEach(function(id){
-    var ch=CREATURES[id]; if(!ch) return;
-    var cp=getChampPersist(id);
-    html+='<div onclick="closeTownChampRoster();selectedChampId=\''+id+'\';openChampPanel();" '
-      +'style="display:flex;align-items:center;gap:10px;background:rgba(0,0,0,.3);border:1px solid #2a1808;border-radius:7px;padding:8px 10px;cursor:pointer;transition:border-color .15s;" '
-      +'onmouseover="this.style.borderColor=\'#8a6020\'" onmouseout="this.style.borderColor=\'#2a1808\'">'
-      +'<div style="flex-shrink:0;">'+creatureImgHTML(id,ch.icon,'40px')+'</div>'
-      +'<div style="flex:1;min-width:0;">'
-        +'<div style="font-family:Cinzel,serif;font-size:10px;color:#d4a843;">'+ch.name+'</div>'
-        +'<div style="font-size:7px;color:#7a6030;margin-top:1px;">Lv.'+cp.level+' &nbsp;·&nbsp; '+Math.round(cp.stats.str)+' STR &nbsp;·&nbsp; '+Math.round(cp.stats.agi)+' AGI &nbsp;·&nbsp; '+Math.round(cp.stats.wis)+' WIS</div>'
-        +(cp.lastArea?'<div style="font-size:7px;color:#4a3010;margin-top:1px;">Last: '+cp.lastArea+'</div>':'')
-      +'</div>'
-      +'<div style="font-size:9px;color:#5a4020;flex-shrink:0;">ℹ</div>'
-      +'</div>';
-  });
-  html+='</div></div>';
-  modal.innerHTML=html;
-  modal.style.display='flex';
-}
 
-function closeTownChampRoster(){
-  var modal=document.getElementById('town-champ-roster-modal');
-  if(modal) modal.style.display='none';
-}
 
 function onBuildingDrop(){ /* drag-drop slot UI removed */ }
 
-// ── Shrine blessings pool ──
-// ═══════════════════════════════════════════════════════
-// BUILDING LEVEL SYSTEM
-// ═══════════════════════════════════════════════════════
-function getBuildingXpToNext(level){
-  return Math.round(50*Math.pow(level,1.5));
-}
-
-function getBuildingLevel(id){
-  return (PERSIST.town.buildingLevel&&PERSIST.town.buildingLevel[id])||1;
-}
-
-function addBuildingXp(id, xp){
-  if(!PERSIST.town.buildings[id]||!PERSIST.town.buildings[id].unlocked) return;
-  if(!PERSIST.town.buildingXp) PERSIST.town.buildingXp={};
-  if(!PERSIST.town.buildingLevel) PERSIST.town.buildingLevel={};
-  PERSIST.town.buildingXp[id]=(PERSIST.town.buildingXp[id]||0)+xp;
-  var level=PERSIST.town.buildingLevel[id]||1;
-  var toNext=getBuildingXpToNext(level);
-  while(PERSIST.town.buildingXp[id]>=toNext){
-    PERSIST.town.buildingXp[id]-=toNext;
-    PERSIST.town.buildingLevel[id]=(PERSIST.town.buildingLevel[id]||1)+1;
-    level=PERSIST.town.buildingLevel[id];
-    toNext=getBuildingXpToNext(level);
-    showTownToast((BUILDINGS[id]?BUILDINGS[id].name:id)+' reached level '+level+'!');
-    // Keep vault legacy field in sync
-    if(id==='vault') PERSIST.town.vaultLevel=level;
-  }
-}
-
-function grantAreaClearBuildingXp(areaLevel){
-  var xp=10+areaLevel*2;
-  var blds=PERSIST.town.buildings;
-  Object.keys(blds).forEach(function(id){
-    if(blds[id]&&blds[id].unlocked) addBuildingXp(id,xp);
-  });
-  savePersist();
-}
-
-var SHRINE_BLESSINGS = [
-  // Lv1 — always available once Shrine unlocked
-  {id:'first_aid',     lvl:1, icon:'💖', name:'First Aid',       desc:'First enemy you face has 10% less HP.',           descGem:'First enemy has 20% less HP.'},
-  {id:'mana_font',     lvl:1, icon:'🔮', name:'Mana Font',       desc:'Start the first battle with 30% mana.',           descGem:'Start with 40% mana.'},
-  {id:'scholars_boon', lvl:1, icon:'✨', name:'Scholar\'s Boon', desc:'+10% XP from all enemies this run.',              descGem:'+15% XP.'},
-  {id:'deep_pockets',  lvl:1, icon:'🃏', name:'Deep Pockets',    desc:'Start the first battle with 1 extra card.',       descGem:'Start with 2 extra cards.'},
-  // Lv2
-  {id:'binding_light', lvl:2, icon:'🛡️', name:'Binding Light',   desc:'Start each battle with a 5-HP shield for 5s.',    descGem:'Start with an 8-HP shield for 5s.'},
-  {id:'revitalise',    lvl:2, icon:'💚', name:'Revitalise',      desc:'Restore 3 HP between each battle.',               descGem:'Restore 5 HP between each battle.'},
-  {id:'war_cry',       lvl:2, icon:'📣', name:'War Cry',         desc:'Start each battle with +25% attack speed for 3s.',descGem:'+25% attack speed for 5s.'},
-  // Lv3
-  {id:'battle_trance', lvl:3, icon:'💨', name:'Battle Trance',   desc:'Start each battle with draw speed +30% for 4s.',  descGem:'Draw speed +50% for 4s.'},
-  {id:'bloodlust',     lvl:3, icon:'🩸', name:'Bloodlust',       desc:'Each kill restores 2 HP.',                        descGem:'Each kill restores 3 HP.'},
-  {id:'predators_eye', lvl:3, icon:'🎯', name:'Predator\'s Eye', desc:'Start each battle with +15% damage for 3s.',     descGem:'+20% damage for 3s.'},
-  // Lv4
-  {id:'resilience',    lvl:4, icon:'🪨', name:'Resilience',      desc:'Take 10% less damage for the whole run.',         descGem:'Take 15% less damage.'},
-  {id:'second_wind',   lvl:4, icon:'💫', name:'Second Wind',     desc:'Once per run: survive a killing blow at 1 HP.',   descGem:'Survive at 3 HP.'},
-  // Lv5
-  {id:'cursed_touch',  lvl:5, icon:'🌑', name:'Cursed Touch',    desc:'Each battle starts with enemy having [Cursed].',  descGem:'Enemy starts with [Cursed] + [Marked].'},
-  {id:'momentum',      lvl:5, icon:'🌀', name:'Momentum',        desc:'Each card played reduces draw interval by 2%.',   descGem:'Each card reduces interval by 3%.'},
-];
-
-function isBlessingUnlocked(bl){
-  var shrineLevel=getBuildingLevel('shrine');
-  return bl.lvl<=shrineLevel;
-}
-
-function getBlessingProgress(bl){
-  var shrineLevel=getBuildingLevel('shrine');
-  if(bl.lvl<=shrineLevel) return {cur:bl.lvl,need:bl.lvl,done:true};
-  // Show XP progress toward the level needed
-  var xp=PERSIST.town.buildingXp&&PERSIST.town.buildingXp.shrine||0;
-  var cur=0;
-  for(var lv=1;lv<bl.lvl;lv++) cur+=getBuildingXpToNext(lv);
-  var totalNeeded=cur+getBuildingXpToNext(bl.lvl-1);
-  var totalEarned=cur; // approximate — just show current level
-  return {cur:shrineLevel,need:bl.lvl,done:false,label:'Shrine Lv'+shrineLevel+' / Lv'+bl.lvl+' needed'};
-}
-
-// Apply shrine blessing at run start — works without gem, gem enhances effect
-function applyShrineBlessing(){
-  var b=PERSIST.town.buildings.shrine;
-  if(!b||!b.activeBlessing) return;
-  var bl=SHRINE_BLESSINGS.find(function(x){return x.id===b.activeBlessing;});
-  if(!bl||!isBlessingUnlocked(bl)) return;
-  var g=false;
-
-  switch(bl.id){
-    case 'first_aid':     gs._shrineHpOpen=g?0.80:0.90; break;
-    case 'mana_font':     gs._blessingManaStart=g?0.40:0.30; break;
-    case 'scholars_boon': gs._shrineXpBonus=g?1.15:1.10; break;
-    case 'deep_pockets':  gs._shrineExtraCards=g?2:1; break;
-    case 'binding_light': gs._shrineOpenShield=g?8:5; break;
-    case 'revitalise':    gs._shrineRevitalise=g?5:3; break;
-    case 'war_cry':       gs._shrineWarCry={speed:0.25,dur:g?5000:3000}; break;
-    case 'battle_trance': gs._shrineBattleTrance={speed:g?0.50:0.30,dur:4000}; break;
-    case 'bloodlust':     gs._shrineBloodlust=g?3:2; break;
-    case 'predators_eye': gs._shrinePredatorsEye={dmg:g?0.20:0.15,dur:3000}; break;
-    case 'resilience':    gs._shrineResilience=g?0.15:0.10; break;
-    case 'second_wind':   gs._shrineSecondWind=g?3:1; gs._shrineSecondWindUsed=false; break;
-    case 'cursed_touch':  gs._shrineCursedTouch=g?2:1; break;
-    case 'momentum':      gs._shrineMomentum=g?0.03:0.02; break;
-  }
-  addLog('Shrine: '+bl.name+(g?' ✦':'')+'.','buff');
-}
-
-// ── Unlock building ──
-var BUILDING_UNLOCK_COSTS = {
-  forge:    { achId:'rising_power',  desc:'Reach level 3 — the Forge unlocks automatically.' },
-  board:    { achId:'battle_hardened', desc:'Reach level 5 — the Adventurer\'s Board unlocks automatically.' },
-  shrine:   { gold:80,  desc:'Purchase the Shrine for 80 gold to gain run blessings.' },
-  bestiary: { seenCount:10, gold:100, desc:'Unlocked by encountering 10 different enemies, or purchase for 100 gold.' },
-  market:   { gold:150, desc:'Purchase The Market for 150 gold to buy chests.' },
-  sanctum:  { gold:250, desc:'Purchase The Sanctum for 250 gold to customise champion decks and training.' },
-  shard_well:{ gold:300, desc:'Purchase the Shard Well for 300 gold.' },
-  expedition_hall:{ gold:400, desc:'Purchase the Expedition Hall for 400 gold.' },
-};
-
-function tryUnlockBuilding(id){
-  var cost=BUILDING_UNLOCK_COSTS[id];
-  if(!cost) return;
-  if(PERSIST.town.buildings[id].unlocked) return;
-
-  if(cost.seenCount){
-    // Can unlock free if seen enough, or pay gold
-    var seen=PERSIST.seenEnemies.length;
-    if(seen>=cost.seenCount){
-      // Free unlock
-    } else if(cost.gold&&PERSIST.gold>=cost.gold){
-      PERSIST.gold-=cost.gold;
-      document.getElementById('town-gold').textContent='✦ '+PERSIST.gold;
-    } else {
-      showTownToast('See '+(cost.seenCount-seen)+' more enemies, or need '+cost.gold+'g to buy.');
-      return;
-    }
-  } else if(cost.achId){
-    var ach=ACHIEVEMENTS.find(function(a){return a.id===cost.achId;});
-    if(!ach||!isAchComplete(ach)){ showTownToast('Complete the required achievement first.'); return; }
-  } else if(cost.gold>0){
-    if(PERSIST.gold<cost.gold){ showTownToast('Need '+cost.gold+' gold to unlock!'); return; }
-    PERSIST.gold-=cost.gold;
-  }
-
-  PERSIST.town.buildings[id].unlocked=true;
-  savePersist();
-  buildTownGrid();
-  openBuilding(id);
-  document.getElementById('town-gold').textContent='✦ '+PERSIST.gold;
-}
-
-// Auto-check bestiary unlock whenever a new enemy is seen
-function checkBestiaryAutoUnlock(){
-  var b=PERSIST.town.buildings.bestiary;
-  if(b.unlocked) return;
-  var cost=BUILDING_UNLOCK_COSTS.bestiary;
-  if(cost&&cost.seenCount&&PERSIST.seenEnemies.length>=cost.seenCount){
-    b.unlocked=true;
-    savePersist();
-    buildTownGrid();
-    // Show a toast if town is visible
-    showTownToast('📖 Bestiary unlocked! You\'ve encountered '+PERSIST.seenEnemies.length+' creatures.');
-  }
-}
-
-// ── Generic building slot click ──
-function onBuildingSlotClick(){ /* slot click UI removed */ }
-
-function refreshBuildingPanel(id){
-  if(id==='vault') refreshVaultPanel();
-  else if(id==='forge') refreshForgePanel();
-  else if(id==='shrine') refreshShrinePanel();
-  else if(id==='bestiary') refreshBestiaryPanel();
-  else if(id==='market') refreshMarketPanel();
-  else if(id==='sanctum') refreshSanctumPanel();
-  else if(id==='board') refreshBoardPanel();
-  else if(id==='shard_well') refreshShardWellPanel();
-  else if(id==='expedition_hall') refreshExpeditionHallPanel();
-}
-
-// ── Open a building ──
-function openBuilding(id){
-  playSelectSfx();
-  if(id==='vault'){ openVaultPanel(); showTutorial('vault_intro'); return; }
-  var panelBg=document.getElementById(id+'-panel-bg');
-  if(!panelBg) return;
-  panelBg.classList.add('show');
-  refreshBuildingPanel(id);
-  showTutorial(id+'_intro');
-}
-
-function closeBuildingPanel(id){
-  var panelBg=document.getElementById(id+'-panel-bg');
-  if(panelBg) panelBg.classList.remove('show');
-  buildTownCardsStrip();
-  buildTownGrid();
-}
-
-function showLockedBuildingUI(id){
-  var cost=BUILDING_UNLOCK_COSTS[id];
-  if(!cost) return;
-  var inner=document.getElementById(id+'-inner');
-  var lockMsg=document.getElementById(id+'-locked-msg');
-  if(!inner||!lockMsg) return;
-  var b=PERSIST.town.buildings[id];
-  if(b.unlocked){ lockMsg.style.display='none'; inner.style.display='block'; return; }
-  lockMsg.style.display='block'; inner.style.display='none';
-
-  var btnHtml='';
-  if(cost.seenCount){
-    var seen=PERSIST.seenEnemies.length;
-    var seenMet=seen>=cost.seenCount;
-    var canBuy=cost.gold&&PERSIST.gold>=cost.gold;
-    var pct=Math.min(100,Math.round((seen/cost.seenCount)*100));
-    btnHtml='<div class="town-unlock-desc">'+cost.desc+'</div>'
-      +'<div style="margin:8px 0 4px;">'
-        +'<div style="display:flex;justify-content:space-between;margin-bottom:3px;">'
-          +'<span style="font-size:8px;color:#6a5020;">Enemies encountered</span>'
-          +'<span style="font-family:Cinzel,serif;font-size:9px;color:'+(seenMet?'#d4a843':'#7a6030')+';">'+seen+' / '+cost.seenCount+'</span>'
-        +'</div>'
-        +'<div style="height:4px;background:rgba(0,0,0,.5);border-radius:2px;overflow:hidden;">'
-          +'<div style="height:100%;width:'+pct+'%;background:'+(seenMet?'#c09030':'linear-gradient(90deg,#3a2010,#8a5020)')+';border-radius:2px;"></div>'
-        +'</div>'
-      +'</div>'
-      +(seenMet
-        ?'<button class="btn btn-gold" style="font-size:10px;margin-top:4px;" onclick="tryUnlockBuilding(\''+id+'\')">UNLOCK FREE →</button>'
-        :'<div class="lock-or-divider">— or —</div>'
-          +'<button class="btn btn-dim" style="font-size:10px;"'+(canBuy?'onclick="tryUnlockBuilding(\''+id+'\')"':' disabled')+'>'
-            +'✦ '+cost.gold+'g to unlock now'
-          +'</button>'
-          +(canBuy?'':'<div style="font-size:8px;color:#3a2010;margin-top:3px;">Need '+(cost.gold-PERSIST.gold)+'g more</div>')
-      );
-  } else if(cost.achId){
-    var ach=ACHIEVEMENTS.find(function(a){return a.id===cost.achId;});
-    var prog=ach?getAchProgress(ach):{current:0,needed:20};
-    btnHtml='<div class="town-unlock-desc">'+cost.desc+'</div>'
-      +'<div style="font-size:9px;color:#7a6030;margin-bottom:8px;">Progress: '+prog.current+'/'+prog.needed+'</div>'
-      +(isAchComplete(ach)
-        ?'<button class="btn btn-gold" style="font-size:10px;" onclick="tryUnlockBuilding(\''+id+'\')">UNLOCK FREE</button>'
-        :'<div style="font-size:9px;color:#4a3010;">Complete the achievement to unlock</div>');
-  } else {
-    btnHtml='<div class="town-unlock-cost">'+cost.gold+' gold</div>'
-      +'<div class="town-unlock-desc">'+cost.desc+'</div>'
-      +(PERSIST.gold>=cost.gold
-        ?'<button class="btn btn-gold" style="font-size:10px;" onclick="tryUnlockBuilding(\''+id+'\')">PURCHASE</button>'
-        :'<div style="font-size:9px;color:#4a3010;">Not enough gold (have '+PERSIST.gold+'g)</div>');
-  }
-  lockMsg.innerHTML=btnHtml;
-}
-
-// ── FORGE ──
-var FORGE_UPGRADE_TIMES = { base_ruby:120, ruby_emerald:300, emerald_sapphire:600 }; // seconds
-var FORGE_UPGRADE_COSTS = {
-  base_ruby:       { sparks:3 },
-  ruby_emerald:    { sparks:8, embers:3 },
-  emerald_sapphire:{ sparks:15, embers:8, flameShards:2 },
-};
-var CARD_TIER_ORDER = ['base','ruby','emerald','sapphire','turquoise','amethyst','topaz','obsidian','opal'];
-var CARD_TIER_LABELS = {base:'Base',ruby:'Ruby',emerald:'Emerald',sapphire:'Sapphire',turquoise:'Turquoise',amethyst:'Amethyst',topaz:'Topaz',obsidian:'Obsidian',opal:'Opal'};
-
-function getCardCurrentTier(cardId){
-  // Cards in combat deck have no tier — they're 'base'. Town cards have tiers.
-  return 'base';
-}
-
-function getForgeSpeed(){
-  var b=PERSIST.town.buildings.forge;
-  return 0;
-  if(!card) return 0;
-  return card.tier==='red'?1:card.tier==='green'?2:3; // multiplier
-}
-
-// ── FORGE — Relic Workshop ─────────────────────────────────────────
-
-var TIER_COLORS = {base:'#777',ruby:'#c0392b',emerald:'#27ae60',sapphire:'#2980b9',turquoise:'#17a589',amethyst:'#8e44ad'};
-// RELICS, RELIC_CRAFT_TIMES, RELIC_RECIPES — see data/relics.js
-
-
-var _forgeSelectedRecipe = null;
-
-function _forgeCanCraft(relicId){
-  var recipe = RELIC_RECIPES[relicId]; if(!recipe) return false;
-  return Object.keys(recipe.mats).every(function(k){
-    return (PERSIST.town.materials[k]||0) >= recipe.mats[k];
-  });
-}
-
-function _forgeCraftTime(relicId){
-  var recipe = RELIC_RECIPES[relicId]; if(!recipe) return 600;
-  var base = RELIC_CRAFT_TIMES[recipe.tier] || 600;
-  // Champion assignment: find any champion assigned to this forge slot
-  var b = PERSIST.town.buildings.forge;
-  var champId = b && b.assignedChamp;
-  if(champId){
-    var cp = getChampPersist(champId);
-    var level = cp ? cp.level : 1;
-    var ascLevel = getAscensionLevel(champId);
-    var reduction = 0.25 + ascLevel * 0.05 + Math.min(level,20) * 0.005;
-    base = Math.round(base * (1 - Math.min(0.6, reduction)));
-  }
-  return base;
-}
-
-function refreshForgePanel(){
-  showLockedBuildingUI('forge');
-  var b = PERSIST.town.buildings.forge;
-  if(!b||!b.unlocked) return;
-  if(!b.queue) b.queue = [];
-
-  // Build recipe list
-  var listEl = document.getElementById('forge-recipe-list');
-  if(!listEl) return;
-  listEl.innerHTML = '';
-
-  // Group by tier
-  var tiers = ['base','ruby','emerald','sapphire'];
-  tiers.forEach(function(tier){
-    var tierRelics = Object.keys(RELIC_RECIPES).filter(function(id){ return RELIC_RECIPES[id].tier===tier; });
-    if(!tierRelics.length) return;
-    var grpLabel = document.createElement('div');
-    grpLabel.className = 'forge-recipe-group-label';
-    grpLabel.textContent = tier.toUpperCase();
-    grpLabel.style.color = TIER_COLORS[tier]||'#777';
-    listEl.appendChild(grpLabel);
-
-    // Craftable first within tier
-    tierRelics.sort(function(a,b){ return _forgeCanCraft(b)?1:-1; });
-
-    tierRelics.forEach(function(relicId){
-      var relic = RELICS[relicId]; if(!relic) return;
-      var canCraft = _forgeCanCraft(relicId);
-      var isSelected = _forgeSelectedRecipe === relicId;
-      var el = document.createElement('div');
-      el.className = 'forge-recipe' + (canCraft?' craftable':'') + (isSelected?' selected':'');
-      el.innerHTML = '<span class="forge-recipe-icon">'+relicImgHTML(relicId,'20px')+'</span>'
-        +'<div style="flex:1;min-width:0;">'
-          +'<div class="forge-recipe-name">'+relic.name+'</div>'
-          +'<div class="forge-recipe-tier" style="color:'+TIER_COLORS[tier]+';">'+tier.toUpperCase()+'</div>'
-        +'</div>';
-      el.onclick = function(){ _forgeSelectedRecipe = relicId; refreshForgePanel(); };
-      listEl.appendChild(el);
-    });
-  });
-
-  // Build inspector
-  _refreshForgeInspector();
-
-  // Build queue
-  _refreshForgeQueue();
-}
-
-function _refreshForgeInspector(){
-  var el = document.getElementById('forge-inspector');
-  if(!el) return;
-  var relicId = _forgeSelectedRecipe;
-  var relic = relicId ? RELICS[relicId] : null;
-  var recipe = relicId ? RELIC_RECIPES[relicId] : null;
-  if(!relic||!recipe){ el.innerHTML='<div class="forge-inspector-empty">Select a recipe from the left to see details and craft.</div>'; return; }
-
-  var tier = recipe.tier;
-  var tc = TIER_COLORS[tier]||'#777';
-  var canCraft = _forgeCanCraft(relicId);
-  var craftSecs = _forgeCraftTime(relicId);
-  var craftTime = craftSecs >= 3600 ? (craftSecs/3600).toFixed(1)+'h' : Math.round(craftSecs/60)+'m';
-
-  // Material rows
-  var matsHTML = Object.keys(recipe.mats).map(function(matId){
-    var need = recipe.mats[matId];
-    var have = PERSIST.town.materials[matId]||0;
-    var mat = MATERIALS[matId];
-    var icon = mat ? mat.icon : '?';
-    var name = mat ? mat.name : matId;
-    var ok = have >= need;
-    return '<div class="fi-mat '+(ok?'have':'missing')+'">'
-      +'<span>'+icon+'</span>'
-      +'<span class="fi-mat-name">'+name+'</span>'
-      +'<span class="fi-mat-count">'+have+'/'+need+'</span>'
-      +(ok?'':'<span class="fi-mat-shortage">need '+(need-have)+' more</span>')
-      +'</div>';
-  }).join('');
-
-  // Where to find — only show areas the player has been to
-  var obtainLines = [];
-  Object.keys(recipe.mats).forEach(function(matId){
-    var mat = MATERIALS[matId]; if(!mat) return;
-    var areas = AREA_DEFS.filter(function(a){ return a.materialGroup===mat.group; });
-    var seen = areas.filter(function(a){
-      return PERSIST.areaRuns && Object.keys(PERSIST.areaRuns).some(function(k){ return k===a.id; });
-    });
-    var areaNames = (seen.length ? seen : areas).slice(0,3).map(function(a){ return a.name; });
-    if(mat && areaNames.length){
-      obtainLines.push('<div class="fi-obtain-line"><span>'+mat.icon+'</span><span>'+mat.name+'</span><span style="color:#5a4020;"> — '+areaNames.join(', ')+'</span></div>');
-    }
-  });
-
-  // Assigned champion
-  var b = PERSIST.town.buildings.forge;
-  var assignedId = b.assignedChamp;
-  var assignedCh = assignedId ? CREATURES[assignedId] : null;
-  var champHTML = '<div class="fi-section-label" style="margin-top:2px;">ASSIGNED CHAMPION</div>'
-    +'<div style="display:flex;align-items:center;gap:8px;background:rgba(15,8,2,.8);border:1px solid #1a0e04;border-radius:4px;padding:6px 8px;flex-wrap:wrap;gap:5px;">';
-  if(assignedCh){
-    var reduction = Math.round((1-(_forgeCraftTime(relicId)/(RELIC_CRAFT_TIMES[tier]||600)))*100);
-    champHTML += '<span style="font-size:16px;">'+assignedCh.icon+'</span>'
-      +'<span style="font-family:Cinzel,serif;font-size:8px;color:#c0a060;flex:1;">'+assignedCh.name+'</span>'
-      +'<span style="font-size:9px;color:#50c050;">-'+reduction+'% time</span>'
-      +'<button class="sanctum-btn" onclick="forgeUnassignChamp()" style="font-size:7px;padding:2px 6px;">Remove</button>';
-  } else {
-    champHTML += '<span style="font-size:10px;color:#3a2810;font-style:italic;flex:1;">No champion assigned</span>';
-    var available = PERSIST.unlockedChamps.filter(function(id){
-      return !PERSIST.champions[id] || !PERSIST.champions[id].lockedExpedition;
-    });
-    if(available.length){
-      available.forEach(function(cid){
-        var c = CREATURES[cid]; if(!c) return;
-        champHTML += '<button class="sanctum-btn" onclick="forgeAssignChamp(\''+cid+'\')" style="font-size:7px;padding:2px 6px;" title="'+c.name+'">'+c.icon+'</button>';
-      });
-    }
-  }
-  champHTML += '</div>';
-
-  el.innerHTML =
-    '<div class="fi-top">'
-      +'<span class="fi-big-icon">'+relicImgHTML(relicId,'38px')+'</span>'
-      +'<div>'
-        +'<div class="fi-name">'+relic.name+'</div>'
-        +'<div class="fi-tier-badge" style="color:'+tc+';border-color:'+tc+'44;">'+tier.toUpperCase()+' TIER</div>'
-        +'<div class="fi-desc">'+relic.desc+'</div>'
-      +'</div>'
-    +'</div>'
-    +'<div class="fi-divider"></div>'
-    +'<div>'
-      +'<div class="fi-section-label">MATERIALS REQUIRED</div>'
-      +'<div class="fi-mats">'+matsHTML+'</div>'
-    +'</div>'
-    +(obtainLines.length?'<div class="fi-obtain"><div class="fi-section-label" style="margin-bottom:4px;">WHERE TO FIND</div>'+obtainLines.join('')+'</div>':'')
-    +'<div class="fi-divider"></div>'
-    + champHTML
-    +'<div style="display:flex;align-items:center;gap:10px;margin-top:4px;">'
-      +'<button class="forge-craft-btn" data-relic="'+relicId+'" '+(canCraft?'onclick="forgeQueueRelic(this.dataset.relic)"':'disabled')+'>'
-        +'CRAFT — '+craftTime
-      +'</button>'
-      +(canCraft?'':'<span style="font-size:10px;color:#7a2020;font-style:italic;">Missing materials</span>')
-    +'</div>';
-}
-
-function _refreshForgeQueue(){
-  var el = document.getElementById('forge-queue-list');
-  if(!el) return;
-  var b = PERSIST.town.buildings.forge;
-  var queue = b&&b.queue||[];
-  if(!queue.length){ el.innerHTML='<div class="forge-queue-empty">No items queued.</div>'; return; }
-  el.innerHTML = '';
-  queue.forEach(function(item, i){
-    var relic = RELICS[item.relicId];
-    var now = Date.now();
-    var elapsed = now - item.startTime;
-    var pct = Math.min(100, Math.round((elapsed/item.totalMs)*100));
-    var etaSec = Math.max(0, Math.round((item.totalMs-elapsed)/1000));
-    var etaStr = etaSec >= 3600 ? (etaSec/3600).toFixed(1)+'h' : etaSec >= 60 ? Math.round(etaSec/60)+'m' : etaSec+'s';
-    var champCh = item.champId ? CREATURES[item.champId] : null;
-    var div = document.createElement('div');
-    div.className = 'forge-queue-item';
-    div.innerHTML = '<span class="forge-queue-icon">'+relicImgHTML(item.relicId,'20px')+'</span>'
-      +'<span class="forge-queue-name">'+(relic?relic.name:item.relicId)+'</span>'
-      +(champCh?'<span class="forge-queue-champ">'+champCh.icon+' <span>-'+item.timeReduction+'%</span></span>':'')
-      +'<div class="forge-queue-prog-wrap"><div class="forge-queue-prog"><div class="forge-queue-bar" style="width:'+pct+'%"></div></div></div>'
-      +'<span class="forge-queue-eta">'+etaStr+'</span>'
-      +(i===0?'<button class="forge-queue-cancel" onclick="forgeCancelItem(0)" title="Cancel and refund materials">✕</button>':'');
-    el.appendChild(div);
-  });
-}
-
-function forgeQueueRelic(relicId){
-  var b = PERSIST.town.buildings.forge;
-  if(!b||!b.unlocked) return;
-  if(!_forgeCanCraft(relicId)){ showTownToast('Not enough materials.'); return; }
-  var recipe = RELIC_RECIPES[relicId];
-  // Spend materials
-  Object.keys(recipe.mats).forEach(function(k){ PERSIST.town.materials[k]-=recipe.mats[k]; });
-  var totalMs = _forgeCraftTime(relicId) * 1000;
-  var reduction = b.assignedChamp ? Math.round((1-(totalMs/(RELIC_CRAFT_TIMES[recipe.tier]*1000)))*100) : 0;
-  if(!b.queue) b.queue = [];
-  b.queue.push({relicId:relicId, startTime:Date.now(), totalMs:totalMs, champId:b.assignedChamp||null, timeReduction:reduction});
-  savePersist();
-  addLog('Forge: crafting '+RELICS[relicId].name+' ('+Math.round(totalMs/60000)+'m).','sys');
-  refreshForgePanel();
-}
-
-function forgeCancelItem(idx){
-  var b = PERSIST.town.buildings.forge;
-  if(!b.queue||!b.queue[idx]) return;
-  var item = b.queue.splice(idx,1)[0];
-  // Refund materials
-  var recipe = RELIC_RECIPES[item.relicId];
-  if(recipe) Object.keys(recipe.mats).forEach(function(k){ PERSIST.town.materials[k]=(PERSIST.town.materials[k]||0)+recipe.mats[k]; });
-  savePersist(); refreshForgePanel();
-  showTownToast('Crafting cancelled — materials refunded.');
-}
-
-function forgeAssignChamp(champId){
-  var b = PERSIST.town.buildings.forge;
-  if(!b) return;
-  b.assignedChamp = champId;
-  savePersist(); _refreshForgeInspector();
-}
-
-function forgeUnassignChamp(){
-  var b = PERSIST.town.buildings.forge;
-  if(!b) return;
-  b.assignedChamp = null;
-  savePersist(); _refreshForgeInspector();
-}
-
-function forgeTick(){
-  var b = PERSIST.town.buildings.forge;
-  if(!b||!b.unlocked||!b.queue||!b.queue.length) return;
-  var item = b.queue[0];
-  if(Date.now()-item.startTime >= item.totalMs){
-    b.queue.shift();
-    // Grant relic to inventory
-    if(!PERSIST.town.relics) PERSIST.town.relics = {};
-    PERSIST.town.relics[item.relicId] = (PERSIST.town.relics[item.relicId]||0) + 1;
-    var relic = RELICS[item.relicId];
-    showTownToast('✦ '+(relic?relic.name:'Relic')+' crafted! Check your inventory.');
-    addLog('✦ Forge complete: '+(relic?relic.name:item.relicId)+' added to inventory.','sys');
-    savePersist();
-    // Refresh forge panel if open so queue updates live
-    var fp=document.getElementById('forge-panel-bg');
-    if(fp&&fp.classList.contains('show')) refreshForgePanel();
-  }
-}
-
-// ── SHARD WELL ──────────────────────────────────────────────────────
-var SHARD_WELL_BASE_SECS = 300;   // 1 shard per 5 min base
-var SHARD_WELL_GEM_MULT  = 2.5;   // gem makes it 2.5× faster (1 per 2 min)
-
-function getShardWellRate(){
-  var b=PERSIST.town.buildings.shard_well;
-  if(!b||!b.unlocked) return 0;
-  var secsPerShard=120;
-  return secsPerShard;
-}
-
-function shardWellTick(seconds){
-  var b=PERSIST.town.buildings.shard_well;
-  if(!b||!b.unlocked) return;
-  if(!b.shardAcc) b.shardAcc=0;
-  var rate=getShardWellRate();
-  if(rate<=0) return;
-  b.shardAcc+=seconds;
-  var earned=Math.floor(b.shardAcc/rate);
-  if(earned>0){
-    b.shardAcc-=earned*rate;
-    PERSIST.town.materials.gemShards=(PERSIST.town.materials.gemShards||0)+earned;
-    savePersist();
-    // Refresh panel if open
-    var panel=document.getElementById('shard_well-panel-bg');
-    if(panel&&panel.classList.contains('show')) refreshShardWellPanel();
-  }
-  // Always refresh banner ETA (cheap DOM op)
-  refreshSummonsBanner();
-}
-
-// ═══════════════════════════════════════════════════════
-// SOUL SHARD SUMMON SYSTEM
-// ═══════════════════════════════════════════════════════
-function performSummon(){
-  if((PERSIST.soulShards||0)<SOUL_SHARDS_PER_PULL){
-    showTownToast('Need '+SOUL_SHARDS_PER_PULL+' Soul Shards to summon. You have '+(PERSIST.soulShards||0)+'.');
-    return null;
-  }
-  var pool=getAvailablePool();
-  if(!pool.length){ showTownToast('No seen champions in pool yet. Explore more areas!'); return null; }
-
-  PERSIST.soulShards-=SOUL_SHARDS_PER_PULL;
-
-  // Weighted roll
-  var totalWeight=pool.reduce(function(s,e){return s+e.weight;},0);
-  var roll=Math.random()*totalWeight;
-  var acc=0, result=null;
-  for(var i=0;i<pool.length;i++){
-    acc+=pool[i].weight;
-    if(roll<acc){ result=pool[i]; break; }
-  }
-  if(!result) result=pool[pool.length-1];
-
-  var champId=result.id;
-  var isDupe=PERSIST.unlockedChamps.indexOf(champId)!==-1;
-
-  // Ensure champion definition exists
-  ensureEnemyChampion(champId);
-
-  if(isDupe){
-    if(!PERSIST.champDupes) PERSIST.champDupes={};
-    PERSIST.champDupes[champId]=(PERSIST.champDupes[champId]||0)+1;
-    savePersist();
-    return {champId:champId, rarity:result.rarity, isDupe:true, dupes:PERSIST.champDupes[champId]};
-  } else {
-    PERSIST.unlockedChamps.push(champId);
-    savePersist();
-    return {champId:champId, rarity:result.rarity, isDupe:false};
-  }
-}
-
-function getAscensionLevel(champId){
-  // Returns 0-5 based on how many ASCENSION_TIERS have been purchased
-  if(!PERSIST.champDupes) return 0;
-  var spent=PERSIST.champDupes['_spent_'+champId]||0;
-  var level=0;
-  var cumulative=0;
-  for(var i=0;i<ASCENSION_TIERS.length;i++){
-    cumulative+=ASCENSION_TIERS[i].cost;
-    if(spent>=cumulative) level=i+1; else break;
-  }
-  return level;
-}
-
-function getAscensionTierName(champId){
-  var level=getAscensionLevel(champId);
-  return level===0?'Base':CARD_TIER_LABELS[ASCENSION_TIERS[level-1].tier]||'Base';
-}
-
-function ascendChampion(champId){
-  var level=getAscensionLevel(champId);
-  if(level>=ASCENSION_TIERS.length){ showTownToast('Already at maximum ascension!'); return; }
-  var nextTier=ASCENSION_TIERS[level];
-  var have=PERSIST.champDupes&&PERSIST.champDupes[champId]||0;
-  if(have<nextTier.cost){
-    showTownToast('Need '+nextTier.cost+' '+( CREATURES[champId]?CREATURES[champId].name:champId)+' dupes (have '+have+').');
-    return;
-  }
-  PERSIST.champDupes[champId]=(PERSIST.champDupes[champId]||0)-nextTier.cost;
-  if(!PERSIST.champDupes['_spent_'+champId]) PERSIST.champDupes['_spent_'+champId]=0;
-  PERSIST.champDupes['_spent_'+champId]+=nextTier.cost;
-
-  var cp=getChampPersist(champId);
-  var ch=getCreaturePlayable(champId);
-  // Each tier: +3 base stats AND +0.5 growth
-  cp.stats.str+=nextTier.baseBonus; cp.stats.agi+=nextTier.baseBonus; cp.stats.wis+=nextTier.baseBonus;
-  if(ch){ ch.growth.str+=nextTier.growthBonus; ch.growth.agi+=nextTier.growthBonus; ch.growth.wis+=nextTier.growthBonus; }
-  savePersist();
-  refreshShardWellPanel();
-  var tierName=CARD_TIER_LABELS[nextTier.tier]||nextTier.tier;
-  var icon=TOWN_CARD_GEMS(nextTier.tier)||'✦';
-  showTownToast(icon+' '+( CREATURES[champId]?CREATURES[champId].name:champId)+' ascended to '+tierName+'!');
-}
-
-var _shardWellTab='generate';
-function setShardWellTab(tab){
-  _shardWellTab=tab;
-  refreshShardWellPanel();
-}
-
-function refreshSummonsBanner(){
-  var banner=document.getElementById('town-summons-banner');
-  if(!banner) return;
-  var wellUnlocked=PERSIST.town.buildings.shard_well&&PERSIST.town.buildings.shard_well.unlocked;
-  if(!wellUnlocked){ banner.style.display='none'; return; }
-  banner.style.display='block';
-
-  var souls=PERSIST.soulShards||0;
-  var canSummon=souls>=SOUL_SHARDS_PER_PULL;
-  var pool=getAvailablePool();
-  var hasPool=pool.length>0;
-
-  // Generation rate info
-  var rate=getShardWellRate();
-  var b=PERSIST.town.buildings.shard_well;
-  var acc=b?b.shardAcc||0:0;
-  var etaSec=rate>0?Math.max(0,rate-acc):0;
-  var subText=rate>0
-    ?'Shard Well active · next Soul Shard in '+(etaSec>=120?Math.ceil(etaSec/60)+'m':Math.ceil(etaSec)+'s')
-    :'Slot a gem in the Shard Well to generate faster';
-
-  banner.innerHTML=
-    '<div class="summons-banner" onclick="openSummonsOverlay()">'
-      +'<div class="summons-banner-icon">🔮</div>'
-      +'<div class="summons-banner-info">'
-        +'<div class="summons-banner-title">THE ETERNAL SUMMONS</div>'
-        +'<div class="summons-banner-sub">'+subText+'</div>'
-      +'</div>'
-      +'<div class="summons-banner-shards">'
-        +'<div class="summons-banner-count">'+souls+' 🔮</div>'
-        +'<div class="summons-banner-label">SOUL SHARDS</div>'
-      +'</div>'
-      +'<button class="summons-banner-btn'+(canSummon&&hasPool?' ready':'')+'" onclick="event.stopPropagation();openSummonsOverlay()">'
-        +(canSummon&&hasPool?'✦ SUMMON':'SUMMON')
-      +'</button>'
-    +'</div>';
-}
-
-function openSummonsOverlay(){
-  openTestGacha();
-}
-
-function refreshShardWellPanel(){
-  showLockedBuildingUI('shard_well');
-  var b=PERSIST.town.buildings.shard_well;
-  if(!b||!b.unlocked) return;
-
-  // gem slot UI removed
-
-  var display=document.getElementById('shard-well-display');
-  if(!display) return;
-  var tab=_shardWellTab||'generate';
-  display.innerHTML=''
-    +'<div style="display:flex;gap:4px;margin-bottom:10px;">'
-      +'<button class="bestiary-tab'+(tab==='generate'?' active':'')+'" onclick="setShardWellTab(\'generate\')">💎 GEM SHARDS</button>'
-      +'<button class="bestiary-tab'+(tab==='summon'?' active':'')+'" onclick="setShardWellTab(\'summon\')">🔮 SOUL SUMMON</button>'
-    +'</div>'
-    +'<div id="shard-well-tab-content"></div>';
-
-  var content=document.getElementById('shard-well-tab-content');
-  if(!content) return;
-
-  if(tab==='generate'){
-    var rate=getShardWellRate();
-    var acc=b.shardAcc||0;
-    var pct=rate>0?Math.round((acc/rate)*100):0;
-    var etaSec=rate>0?Math.max(0,rate-acc):0;
-    var etaStr=etaSec>=60?Math.ceil(etaSec/60)+'m '+Math.round(etaSec%60)+'s':Math.ceil(etaSec)+'s';
-    var shards=PERSIST.town.materials.gemShards||0;
-    content.innerHTML=''
-      +'<div style="font-size:9px;color:#5a4020;margin-bottom:8px;">Passively generates 💎 Gem Shards. Craft them into Gems in the Vault.</div>'
-      +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">'
-        +'<div style="font-size:28px;">💎</div>'
-        +'<div><div style="font-size:14px;color:#d4a843;font-family:Cinzel,serif;">'+shards+' Gem Shards</div>'
-          +'<div style="font-size:8px;color:#5a4020;">30 shards = Ruby Gem</div></div>'
-      +'</div>'
-      +'<div style="font-size:8px;color:#7a6030;margin-bottom:3px;">Next shard in '+etaStr+'</div>'
-      +'<div style="height:5px;background:rgba(0,0,0,.4);border-radius:3px;overflow:hidden;margin-bottom:8px;">'
-        +'<div style="height:100%;width:'+pct+'%;background:#c09030;border-radius:3px;"></div>'
-      +'</div>'
-      +'<div style="font-size:8px;color:#5a4020;">Rate: 1 shard every '+(rate>=60?Math.round(rate/60)+'m':rate+'s')+(slotCard?' ✦':'')+'</div>';
-  } else {
-    var souls=PERSIST.soulShards||0;
-    var pool=getAvailablePool();
-    var canSummon=souls>=SOUL_SHARDS_PER_PULL&&pool.length>0;
-    var poolHtml='';
-    if(pool.length){
-      var byRarity={legendary:[],rare:[],uncommon:[],common:[]};
-      pool.forEach(function(e){
-        ensureEnemyChampion(e.id);
-        (byRarity[e.rarity]||byRarity.common).push(e);
-      });
-      ['legendary','rare','uncommon','common'].forEach(function(r){
-        if(!byRarity[r].length) return;
-        var col=RARITY_COLORS[r]||'#c0a060';
-        poolHtml+='<div style="font-size:7px;color:'+col+';letter-spacing:1px;margin:6px 0 3px;">'+RARITY_LABELS[r]+' ('+byRarity[r].length+')</div>';
-        poolHtml+='<div style="display:flex;flex-wrap:wrap;gap:2px;">'
-          +byRarity[r].map(function(e){
-            var ch=CREATURES[e.id]; if(!ch) return '';
-            return '<span style="font-size:13px;cursor:default;" title="'+ch.name+'">'+ch.icon+'</span>';
-          }).join('')+'</div>';
-      });
-    } else {
-      poolHtml='<div style="font-size:9px;color:#5a4020;">All champions unlocked!</div>';
-    }
-    content.innerHTML=''
-      +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">'
-        +'<div style="font-size:28px;">🔮</div>'
-        +'<div><div style="font-size:14px;color:#d4a843;font-family:Cinzel,serif;">'+souls+' Soul Shards</div>'
-          +'<div style="font-size:8px;color:#5a4020;">Earn 3 per run · '+SOUL_SHARDS_PER_PULL+' per summon</div></div>'
-      +'</div>'
-      
-      +(canSummon
-        ?'<button class="btn btn-gold" style="width:100%;font-size:12px;padding:10px;" onclick="doSummonUI()">✦ SUMMON ('+SOUL_SHARDS_PER_PULL+' Soul Shards)</button>'
-        :'<button class="btn btn-dim" style="width:100%;font-size:12px;padding:10px;" disabled>'+(pool.length?'Need '+SOUL_SHARDS_PER_PULL+' Soul Shards':'All champions unlocked')+'</button>')
-      +'<div id="summon-result" style="margin-top:12px;"></div>'
-      +'<div style="margin-top:12px;border-top:1px solid #2a1808;padding-top:8px;">'
-        +'<div style="font-size:8px;color:#5a4020;margin-bottom:6px;">AVAILABLE POOL ('+pool.length+')</div>'
-        +poolHtml
-      +'</div>';
-  }
-}
-
-function doSummonUI(){
-  var result=performSummon();
-  if(!result) return;
-  refreshShardWellPanel();
-  var el=document.getElementById('summon-result');
-  if(!el) return;
-  var ch=getCreaturePlayable(result.champId); if(!ch) return;
-  var col=RARITY_COLORS[result.rarity]||'#c0a060';
-  var label=RARITY_LABELS[result.rarity]||'';
-  if(result.isDupe){
-    var dupeTotal=PERSIST.champDupes&&PERSIST.champDupes[result.champId]||0;
-    var nextAsc=ASCENSION_TIERS[getAscensionLevel(result.champId)];
-    var nextCostStr=nextAsc?' ('+dupeTotal+'/'+nextAsc.cost+' for '+CARD_TIER_LABELS[nextAsc.tier]+')':'(max ascension)';
-    el.innerHTML='<div style="background:rgba(20,10,2,.95);border:1px solid '+col+';border-radius:8px;padding:12px;text-align:center;">'
-      +'<div style="font-size:8px;color:#5a4020;margin-bottom:6px;">DUPLICATE — ASCENSION TOKEN ADDED</div>'
-      +'<div style="font-size:24px;">'+ch.icon+'</div>'
-      +'<div style="font-size:11px;color:'+col+';font-family:Cinzel,serif;">'+ch.name+'</div>'
-      +'<div style="font-size:8px;color:#7a6030;margin-top:4px;">+1 dupe token '+nextCostStr+'</div>'
-      +(nextAsc?'<button class="sanctum-btn sanctum-btn-upgrade" style="margin-top:6px;" onclick="ascendChampion(\''+result.champId+'\');doSummonUI._refresh()">ASCEND TO '+CARD_TIER_LABELS[nextAsc.tier].toUpperCase()+'</button>':'')
-      +'</div>';
-    doSummonUI._refresh=function(){ refreshShardWellPanel(); };
-  } else {
-    el.innerHTML='<div style="background:rgba(20,10,2,.95);border:2px solid '+col+';border-radius:8px;padding:12px;text-align:center;animation:lu-toast-in .3s ease-out;">'
-      +'<div style="font-size:8px;color:'+col+';letter-spacing:1px;margin-bottom:6px;">'+label+' UNLOCKED!</div>'
-      +'<div style="font-size:36px;margin-bottom:4px;">'+ch.icon+'</div>'
-      +'<div style="font-size:13px;color:#d4a843;font-family:Cinzel,serif;margin-bottom:2px;">'+ch.name+'</div>'
-      +'<div style="font-size:8px;color:#7a6030;">'+ch.role+'</div>'
-      +(ch.comingSoon?'<div style="font-size:7px;color:#4a3010;margin-top:4px;font-style:italic;">Full kit coming soon</div>':'')
-      +'</div>';
-  }
-}
-
-// Forge tick — called every 5s from a global idle ticker
-
-
-// ── SHRINE ──
-function refreshShrinePanel(){
-  showLockedBuildingUI('shrine');
-  var b=PERSIST.town.buildings.shrine;
-  if(!b.unlocked) return;
-
-  // gem slot UI removed
-  var slotCard=null;
-
-  // Active blessing display — works without gem
-  var bd=document.getElementById('shrine-blessing-display');
-  if(!bd) return;
-  bd.innerHTML='';
-  var active=b.activeBlessing;
-  if(active){
-    var bl=SHRINE_BLESSINGS.find(function(x){return x.id===active;});
-    if(bl) bd.innerHTML='<div class="shrine-active-bless"><div class="shrine-active-icon">'+bl.icon+'</div><div><div class="shrine-active-name">'+bl.name+(slotCard?' ✦':'')+'</div><div class="shrine-active-desc">'+bl.desc+(slotCard?' <span style="color:#d4a843;font-size:8px;">(enhanced)</span>':'')+'</div></div></div>';
-  } else {
-    bd.innerHTML='<div class="shrine-no-bless">Choose a blessing below.</div>';
-  }
-
-  // Blessing list — all visible, locked ones show level requirement
-  var bl2=document.getElementById('shrine-blessing-list');
-  if(!bl2) return;
-  bl2.innerHTML='';
-  var shrineLevel=getBuildingLevel('shrine');
-  var xp=PERSIST.town.buildingXp&&PERSIST.town.buildingXp.shrine||0;
-  var xpToNext=getBuildingXpToNext(shrineLevel);
-
-  // Show shrine level + XP bar at top
-  var lvHtml='<div style="font-size:8px;color:#7a6030;margin-bottom:8px;text-align:center;">'
-    +'Shrine Level '+shrineLevel
-    +' &nbsp;·&nbsp; <span style="color:#c0a060;">'+xp+' / '+xpToNext+' XP</span>'
-    +'<div style="height:3px;background:rgba(0,0,0,.4);border-radius:2px;margin-top:3px;overflow:hidden;">'
-    +'<div style="height:100%;width:'+(Math.round((xp/xpToNext)*100))+'%;background:#c09030;border-radius:2px;"></div>'
-    +'</div></div>';
-  bl2.innerHTML=lvHtml;
-
-  SHRINE_BLESSINGS.forEach(function(bless){
-    var isUnlocked=isBlessingUnlocked(bless);
-    var isCur=bless.id===b.activeBlessing&&isUnlocked;
-    var el=document.createElement('div');
-    el.className='shrine-bless-opt'+(isCur?' shrine-bless-active':'')+(isUnlocked?'':' shrine-bless-disabled');
-    var lockHtml=isUnlocked?'':' 🔒';
-    var reqHtml=isUnlocked?''
-      :'<div style="font-size:7px;color:#5a4020;margin-top:2px;">Requires Shrine Lv'+bless.lvl+'</div>';
-    var gemHint=slotCard?'<div style="font-size:7px;color:#d4a843;margin-top:1px;">✦ '+bless.descGem+'</div>':'';
-    el.innerHTML='<div class="shrine-bless-icon">'+bless.icon+'</div>'
-      +'<div><div class="shrine-bless-name">'+bless.name+lockHtml+(isCur?' ✓':'')+'</div>'
-      +'<div class="shrine-bless-desc">'+(isUnlocked?bless.desc:'???')+gemHint+'</div>'
-      +reqHtml+'</div>';
-    if(isUnlocked) el.onclick=function(){
-      PERSIST.town.buildings.shrine.activeBlessing=bless.id;
-      savePersist(); refreshShrinePanel();
-    };
-    bl2.appendChild(el);
-  });
-}
 
 // ── BESTIARY ──
 var _bestiaryTab='creatures';
@@ -7152,6 +6435,68 @@ function vaultTick(seconds){
       showTownToast('✦ Vault reached Lv.'+(lv+1)+'!'+(unlockMsg?' '+unlockMsg:''));
     }
   }
+}
+
+// ── Forge tick ───────────────────────────────────────────────────────
+function forgeTick(){
+  var b=PERSIST.town.buildings.forge;
+  if(!b||!b.unlocked||!b.queue||!b.queue.length) return;
+  var item=b.queue[0];
+  if(Date.now()-item.startTime>=item.totalMs){
+    b.queue.shift();
+    if(!PERSIST.town.relics) PERSIST.town.relics={};
+    PERSIST.town.relics[item.relicId]=(PERSIST.town.relics[item.relicId]||0)+1;
+    var relic=RELICS[item.relicId];
+    showTownToast('✦ '+(relic?relic.name:'Relic')+' crafted! Check your inventory.');
+    addLog('✦ Forge complete: '+(relic?relic.name:item.relicId)+' added to inventory.','sys');
+    savePersist();
+    var fp=document.getElementById('forge-panel-bg');
+    if(fp&&fp.classList.contains('show')) refreshForgePanel();
+  }
+}
+
+// ── Shard Well tick ───────────────────────────────────────────────────
+var SHARD_WELL_BASE_SECS=300;
+function getShardWellRate(){
+  var b=PERSIST.town.buildings.shard_well;
+  if(!b||!b.unlocked) return 0;
+  return 120; // 1 shard per 2 min
+}
+
+function shardWellTick(seconds){
+  var b=PERSIST.town.buildings.shard_well;
+  if(!b||!b.unlocked) return;
+  if(!b.shardAcc) b.shardAcc=0;
+  var rate=getShardWellRate();
+  if(rate<=0) return;
+  b.shardAcc+=seconds;
+  var earned=Math.floor(b.shardAcc/rate);
+  if(earned>0){
+    b.shardAcc-=earned*rate;
+    PERSIST.soulShards=(PERSIST.soulShards||0)+earned;
+  }
+}
+
+// ── Expedition tick ───────────────────────────────────────────────────
+
+// ── Vault level bar refresh ───────────────────────────────────────────
+
+// ── Summons banner ────────────────────────────────────────────────────
+function refreshSummonsBanner(){
+  var banner=document.getElementById('town-summons-banner');
+  if(!banner) return;
+  var wellUnlocked=PERSIST.town.buildings.shard_well&&PERSIST.town.buildings.shard_well.unlocked;
+  if(!wellUnlocked){ banner.style.display='none'; return; }
+  banner.style.display='block';
+  var souls=PERSIST.soulShards||0;
+  var canSummon=souls>=SOUL_SHARDS_PER_PULL;
+  banner.innerHTML='<div style="display:flex;align-items:center;gap:10px;padding:6px 14px;background:rgba(6,3,1,.6);border-bottom:1px solid #1e1006;">'
+    +'<span style="font-family:Cinzel,serif;font-size:8px;color:#7a5020;letter-spacing:1px;">SOUL SHARDS</span>'
+    +'<span style="font-family:Cinzel,serif;font-size:11px;color:#c09030;">🔮 '+souls+'</span>'
+    +(canSummon
+      ?'<button onclick="openBuilding(\'shard_well\')" style="font-family:Cinzel,serif;font-size:8px;padding:4px 10px;border-radius:3px;border:1px solid #c09030;background:rgba(40,22,4,.9);color:#d4a843;cursor:pointer;margin-left:auto;">SUMMON ✦</button>'
+      :'<span style="font-size:8px;color:#3a2810;margin-left:auto;">'+(SOUL_SHARDS_PER_PULL-souls)+' more to summon</span>')
+    +'</div>';
 }
 
 // ─────────────────────────────────────────────────────────
