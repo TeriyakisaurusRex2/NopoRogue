@@ -215,7 +215,7 @@ var PERSIST={
     cards:[], // [{id,tier:'ruby'|'emerald'|'sapphire'...,slottedIn:buildingId|null}]
     buildings:{
       vault:{unlocked:false, slottedCard:null},
-      forge:{unlocked:false,slottedCard:null,queue:[]},
+      forge:{unlocked:false,slottedCard:null,queue:[],assignedChamp:null},
       shrine:{unlocked:false,slottedCard:null,activeBlessing:null},
       bestiary:{unlocked:false,slottedCard:null},
       shard_well:{unlocked:false,slottedCard:null},
@@ -223,8 +223,10 @@ var PERSIST={
       market:{unlocked:false,slottedCard:null, stock:[], refreshProgress:0,
               deals:[], dealsProgress:0, rare:null, rareProgress:0},
       board:{unlocked:false, slottedCard:null},
+      expedition_hall:{unlocked:false,level:1,slots:[{champId:null,areaId:null,type:null,startTime:null,totalMs:null,restUntil:null},{champId:null,areaId:null,type:null,startTime:null,totalMs:null,restUntil:null},{champId:null,areaId:null,type:null,startTime:null,totalMs:null,restUntil:null}],log:[]},
     },
-    materials:{sparks:0, embers:0, flameShards:0, gemShards:0},
+    materials:{},  // { materialId: count } — populated from MATERIALS definition
+    relics:{},     // { relicId: count } — crafted/found relics in inventory
     items:{},
     shopPurchases:{},
     vaultXp:0, vaultLevel:1, vaultXpTotal:0,
@@ -257,12 +259,67 @@ function champPersistDefault(champId){
   return {
     level:1, xp:0, xpNext:80, xpTotal:0,
     stats:{str:ch.baseStats.str,agi:ch.baseStats.agi,wis:ch.baseStats.wis},
-    alive:true, lastArea:null
+    alive:true, lastArea:null,
+    relics:[],             // equipped relic IDs
+    lockedExpedition:null  // slot index if on expedition, else null
   };
 }
 function getChampPersist(champId){
   if(!PERSIST.champions[champId]) PERSIST.champions[champId]=champPersistDefault(champId);
   return PERSIST.champions[champId];
+}
+
+// ── Relic slot management ──────────────────────────────────────────────────
+
+// How many relic slots this champion has (1 per ascension tier, 0 at base)
+function getRelicSlotCount(champId){
+  return getAscensionLevel(champId);
+}
+
+// Equipped relic IDs for a champion (ordered list, length = equipped count)
+function getEquippedRelics(champId){
+  var cp = getChampPersist(champId);
+  if(!cp) return [];
+  if(!cp.relics) cp.relics = [];
+  return cp.relics;
+}
+
+// Equip a relic from town inventory onto a champion. Returns error string or null.
+function equipRelic(champId, relicId){
+  var cp = getChampPersist(champId);
+  if(!cp) return 'Champion not found.';
+  if(!cp.relics) cp.relics = [];
+  var slots = getRelicSlotCount(champId);
+  if(slots === 0) return 'No relic slots — ascend this champion first.';
+  if(cp.relics.length >= slots) return 'All slots full.';
+  var inv = PERSIST.town.relics || {};
+  if(!inv[relicId] || inv[relicId] <= 0) return 'Relic not in inventory.';
+  inv[relicId]--;
+  if(inv[relicId] <= 0) delete inv[relicId];
+  cp.relics.push(relicId);
+  savePersist();
+  return null;
+}
+
+// Remove a relic from a slot by index. Destroys it (no refund).
+function unequipRelic(champId, slotIdx){
+  var cp = getChampPersist(champId);
+  if(!cp || !cp.relics) return;
+  cp.relics.splice(slotIdx, 1);
+  savePersist();
+}
+
+// Apply all equipped relics to a game state object at run start.
+// Each relic's apply(gs) function modifies gs in place.
+function applyRelics(gs){
+  if(!gs || !gs.champId) return;
+  var equipped = getEquippedRelics(gs.champId);
+  equipped.forEach(function(relicId){
+    var relic = RELICS[relicId];
+    if(relic && typeof relic.apply === 'function'){
+      try { relic.apply(gs); } catch(e) { console.warn('Relic apply error:', relicId, e); }
+    }
+  });
 }
 
 function savePersist(){ try{ localStorage.setItem(PERSIST_KEY,JSON.stringify(PERSIST)); }catch(e){} }
@@ -278,7 +335,6 @@ function loadPersist(){
       PERSIST.champions=p.champions||{};
       PERSIST.townUnlocked=true; // town always visible now
       if(p.town){
-        PERSIST.town.cards=p.town.cards||[];
         if(p.town.buildings){
           Object.keys(p.town.buildings).forEach(function(k){
             if(PERSIST.town.buildings[k]) PERSIST.town.buildings[k]=Object.assign({},PERSIST.town.buildings[k],p.town.buildings[k]);
@@ -298,6 +354,7 @@ function loadPersist(){
         PERSIST.town.marketOffers=p.town.marketOffers||[];
         if(p.town.quests) PERSIST.town.quests=Object.assign({offered:[],active:null,completed:[],offeredRefresh:0},p.town.quests);
         if(p.town.buildings&&p.town.buildings.board) PERSIST.town.buildings.board=Object.assign({unlocked:false,slottedCard:null},p.town.buildings.board);
+        if(p.town.buildings&&p.town.buildings.expedition_hall) PERSIST.town.buildings.expedition_hall=Object.assign({unlocked:false,level:1,slots:[{champId:null,areaId:null,type:null,startTime:null,totalMs:null,restUntil:null},{champId:null,areaId:null,type:null,startTime:null,totalMs:null,restUntil:null},{champId:null,areaId:null,type:null,startTime:null,totalMs:null,restUntil:null}],log:[]},p.town.buildings.expedition_hall);
         if(p.town.buildings&&p.town.buildings.shard_well) PERSIST.town.buildings.shard_well=Object.assign({unlocked:false,slottedCard:null,shardAcc:0},p.town.buildings.shard_well);
       }
       if(p.bestiary){ PERSIST.bestiary=Object.assign({research:{},researchAcc:0},p.bestiary); }
@@ -494,6 +551,59 @@ var CREATURES = {};
 // AREA DEFINITIONS
 // ═══════════════════════════════════════════════════════
 // Area definitions loaded from data/areas.js
+// ═══════════════════════════════════════════════════════
+// MATERIALS — area-themed crafting resources
+// Each entry: { id, name, icon, group, rarity }
+// rarity: 'common' | 'uncommon' | 'rare'
+// ═══════════════════════════════════════════════════════
+var MATERIALS = {
+  // Sewer / Vermin
+  slick_stone:      {id:'slick_stone',      name:'Slick Stone',      icon:'🪨', group:'sewer',   rarity:'common'},
+  rancid_bile:      {id:'rancid_bile',      name:'Rancid Bile',      icon:'🧪', group:'sewer',   rarity:'uncommon'},
+  plague_marrow:    {id:'plague_marrow',    name:'Plague Marrow',    icon:'☠️', group:'sewer',   rarity:'rare'},
+  // Wetlands
+  bog_iron:         {id:'bog_iron',         name:'Bog Iron',         icon:'🔩', group:'wetlands', rarity:'common'},
+  leech_oil:        {id:'leech_oil',        name:'Leech Oil',        icon:'🫙', group:'wetlands', rarity:'uncommon'},
+  abyssal_coral:    {id:'abyssal_coral',    name:'Abyssal Coral',    icon:'🪸', group:'wetlands', rarity:'rare'},
+  // Undead / Crypt
+  bone_dust:        {id:'bone_dust',        name:'Bone Dust',        icon:'🦴', group:'crypt',   rarity:'common'},
+  grave_iron:       {id:'grave_iron',       name:'Grave Iron',       icon:'⛓️', group:'crypt',   rarity:'uncommon'},
+  cursed_essence:   {id:'cursed_essence',   name:'Cursed Essence',   icon:'💀', group:'crypt',   rarity:'rare'},
+  // Forest / Cave
+  thornwood_resin:  {id:'thornwood_resin',  name:'Thornwood Resin',  icon:'🌿', group:'forest',  rarity:'common'},
+  harpy_talon:      {id:'harpy_talon',      name:'Harpy Talon',      icon:'🪶', group:'forest',  rarity:'uncommon'},
+  ancient_bark:     {id:'ancient_bark',     name:'Ancient Bark',     icon:'🌳', group:'forest',  rarity:'rare'},
+  // Fire / Forge
+  ember_grit:       {id:'ember_grit',       name:'Ember Grit',       icon:'🔥', group:'fire',    rarity:'common'},
+  dragonscale:      {id:'dragonscale',      name:'Dragonscale',      icon:'🐉', group:'fire',    rarity:'uncommon'},
+  smelt_slag:       {id:'smelt_slag',       name:'Smelt Slag',       icon:'⚙️', group:'fire',    rarity:'rare'},
+  // Ancient / Ruins
+  stone_cipher:     {id:'stone_cipher',     name:'Stone Cipher',     icon:'🗿', group:'ruins',   rarity:'common'},
+  vault_bronze:     {id:'vault_bronze',     name:'Vault Bronze',     icon:'🏺', group:'ruins',   rarity:'uncommon'},
+  arcane_residue:   {id:'arcane_residue',   name:'Arcane Residue',   icon:'✨', group:'ruins',   rarity:'rare'},
+  // Wax / Desert
+  amber_wax:        {id:'amber_wax',        name:'Amber Wax',        icon:'🕯️', group:'wax',     rarity:'common'},
+  wax_crystal:      {id:'wax_crystal',      name:'Wax Crystal',      icon:'💎', group:'wax',     rarity:'uncommon'},
+  ancient_amber:    {id:'ancient_amber',    name:'Ancient Amber',    icon:'🟡', group:'wax',     rarity:'rare'},
+  // Arcane / Void
+  void_splinter:    {id:'void_splinter',    name:'Void Splinter',    icon:'🌑', group:'arcane',  rarity:'common'},
+  mist_silk:        {id:'mist_silk',        name:'Mist Silk',        icon:'🌫️', group:'arcane',  rarity:'uncommon'},
+  null_stone:       {id:'null_stone',       name:'Null Stone',       icon:'🔮', group:'arcane',  rarity:'rare'},
+};
+
+// Material drop table by group — [ [materialId, dropChance], ... ]
+// Chances are per-roll; multiple materials can drop in one run
+var MATERIAL_DROPS = {
+  sewer:   [{id:'slick_stone',   base:0.60, lvlBonus:0.00}, {id:'rancid_bile',   base:0.25, lvlBonus:0.01}, {id:'plague_marrow',  base:0.06, lvlBonus:0.01}],
+  wetlands:[{id:'bog_iron',      base:0.60, lvlBonus:0.00}, {id:'leech_oil',     base:0.25, lvlBonus:0.01}, {id:'abyssal_coral',  base:0.06, lvlBonus:0.01}],
+  crypt:   [{id:'bone_dust',     base:0.60, lvlBonus:0.00}, {id:'grave_iron',    base:0.25, lvlBonus:0.01}, {id:'cursed_essence', base:0.06, lvlBonus:0.01}],
+  forest:  [{id:'thornwood_resin',base:0.60,lvlBonus:0.00}, {id:'harpy_talon',   base:0.25, lvlBonus:0.01}, {id:'ancient_bark',   base:0.06, lvlBonus:0.01}],
+  fire:    [{id:'ember_grit',    base:0.60, lvlBonus:0.00}, {id:'dragonscale',   base:0.25, lvlBonus:0.01}, {id:'smelt_slag',     base:0.06, lvlBonus:0.01}],
+  ruins:   [{id:'stone_cipher',  base:0.60, lvlBonus:0.00}, {id:'vault_bronze',  base:0.25, lvlBonus:0.01}, {id:'arcane_residue', base:0.06, lvlBonus:0.01}],
+  wax:     [{id:'amber_wax',     base:0.60, lvlBonus:0.00}, {id:'wax_crystal',   base:0.25, lvlBonus:0.01}, {id:'ancient_amber',  base:0.06, lvlBonus:0.01}],
+  arcane:  [{id:'void_splinter', base:0.60, lvlBonus:0.00}, {id:'mist_silk',     base:0.25, lvlBonus:0.01}, {id:'null_stone',     base:0.06, lvlBonus:0.01}],
+};
+
 var AREA_DEFS = [];
 
 function calcXpMult(champLevel, areaLevel){
@@ -759,6 +869,11 @@ function makeGS(champId,area){
     _frenzyBiteStacks:0,
     _goblinRallied:false,
     _bloatShieldActive:false,
+    // New mechanic state
+    _volatile:null,
+    _suspended:false,
+    _suspendEnd:0,
+    _nextDrawBonus:0,
     _trollHealed:false,
     _lastCardTime:0,
     _pinchReduce:0,
@@ -775,6 +890,9 @@ function makeGS(champId,area){
     _sporeHits:0,
     _swarmAntUsed:false, // tracks enemy IDs defeated this run for card reward pool
   };
+  // Apply equipped relics — modifies gs stats, flags, and starting values
+  applyRelics(gs);
+  return gs;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -860,14 +978,16 @@ function rebuildChampGrid(){
       var ch=getCreaturePlayable(id);
       var cp=getChampPersist(id);
       var isDead=!cp.alive;
-      d.className='champ-card'+(isDead?' dead-champ':'');
+      var isOnExpedition = cp.lockedExpedition !== null && cp.lockedExpedition !== undefined;
+      d.className='champ-card'+(isDead?' dead-champ':'')+(isOnExpedition?' expedition-locked':'');
       d.id='cc-'+id;
-      d.onclick=function(){ selectChamp(id); };
+      if(!isOnExpedition) d.onclick=function(){ selectChamp(id); };
       var xpPct=Math.min(100,Math.round((cp.xp/cp.xpNext)*100));
       var s=cp.stats;
       var deadHtml=isDead?'<div class="dead-badge">✦ FALLEN — Lv.1 on next run</div>':'';
+      var expHtml=isOnExpedition?'<div class="exp-locked-badge">🏕️ ON EXPEDITION</div>':'';
       var lastAreaHtml=cp.lastArea?'<div class="champ-last-area">Last: '+cp.lastArea+'</div>':'<div class="champ-last-area">Not yet ventured</div>';
-      d.innerHTML=deadHtml
+      d.innerHTML=deadHtml+expHtml
         +'<div class="champ-icon">'+creatureImgHTML(id, ch.icon, '96px')+'</div>'
         +'<div class="champ-name">'+ch.name+'</div>'
         +'<div class="champ-role">'+ch.role+'</div>'
@@ -1066,7 +1186,8 @@ function buildAreaScreen(){
       +'<div class="area-stars">'+starStr+'</div>'
       +'<div class="area-theme">'+area.def.theme+'</div>'
       +'<div class="area-row"><span class="area-rl">CREATURES</span><span class="area-rv">'+eIcons.slice(0,3).join(' ')+'</span></div>'
-      +'<div class="area-row"><span class="area-rl">FIGHTS</span><span class="area-rv">'+area.enemies.length+(isBoss?' (boss)':'')+'</span></div>';
+      +'<div class="area-row"><span class="area-rl">FIGHTS</span><span class="area-rv">'+area.enemies.length+(isBoss?' (boss)':'')+'</span></div>'
+      +'<button class="area-info-btn" onclick="event.stopPropagation();openLocationInBestiary(\''+area.def.id+'\')" title="Location info">ℹ</button>';
     if(isBoss) card.style.position='relative'; // for skull positioning
     grid.appendChild(card);
   });
@@ -1092,7 +1213,89 @@ var _deSelected= -1;   // index in _deDeck that is selected for replacement
 var _deTab     = 'unlocks'; // active available-cards tab
 var MAX_CARD_COPIES = 5; // max copies of any one card (Dead Weight exempt)
 
+// ── Deck editor tooltip ──
+var _deTip = null;
+function _deShowTooltip(e, card){
+  if(!card) return;
+  _deHideTooltip();
+  var tip = document.createElement('div');
+  tip.className = 'de-tooltip';
+  var effect = (card.effect||'').split('\n')[0];
+  var mana   = card.manaCost ? '<div class="de-tooltip-mana">'+card.manaCost+' mana</div>' : '';
+  tip.innerHTML = '<div class="de-tooltip-name">'+card.name+'</div>'
+    +'<div class="de-tooltip-effect">'+effect+'</div>'
+    + mana;
+  document.body.appendChild(tip);
+  _deTip = tip;
+  _deMoveTooltip(e);
+}
+function _deHideTooltip(){
+  if(_deTip){ _deTip.remove(); _deTip = null; }
+}
+function _deMoveTooltip(e){
+  if(!_deTip) return;
+  var x = e.clientX + 10, y = e.clientY - 10;
+  if(x + 190 > window.innerWidth) x = e.clientX - 200;
+  if(y + 80  > window.innerHeight) y = e.clientY - 90;
+  _deTip.style.left = x + 'px';
+  _deTip.style.top  = y + 'px';
+}
+
+// ── Info strip — shows full card + keyword glossary ──
+var _deInfoPinned = null; // card pinned by selection (vs just hovered)
+
+function _deUpdateInfo(card, pinned){
+  if(pinned !== undefined) _deInfoPinned = pinned ? card : null;
+  var display = card || _deInfoPinned;
+
+  var wrap   = document.getElementById('de-info-card-wrap');
+  var detail = document.getElementById('de-info-detail');
+  if(!wrap || !detail) return;
+
+  if(!display){
+    wrap.innerHTML   = '';
+    detail.innerHTML = '<div class="de-info-empty">Select a card to see details</div>';
+    return;
+  }
+
+  // Full card render (uses existing buildCardHTML)
+  var cardId = display.id || '';
+  wrap.innerHTML = buildCardHTML(cardId, false);
+
+  // Detail: name, full effect, keyword glossary
+  var fullEffect = renderKeywords((display.effect||'').replace(/\n/g,'<br>'));
+  var html = '<div class="de-info-name">'+display.name+'</div>';
+  if(display.manaCost) html += '<div class="de-info-type">'+display.manaCost+' mana &nbsp;·&nbsp; '+display.type+'</div>';
+  else html += '<div class="de-info-type">'+display.type+'</div>';
+  html += '<div class="de-info-effect">'+fullEffect+'</div>';
+
+  // Keyword glossary — find all [Keyword] references in the effect
+  var kwMatches = (display.effect||'').match(/\[([A-Za-z]+)\]/g);
+  if(kwMatches){
+    var seen = {};
+    var kwHtml = '';
+    kwMatches.forEach(function(m){
+      var word = m.slice(1,-1);
+      if(seen[word] || !KEYWORDS[word]) return;
+      seen[word] = true;
+      kwHtml += '<div class="de-info-kw"><strong>'+word+'</strong> — '+KEYWORDS[word].def+'</div>';
+    });
+    if(kwHtml){
+      html += '<div class="de-info-divider"></div>';
+      html += '<div class="de-info-glossary-label">KEYWORDS</div>';
+      html += '<div class="de-info-glossary">'+kwHtml+'</div>';
+    }
+  }
+
+  detail.innerHTML = html;
+}
+
+var _deReturnScreen = 'area-screen';
+
 function openDeckEditor(champId){
+  // Track where we came from so Done returns correctly
+  var cur = document.querySelector('.screen.active');
+  _deReturnScreen = cur ? cur.id : 'area-screen';
   _deChampId  = champId;
   _deDeck     = buildStartDeck(champId).slice();
   _deHistory  = [];
@@ -1150,15 +1353,25 @@ function _deRenderDeck(){
     var card = CARDS[cardId];
     var isFiller = cardId === 'filler';
     var isSelected = idx === _deSelected;
+    var effectLine = card ? (card.effect||'').split('\n')[0] : '';
+    var manaCost   = card && card.manaCost ? card.manaCost : 0;
+    var cardType   = card ? (card.type||'utility') : 'utility';
 
     var d = document.createElement('div');
     d.className = 'de-card' + (isFiller?' de-filler':'') + (isSelected?' de-selected':'');
+    d.setAttribute('data-type', cardType);
     d.innerHTML =
+      (manaCost ? '<div class="de-mana-badge">'+manaCost+'</div>' : '')+
       '<div class="de-card-art">'+_deCardArtHTML(cardId, card)+'</div>'+
       '<div class="de-card-name">'+(card?card.name:cardId)+'</div>'+
+      '<div class="de-card-effect">'+effectLine+'</div>'+
       (counts[cardId]>1?'<div class="de-copy-count">×'+counts[cardId]+'</div>':'');
 
-    (function(i){ d.onclick = function(){ _deSelectSlot(i); }; })(idx);
+    (function(i,c){ 
+      d.onclick = function(){ _deSelectSlot(i); _deUpdateInfo(c, true); };
+      d.onmouseenter = function(){ if(_deInfoPinned===null) _deUpdateInfo(c, false); };
+      d.onmouseleave = function(){ if(_deInfoPinned===null) _deUpdateInfo(null); };
+    })(idx, card);
 
     // Apply filler glow on first visit
     if(isFiller && !PERSIST['filler_seen_'+_deChampId]) d.classList.add('filler-glow');
@@ -1180,7 +1393,13 @@ function _deRenderDeck(){
 }
 
 function _deSelectSlot(idx){
-  _deSelected = (_deSelected === idx) ? -1 : idx;
+  if(_deSelected === idx){
+    _deSelected = -1;
+    _deInfoPinned = null;
+    _deUpdateInfo(null);
+  } else {
+    _deSelected = idx;
+  }
   _deRender();
 }
 
@@ -1231,11 +1450,14 @@ function _deRenderAvail(){
       var buyGold     = 50; // cost to unlock a progression card
       var atMax       = deckCounts[cardId] >= MAX_CARD_COPIES;
 
+      var effLine1 = (card.effect||'').split('\n')[0];
       var d = document.createElement('div');
       d.className = 'de-acard de-acard-champ' + (isLocked?' de-acard-locked':'');
+      d.setAttribute('data-type', card.type||'utility');
       d.innerHTML =
         '<div class="de-acard-art">'+_deCardArtHTML(cardId, card)+'</div>'+
         '<div class="de-acard-name">'+card.name+'</div>'+
+        '<div class="de-acard-effect">'+effLine1+'</div>'+
         (isLocked && canBuy   ? '<span class="de-buy-badge">'+buyGold+'g</span>' : '')+
         (isLocked && !canBuy  ? '<span class="de-lock-badge">Lv.5</span>' : '')+
         (!isLocked && atMax   ? '<span class="de-maxed-badge">MAX</span>' : '');
@@ -1243,8 +1465,9 @@ function _deRenderAvail(){
       if(isLocked && canBuy){
         d.onclick = function(){ _deBuyUnlock(cardId, buyGold); };
       } else if(!isLocked && !atMax){
-        (function(id){ d.onclick = function(){ _deSwap(id); }; })(cardId);
+        (function(id,c){ d.onclick=function(){_deSwap(id);}; })(cardId,card);
       }
+      (function(c){ d.onmouseenter=function(){if(_deInfoPinned===null)_deUpdateInfo(c,false);}; d.onmouseleave=function(){if(_deInfoPinned===null)_deUpdateInfo(null);}; })(card);
       grid.appendChild(d);
     });
 
@@ -1253,13 +1476,16 @@ function _deRenderAvail(){
     ['strike','brace'].forEach(function(cardId){
       var card = CARDS[cardId]; if(!card) return;
       var atMax = deckCounts[cardId] >= MAX_CARD_COPIES;
+      var effLine2 = (card.effect||'').split('\n')[0];
       var d = document.createElement('div');
       d.className = 'de-acard' + (atMax?' de-acard-locked':'');
+      d.setAttribute('data-type', card.type||'utility');
       d.innerHTML =
         '<div class="de-acard-art">'+_deCardArtHTML(cardId, card)+'</div>'+
         '<div class="de-acard-name">'+card.name+'</div>'+
+        '<div class="de-acard-effect">'+effLine2+'</div>'+
         (atMax ? '<span class="de-maxed-badge">MAX</span>' : '');
-      if(!atMax){ (function(id){ d.onclick = function(){ _deSwap(id); }; })(cardId); }
+      (function(id,c){ if(!atMax) d.onclick=function(){_deSwap(id);}; d.onmouseenter=function(){if(_deInfoPinned===null)_deUpdateInfo(c,false);}; d.onmouseleave=function(){if(_deInfoPinned===null)_deUpdateInfo(null);}; })(cardId,card);
       grid.appendChild(d);
     });
 
@@ -1277,14 +1503,17 @@ function _deRenderAvail(){
     poolIds.forEach(function(cardId){
       var card = CARDS[cardId]; if(!card) return;
       var atMax = deckCounts[cardId] >= MAX_CARD_COPIES;
+      var effLine3 = (card.effect||'').split('\n')[0];
       var d = document.createElement('div');
       d.className = 'de-acard' + (atMax?' de-acard-locked':'');
+      d.setAttribute('data-type', card.type||'utility');
       d.innerHTML =
         '<div class="de-acard-art">'+_deCardArtHTML(cardId, card)+'</div>'+
         '<div class="de-acard-name">'+card.name+'</div>'+
+        '<div class="de-acard-effect">'+effLine3+'</div>'+
         '<div class="de-copy-count">'+pool[cardId]+' owned</div>'+
         (atMax ? '<span class="de-maxed-badge">MAX</span>' : '');
-      if(!atMax){ (function(id){ d.onclick = function(){ _deSwap(id); }; })(cardId); }
+      (function(id,c){ if(!atMax) d.onclick=function(){_deSwap(id);}; d.onmouseenter=function(){if(_deInfoPinned===null)_deUpdateInfo(c,false);}; d.onmouseleave=function(){if(_deInfoPinned===null)_deUpdateInfo(null);}; })(cardId,card);
       grid.appendChild(d);
     });
   }
@@ -1310,8 +1539,10 @@ function _deSwap(incomingId){
 
   _deDeck[_deSelected] = incomingId;
   _deSelected = -1;
+  _deInfoPinned = CARDS[incomingId] || null;
   _deSave();
   _deRender();
+  _deUpdateInfo(_deInfoPinned, false);
 }
 
 function _deBuyUnlock(cardId, goldCost){
@@ -1348,11 +1579,25 @@ function deDeckReset(){
 }
 
 function deDeckDone(){
-  // Save the working deck back to sanctum mods
   _deSave();
-  showScreen('area-screen');
-  showNav(true);
-  updateNavBar('adventure');
+  var ret = _deReturnScreen || 'area-screen';
+  if(ret === 'area-screen'){
+    showScreen('area-screen');
+    showNav(true);
+    updateNavBar('adventure');
+    buildAreaScreen();
+  } else if(ret === 'town-screen'){
+    openTown();
+  } else if(ret === 'select-screen'){
+    showScreen('select-screen');
+    showNav(true);
+    updateNavBar('adventure');
+  } else {
+    showScreen('area-screen');
+    showNav(true);
+    updateNavBar('adventure');
+    buildAreaScreen();
+  }
 }
 
 function _deSave(){
@@ -1497,16 +1742,27 @@ function matImgHTML(matId, size){
     + '</span>';
 }
 
-// ── Combat Background ──────────────────────────────────────────────────
+// Relic icon — tries assets/icons/relics/{id}.png, falls back to emoji
+function relicImgHTML(relicId, size){
+  var sz = size || '32px';
+  var relic = RELICS[relicId];
+  var emoji = relic ? relic.icon : '?';
+  var src = 'assets/icons/relics/' + relicId + '.png';
+  var onerr = "this.style.display='none';this.nextSibling.style.display='inline';";
+  var onld  = "this.nextSibling.style.display='none';";
+  return '<span style="display:inline-flex;align-items:center;justify-content:center;width:'+sz+';height:'+sz+';">'
+    + '<img src="'+src+'" style="image-rendering:pixelated;object-fit:contain;width:'+sz+';height:'+sz+';" onerror="'+onerr+'" onload="'+onld+'">'
+    + '<span style="font-size:calc('+sz+' * 0.85);line-height:1;">'+emoji+'</span>'
+    + '</span>';
+}
 function setCombatBackground(areaId){
   var playerPanel = document.getElementById('combatant-player');
   var enemyPanel  = document.getElementById('combatant-enemy');
   var gs_el       = document.getElementById('game-screen');
   if(gs_el) gs_el.style.backgroundImage='';
   if(!playerPanel||!enemyPanel) return;
-  var src = 'assets/backgrounds/' + areaId + '.png';
-  var img = new Image();
-  img.onload = function(){
+
+  function applyBg(src){
     var url = 'url('+src+')';
     playerPanel.style.backgroundImage    = url;
     playerPanel.style.backgroundSize     = '200% 100%';
@@ -1514,10 +1770,20 @@ function setCombatBackground(areaId){
     enemyPanel.style.backgroundImage     = url;
     enemyPanel.style.backgroundSize      = '200% 100%';
     enemyPanel.style.backgroundPosition  = 'right center';
-  };
+  }
+
+  var src = 'assets/backgrounds/' + areaId + '.png';
+  var img = new Image();
+  img.onload  = function(){ applyBg(src); };
   img.onerror = function(){
-    playerPanel.style.backgroundImage = '';
-    enemyPanel.style.backgroundImage  = '';
+    // Fall back to default
+    var def = new Image();
+    def.onload  = function(){ applyBg('assets/backgrounds/default.png'); };
+    def.onerror = function(){
+      playerPanel.style.backgroundImage = '';
+      enemyPanel.style.backgroundImage  = '';
+    };
+    def.src = 'assets/backgrounds/default.png';
   };
   img.src = src;
 }
@@ -1635,10 +1901,19 @@ function setEnemyUI(idx){
     gs.goblinAlarmFired=false;
     applyStatus('enemy','buff','⚠ Rallying...',0,'scouts_rally',15000,"Scout's Alarm: rallies in 15s — gaining +40% speed and +50% damage. Kill it first!");
   }
-  // Build enemy deck
+  // Build enemy deck — supports both new format (array of card ID strings)
+  // and old format (array of {id, copies, effect, value, ...} objects)
   var pool=[];
   (e.deck||[]).forEach(function(card){
-    for(var i=0;i<(card.copies||1);i++) pool.push(Object.assign({},card));
+    if(typeof card==='string'){
+      // New format: card ID string — look up in CARDS
+      var cDef=CARDS[card];
+      if(cDef) pool.push({id:card, name:cDef.name, _new:true});
+      else pool.push({id:card, name:card, _new:true});
+    } else {
+      // Old format: inline card object with copies
+      for(var i=0;i<(card.copies||1);i++) pool.push(Object.assign({},card));
+    }
   });
   // Shuffle
   for(var i=pool.length-1;i>0;i--){ var j=Math.floor(Math.random()*(i+1)); var tmp=pool[i]; pool[i]=pool[j]; pool[j]=tmp; }
@@ -1754,6 +2029,13 @@ function gameTick(){
   getStatuses('player','mana_regen').forEach(function(s){ mRegenMult=Math.max(0.1,mRegenMult+s.val); });
   // Golden Reserves — 80% faster mana regen
   if(gs._goldenReserves) mRegenMult*=1.8;
+  // Cursed Conviction (Paladin) — +50% mana regen while Burn is active on enemy
+  if(gs.champId==='paladin'){
+    var hasBurn=gs.statusEffects.enemy.some(function(s){return s.id==='burn'&&s.dpt>0;});
+    if(hasBurn) mRegenMult*=1.5;
+  }
+  // Relic: mana_coil
+  if(gs._relicManaRegenMult&&gs._relicManaRegenMult!==1) mRegenMult*=gs._relicManaRegenMult;
   gs.manaAccum+=gs.manaRegen*mRegenMult/10;
   if(gs.manaAccum>=1){ var g=Math.floor(gs.manaAccum); gs.manaAccum-=g; gs.mana=Math.min(gs.maxMana,gs.mana+g); }
 
@@ -1807,6 +2089,14 @@ function gameTick(){
   getStatuses('player','drawspeed').forEach(function(s){ eff=eff/(1+s.val); });
   // Apply flat draw delay (Orbweaver web trap)
   eff=eff+(gs.playerDrawDelay||0);
+  // Apply Slow debuff to player draw interval (Drowned Waterlogged, etc.)
+  var playerSlow=gs.statusEffects.player.find(function(s){return s.stat==='slow_draw';});
+  if(playerSlow) eff+=playerSlow.val||600;
+  // Apply one-time draw speed bonus (e.g. Fence the Goods)
+  if(gs._nextDrawBonus&&gs._nextDrawBonus>0){
+    eff=Math.max(200, eff-gs._nextDrawBonus);
+    gs._nextDrawBonus=0;
+  }
   var pct=(gs.drawTimer/eff)*100;
   document.getElementById('draw-bar').style.width=Math.min(pct,100)+'%';
   if(gs.drawTimer>=eff){ gs.drawTimer=0; doDraw(null,false); }
@@ -1820,6 +2110,9 @@ function scheduleEnemyAction(){
   var e=gs.enemies[gs.enemyIdx];
   var interval=e.atkInterval;
   getStatuses('enemy','atkspeed').forEach(function(s){ interval=Math.round(interval/(1+(s.val||0))); });
+  // slow_draw: add flat ms to draw interval (non-stacking, just one instance)
+  var slowDraw=gs.statusEffects.enemy.find(function(s){return s.stat==='slow_draw';});
+  if(slowDraw) interval+=slowDraw.val||600;
   // Harbourmaster / Waterlogged: 50% slower attack but triple damage (handled in applyEnemyDmgMods)
   if(e.innate&&(e.innate.id==='harbourmaster'||e.innate.id==='waterlogged')) interval=Math.round(interval*1.5);
   if(!interval||isNaN(interval)||interval<200) interval=200;
@@ -1880,8 +2173,9 @@ function doEnemyAction(e){
 function enemyCheckActivateInnate(e){
   if(!e||!e.innate) return;
   var inn=e.innate;
-  var cost=inn.manaCost||0;
-  var trigger=inn.trigger||'passive';
+  // Support both old trigger format and new active/cost format
+  var cost=inn.cost||inn.manaCost||0;
+  var trigger=inn.trigger||(inn.active?'mana_threshold':'passive');
   if(trigger==='passive') return;
   // Cooldown guard
   if(gs._innCooldown>0) return;
@@ -1892,18 +2186,61 @@ function enemyCheckActivateInnate(e){
   if(trigger==='hp_below'&&inn.triggerValue&&gs.enemyHp<=(gs.enemyMaxHp*(inn.triggerValue||0.5))) shouldFire=true;
 
   if(!shouldFire) return;
-  // Spend mana
   if(cost>0&&gs.enemyMana<cost) return;
   gs.enemyMana=Math.max(0,gs.enemyMana-cost);
-  // Set cooldown
+  // Set cooldown — support new cooldown field (ms) or old (ms)
   gs._innCooldown=inn.cooldown||8000;
   executeEnemyInnateEffect(inn,e);
 }
 
 function executeEnemyInnateEffect(inn,e){
   addLog(e.name+' — '+inn.name+'.','innate');
-  // Generic effect dispatch by innate id
   var id=inn.id;
+
+  // ── New Sewers innates ──
+
+  // Spite Spines — Convert oldest hand card to Spite (Ethereal), play immediately
+  if(id==='spite_spines'){
+    var spite={id:'spite_ethereal',name:'Spite',effect:'spite',ghost:true,
+      value:Math.max(1,Math.floor((gs.enemyMaxHp-gs.enemyHp)/4)),
+      thornsVal:8, thornsDur:6000};
+    // Remove oldest card from hand if any, otherwise just play Spite
+    if(gs.enemyHand.length>0) gs.enemyHand.shift();
+    // Apply Spite effects
+    var spiteDmg=spite.value;
+    if(spiteDmg>0){ dealDamageToPlayer(spiteDmg); addLog(e.name+' — Spite! '+spiteDmg+' dmg.','innate'); }
+    applyStatus('player','buff','Thorns',spite.thornsVal,'thorns',spite.thornsDur,'Thorns: reflects '+spite.thornsVal+' dmg per hit.');
+    addLog(e.name+' — [Thorns] ('+spite.thornsVal+') applied to self.','buff');
+    return;
+  }
+
+  // Volatile Injection — apply 2 Volatile stacks to self (as enemy, targets player)
+  if(id==='volatile_injection'){
+    _applyVolatile(2);
+    addLog(e.name+' — Volatile Injection! +2 [Volatile].','innate');
+    return;
+  }
+
+  // Feast on Carrion — Shield from discard pile × 4, then Refresh
+  if(id==='feast_on_carrion'){
+    var discardCount=gs.enemyDiscardPile.length;
+    var shieldAmt=discardCount*4;
+    if(shieldAmt>0){
+      gs.enemyShell+=shieldAmt;
+      addTag('enemy','buff','Carrion Shield ('+shieldAmt+')',null,null,'Shield from '+discardCount+' discarded cards.');
+      setTimeout(function(){ if(!gs) return; gs.enemyShell=Math.max(0,gs.enemyShell-shieldAmt); }, 5000);
+      addLog(e.name+' — Feast! Shield +'+shieldAmt+' ('+discardCount+' cards).','buff');
+    }
+    // Refresh enemy deck
+    gs.enemyDrawPool=gs.enemyDrawPool.concat(gs.enemyDiscardPile.splice(0));
+    for(var ri=gs.enemyDrawPool.length-1;ri>0;ri--){
+      var rj=Math.floor(Math.random()*(ri+1));
+      var rt=gs.enemyDrawPool[ri]; gs.enemyDrawPool[ri]=gs.enemyDrawPool[rj]; gs.enemyDrawPool[rj]=rt;
+    }
+    addLog(e.name+' — [Refresh] deck.','innate');
+    return;
+  }
+
   // Self-heal
   if(inn.effect==='self_heal'){
     var healAmt=Math.round((inn.value||0.2)*gs.enemyMaxHp);
@@ -1954,6 +2291,24 @@ function playEnemyCard(card,e){
   gs.lastEnemyCard=card;
   gs.enemyCardCount++;
 
+  // Light Fingers — enemy drains 5 player mana on every card play
+  if(e.innate&&e.innate.id==='light_fingers'){
+    gs.mana=Math.max(0,gs.mana-5);
+    addLog(e.name+' — Light Fingers: -5 mana.','mana');
+    updateAll();
+  }
+  // Waterlogged — enemy's Sorcery[15]: Apply Slow fires if enemy has ≥15 mana
+  if(e.innate&&e.innate.id==='waterlogged'){
+    if(gs.enemyMana>=15){
+      gs.enemyMana-=15;
+      // Apply Slow to player draw interval
+      var existingSlow=gs.statusEffects.player.find(function(s){return s.stat==='slow_draw';});
+      if(existingSlow){ existingSlow.remaining=4000; }
+      else { gs.statusEffects.player.push({id:'slow_player',label:'Slow',cls:'debuff',stat:'slow_draw',val:600,remaining:4000,maxRemaining:4000,desc:'Slow: draw interval +600ms.'}); addTag('player','debuff','Slow',0,'slow_draw','Slow: draw interval +600ms.'); }
+      addLog(e.name+' — Waterlogged: [Slow] applied to you.','debuff');
+    }
+  }
+
   var mult=1;
   if(e.innate&&(e.innate.id==='ambush'||e.innate.id==='poison_ambush'||e.innate.id==='silent_strike')&&gs.enemyCardCount===1){
     mult=2; addLog(e.name+' — Ambush. Double damage.','innate');
@@ -1985,6 +2340,21 @@ function playEnemyCard(card,e){
 function executeEnemyCard(card,e,mult){
   mult=mult||1;
   var levelMult=e.dmgMult||1; // area-level damage scaling
+
+  // New format: card ID string resolved through CARDS + EFFECT_TYPES
+  if(card._new&&card.id){
+    var cDef=CARDS[card.id];
+    if(cDef&&cDef.effects&&cDef.effects.length){
+      // Build enemy-perspective pdmg (applies level scaling)
+      var ePdmg=function(base){ return Math.max(1,Math.round(base*mult*levelMult)); };
+      var eStat=e||{};
+      // Filthy Persistence: extend debuff durations by 50%
+      var _debuffMult=(e.innate&&e.innate.id==='filthy_persistence')?1.5:1;
+      executeEnemyEffects(cDef.effects, ePdmg, cDef.name, e, _debuffMult);
+    }
+    return;
+  }
+
   // Lurk: first card double damage
   if(e.innate&&e.innate.id==='lurk'&&gs.enemyCardCount===1) mult*=2;
   // Infectious: extend DoT durations by 40%
@@ -2257,6 +2627,14 @@ function dealDamageToPlayer(dmg){
   // Resilience shrine blessing
   if(gs._shrineResilience&&dmg>0) dmg=Math.max(1,Math.round(dmg*(1-gs._shrineResilience)));
   gs.playerHp=Math.max(0,gs.playerHp-dmg);
+  // Relic: thorn_band — reflect damage on every hit
+  if(dmg>0&&gs._relicThorns){
+    var thornDmg=gs._relicThorns;
+    gs.enemyHp=Math.max(0,gs.enemyHp-thornDmg);
+    spawnFloatNum('enemy','-'+thornDmg,false,'crit-num');
+    addLog('Thorn Band reflects '+thornDmg+' dmg.','buff');
+    updateAll(); checkEnd();
+  }
   // Second Wind — survive killing blow
   if(gs.playerHp<=0&&gs._shrineSecondWind&&!gs._shrineSecondWindUsed){
     gs.playerHp=gs._shrineSecondWind;
@@ -2336,6 +2714,8 @@ function dealDamageToEnemy(dmg,bypassHardened){
   getStatuses('enemy','death_mark').forEach(function(s){ dmg=Math.round(dmg*1.5); });
   dmg=Math.max(0,dmg);
   gs.enemyHp=Math.max(0,gs.enemyHp-dmg);
+  // Thorns reflect — if player has Thorns buff, reflect damage back
+  if(dmg>0) _checkThornsReflect();
   // Track damage for Wax Oasis timed fight
   if(e.innate&&e.innate.id==='wax_timed'&&dmg>0){
     gs.waxDamageDealt=(gs.waxDamageDealt||0)+dmg;
@@ -2652,7 +3032,7 @@ function playCard(idx){
   if(idx<0||idx>=gs.hand.length) return;
   // Focus mana gate
   var item=gs.hand[idx];
-  if(item.id==='focus'&&!item.ghost){
+  if(item.id==='druid_focus'&&!item.ghost){
     var threshold=Math.round(gs.maxMana*0.8);
     if(gs.mana<threshold){ addLog('Not enough mana to cast Focus manually (need '+threshold+').','mana'); return; }
   }
@@ -2677,6 +3057,8 @@ function playCard(idx){
 // STATUS EFFECTS
 // ═══════════════════════════════════════════════════════
 function applyStatus(target,cls,label,val,stat,dur,desc){
+  if(target==='enemy'&&cls==='debuff'&&gs&&gs._relicDebuffDurBonus&&(stat==='dmg'||stat==='death_mark'))
+    dur+=gs._relicDebuffDurBonus;
   var list=gs.statusEffects[target];
   for(var i=0;i<list.length;i++){ if(list[i].label===label){ list[i].remaining=dur; return; } }
   list.push({label:label,cls:cls,val:val,stat:stat,remaining:dur,maxRemaining:dur,desc:desc||label});
@@ -2744,16 +3126,22 @@ function tickStatuses(ms){
 }
 
 function tickDoTs(ms){
+  // If suspended, skip timer advancement for player statuses
+  var suspended=gs._suspended&&Date.now()<(gs._suspendEnd||0);
   ['player','enemy'].forEach(function(t){
     gs.statusEffects[t].forEach(function(s){
       if(!s.dot) return;
+      // Suspend pauses player buff/debuff ticks
+      if(suspended&&t==='player') return;
       s.tickAcc+=ms;
       while(s.tickAcc>=s.tickMs){
         s.tickAcc-=s.tickMs;
         if(s.id==='starburn'){ var dmg=(s.stacks||1)*5; dealDamageToEnemy(dmg); if(SETTINGS.logd==='verbose') addLog('Starburn ('+s.stacks+'×): '+dmg+' dmg.','debuff'); }
         else if(t==='enemy'){ dealDamageToEnemy(s.dpt); if(SETTINGS.logd==='verbose') addLog(s.label+': '+s.dpt+' dmg.','debuff'); }
         else {
-          // DoTs bypass [Shield] — deal directly to HP, shields only absorb direct hits
+          // Poison immunity check (Plague Bearer)
+          if((s.id==='poison'||s.id==='poison_self')&&_hasPoisonImmunity()) continue;
+          // DoTs bypass [Shield] — deal directly to HP
           var dotDmg=s.dpt;
           gs.playerHp=Math.max(0,gs.playerHp-dotDmg);
           if(dotDmg>0){ shakeIcon('player',false); flashHpBar('player','hp-flash-red'); spawnFloatNum('player','-'+dotDmg,dotDmg>=50); }
@@ -2929,9 +3317,6 @@ function doVictory(){
   var xp=Math.max(1,Math.round(rawXp*xpMult));
   gs.xp+=xp;
   trackKill(e.id);
-  if(Math.random()<0.6) PERSIST.town.materials.sparks=(PERSIST.town.materials.sparks||0)+1;
-  if(gs.area.level>=3&&Math.random()<0.25) PERSIST.town.materials.embers=(PERSIST.town.materials.embers||0)+1;
-  if(gs.area.level>=6&&Math.random()<0.1) PERSIST.town.materials.flameShards=(PERSIST.town.materials.flameShards||0)+1;
   var xpMsg=xpMult<1?' ('+Math.round(xpMult*100)+'% XP)':'';
   addLog('✦ Victory! +'+xp+' XP'+xpMsg+', +'+gold+' gold.','sys');
   checkLevelUp();
@@ -3521,11 +3906,81 @@ function buildTagsHTML(tags){
   }).join('');
 }
 
+// ── Stat-resolved card effect text ──────────────────────────────────
+// Replaces stat formula tokens in effect strings with live values.
+// When gs is available (combat), values are exact.
+// When gs is null (deck editor, bestiary), values fall back to base stats or
+// show the formula token styled in blue to signal it's dynamic.
+//
+// Tokens recognised:
+//   {WIS}, {STR}, {AGI}           — current stat value
+//   {WIS×N}, {STR×N}, {WIS÷N}    — stat arithmetic
+//   {MANA_MISSING}                 — maxMana - mana (runtime only)
+//   {HP_MISSING}                   — maxHp - hp (runtime only)
+//   {DISCARD_COUNT}                — discard pile size (runtime only)
+//   {HAND_COUNT}                   — hand size (runtime only)
+//
+// Usage: resolveCardEffect(effectLine, gs, statsOverride)
+// statsOverride = {str,agi,wis} for deck editor preview
+function resolveCardEffect(line, gameState, statsOverride){
+  var s = gameState ? gameState.stats : (statsOverride || null);
+  function sv(val){ return '<span class="stat-val">'+val+'</span>'; }
+
+  return line
+    // WIS×N, STR×N, AGI×N
+    .replace(/\b(WIS|STR|AGI)\s*[×x\*]\s*(\d+(?:\.\d+)?)/gi, function(m, stat, n){
+      if(!s) return sv(m);
+      var base = s[stat.toLowerCase()]||0;
+      return sv(Math.round(base * parseFloat(n)));
+    })
+    // WIS÷N, STR÷N, AGI÷N
+    .replace(/\b(WIS|STR|AGI)\s*[÷\/]\s*(\d+)/gi, function(m, stat, n){
+      if(!s) return sv(m);
+      var base = s[stat.toLowerCase()]||0;
+      return sv(Math.floor(base / parseFloat(n)));
+    })
+    // Bare stat name (e.g. "+ WIS damage", "Deal 12 + WIS")
+    .replace(/\b\+\s*(WIS|STR|AGI)\b/gi, function(m, stat){
+      if(!s) return sv(m);
+      return '+ '+sv(s[stat.toLowerCase()]||0);
+    })
+    // "missing mana ÷ N" / "missing mana / N"
+    .replace(/missing mana\s*[÷\/]\s*(\d+)/gi, function(m, n){
+      if(!gameState) return sv(m);
+      var missing = (gameState.maxMana||0) - (gameState.mana||0);
+      return sv(Math.floor(missing / parseInt(n)));
+    })
+    // "missing HP ÷ N" / "missing HP / N"
+    .replace(/missing HP\s*[÷\/]\s*(\d+)/gi, function(m, n){
+      if(!gameState) return sv(m);
+      var missing = (gameState.playerMaxHp||0) - (gameState.playerHp||0);
+      return sv(Math.floor(missing / parseInt(n)));
+    })
+    // "discard pile × N" / "discard pile * N"
+    .replace(/discard pile\s*[×x\*]\s*(\d+)/gi, function(m, n){
+      if(!gameState) return sv(m);
+      return sv((gameState.discardPile||[]).length * parseInt(n));
+    })
+    // "cards in hand × N" / "cards in hand * N"
+    .replace(/cards in hand\s*[×x\*]\s*(\d+)/gi, function(m, n){
+      if(!gameState) return sv(m);
+      return sv((gameState.hand||[]).length * parseInt(n));
+    })
+    // Any remaining bare stat names that haven't been caught
+    .replace(/\b(WIS|STR|AGI)\b/g, function(m, stat){
+      if(!s) return sv(m);
+      return sv(s[stat.toLowerCase()]||0);
+    });
+}
+// ────────────────────────────────────────────────────────────────────
+
 function buildCardHTML(id,isGhost){
   var c=CARDS[id];
   if(!c) c={name:id,icon:'?',type:'attack',unique:false,effect:'?',champ:null,statId:null,manaCost:0};
   var statCls=c.statId?'card-stat-'+c.statId:'card-stat-none';
-  var mechanic=renderKeywords((c.effect||'').split('\n')[0]||'');
+  var rawLine=(c.effect||'').split('\n')[0]||'';
+  var resolved=resolveCardEffect(rawLine, typeof gs!=='undefined'&&gs?gs:null, null);
+  var mechanic=renderKeywords(resolved);
   var manaCost=c.manaCost!=null?c.manaCost:0;
   var fzStyle=cardEffectFontSize(c.effect);
   var tags=getCardTags(c);
@@ -3572,7 +4027,8 @@ function renderHand(newId){
     d.style.cssText='transform:rotate('+rot+'deg) translateY('+drop+'px);transform-origin:bottom center;z-index:'+i+';position:relative;'+(i>0?'margin-left:-38px;':'');
 
     var cEffect=cd?(cd.effect||''):'';
-    var mechanic=renderKeywords((cEffect.split('\n')[0])||'');
+    var rawLine=(cEffect.split('\n')[0])||'';
+    var mechanic=renderKeywords(resolveCardEffect(rawLine, gs, null));
     var fzStyle=cardEffectFontSize(cEffect);
     var manaCost=cd&&cd.manaCost!=null?cd.manaCost:0;
     var rTags=getCardTags(cd||{});
@@ -3789,14 +4245,32 @@ function getLootCount(itemId){
 }
 
 function rollAreaLoot(areaDef){
-  var loot=areaDef.loot; if(!loot) return [];
-  var gained=[];
-  // Always get the key
-  if(loot.always){ addLootItem(loot.always,1); gained.push(loot.always); }
-  // Bonus roll for chest
-  if(loot.bonus&&loot.bonusChance>0&&Math.random()<loot.bonusChance){
-    addLootItem(loot.bonus,1); gained.push(loot.bonus);
+  var gained = [];
+  var areaLevel = areaDef.levelRange ? areaDef.levelRange[0] : 1;
+  var matGroup = areaDef.materialGroup;
+
+  // Material drops — roll each material in the group
+  if(matGroup && MATERIAL_DROPS[matGroup]){
+    MATERIAL_DROPS[matGroup].forEach(function(entry){
+      var chance = Math.min(0.95, entry.base + entry.lvlBonus * areaLevel);
+      if(Math.random() < chance){
+        if(!PERSIST.town.materials[entry.id]) PERSIST.town.materials[entry.id] = 0;
+        PERSIST.town.materials[entry.id]++;
+        var mat = MATERIALS[entry.id];
+        if(mat) gained.push({type:'material', id:entry.id, name:mat.name, icon:mat.icon, rarity:mat.rarity});
+      }
+    });
   }
+
+  // Legacy loot support (keys / chests) — kept for backwards compat
+  var loot = areaDef.loot;
+  if(loot){
+    if(loot.always){ addLootItem(loot.always, 1); gained.push(loot.always); }
+    if(loot.bonus && loot.bonusChance > 0 && Math.random() < loot.bonusChance){
+      addLootItem(loot.bonus, 1); gained.push(loot.bonus);
+    }
+  }
+
   if(gained.length) savePersist();
   return gained;
 }
@@ -3804,12 +4278,16 @@ function rollAreaLoot(areaDef){
 var _lootToastTimer=null;
 function showLootToast(gained){
   if(!gained||!gained.length) return;
-  var el=document.getElementById('levelup-toast'); // reuse toast element
+  var el=document.getElementById('levelup-toast');
   if(!el) return;
   document.getElementById('lu-toast-title').textContent='AREA COMPLETE!';
-  document.getElementById('lu-toast-stats').textContent=gained.map(function(id){
-    var def=LOOT_DEFS[id]; return def?(def.icon+' '+def.name):'?';
-  }).join('  ·  ');
+  var parts=gained.map(function(item){
+    // Material drop object: {type:'material', id, name, icon, rarity}
+    if(item&&item.type==='material') return item.icon+' '+item.name;
+    // Legacy string loot item ID
+    var def=LOOT_DEFS[item]; return def?(def.icon+' '+def.name):'?';
+  }).filter(function(s){ return s!=='?'; });
+  document.getElementById('lu-toast-stats').textContent=parts.join('  ·  ');
   el.style.display='block';
   clearTimeout(_lootToastTimer);
   _lootToastTimer=setTimeout(function(){ el.style.display='none'; },4000);
@@ -3858,6 +4336,11 @@ var BUILDINGS = {
     desc:'Take on quests for gold, gems, and glory. One active quest at a time.',
     unlocked:false,
   },
+  expedition_hall: {
+    id:'expedition_hall', name:'Expedition Hall', icon:'🏕️',
+    desc:'Dispatch champions on timed expeditions to gather materials while you fight.',
+    unlocked:false,
+  },
 };
 
 // TOWN_CARD_GEMS now returns img HTML via gemImgHTML — kept for legacy string refs
@@ -3873,62 +4356,52 @@ var MATERIAL_DEFS = {
 };
 
 function getTownCardCap(){
-  var b=PERSIST.town.buildings.vault;
-  var def=BUILDINGS.vault;
-  var u=PERSIST.town.vaultUpgrades||{};
-  var upgSlots=(u.shelf1?8:0)+(u.shelf2?8:0)+(u.shelf3?8:0);
-  var base=def.defaultCap+upgSlots;
-  if(!b.slottedCard) return base;
-  var card=PERSIST.town.cards.find(function(c){return c.id===b.slottedCard;});
-  if(!card) return base;
-  return base+def.slotEffect(card.tier);
+  // Base cap 8; future upgrades can raise it
+  return 8;
 }
 
 function getTownCardCount(){
-  return PERSIST.town.cards.length;
+  return (PERSIST.town.cards||[]).length;
 }
 
 function getUnslottedCards(){
-  return PERSIST.town.cards.filter(function(c){return !c.slottedIn;});
+  return (PERSIST.town.cards||[]).filter(function(c){ return !c.slottedIn; });
 }
 
-function getTownCardById(id){
-  return PERSIST.town.cards.find(function(c){return c.id===id;})||null;
+function getTownCardById(cardId){
+  return (PERSIST.town.cards||[]).find(function(c){ return c.id===cardId; })||null;
 }
 
-// Add a new Red card to town inventory (called from achievement claim)
+// Add a gem card to town inventory (from chests, market, achievements)
 function addTownCard(tier){
-  tier=tier||'ruby';
-  var id='tc_'+(Date.now())+'_'+Math.floor(Math.random()*1000);
-  PERSIST.town.cards.push({id:id,tier:tier,slottedIn:null});
+  if(!PERSIST.town.cards) PERSIST.town.cards=[];
+  var cap=getTownCardCap();
+  if(PERSIST.town.cards.length>=cap){ showTownToast('Vault full! Sell or slot existing gems first.'); return; }
+  var id='tc_'+Date.now()+'_'+Math.floor(Math.random()*1000);
+  PERSIST.town.cards.push({id:id, tier:tier, slottedIn:null});
   savePersist();
-  return id;
+  showTownToast('✦ '+tier.charAt(0).toUpperCase()+tier.slice(1)+' Gem added to Vault!');
 }
 
 function slotCardIntoBuilding(cardId, buildingId){
   var card=getTownCardById(cardId);
-  if(!card) return;
-  // Unslot whatever was there
   var b=PERSIST.town.buildings[buildingId];
-  if(b.slottedCard){
-    var old=getTownCardById(b.slottedCard);
-    if(old) old.slottedIn=null;
-  }
-  // Unslot card from wherever it was
-  if(card.slottedIn){
-    var prev=PERSIST.town.buildings[card.slottedIn];
-    if(prev) prev.slottedCard=null;
-  }
+  if(!card||!b) return;
+  // Unslot any existing card in that building first
+  if(b.slottedCard) unslotCard(b.slottedCard);
   card.slottedIn=buildingId;
   b.slottedCard=cardId;
   savePersist();
+  buildTownGrid();
 }
 
 function unslotCard(cardId){
   var card=getTownCardById(cardId);
-  if(!card||!card.slottedIn) return;
-  var b=PERSIST.town.buildings[card.slottedIn];
-  if(b) b.slottedCard=null;
+  if(!card) return;
+  if(card.slottedIn){
+    var b=PERSIST.town.buildings[card.slottedIn];
+    if(b) b.slottedCard=null;
+  }
   card.slottedIn=null;
   savePersist();
 }
@@ -3951,29 +4424,7 @@ function leaveTown(){
   navTo('adventure');
 }
 
-function buildTownCardsStrip(){
-  var strip=document.getElementById('town-cards-strip');
-  strip.innerHTML='<span class="town-cards-strip-lbl">GEMS</span>';
-  var unslotted=getUnslottedCards();
-  if(unslotted.length===0){
-    var e=document.createElement('span');
-    e.className='town-card empty-hand'; e.textContent='No gems — craft from Gem Shards or earn from achievements';
-    strip.appendChild(e);
-  } else {
-    unslotted.forEach(function(card){
-      var el=document.createElement('div');
-      el.className='town-card '+card.tier;
-      var tierName=CARD_TIER_LABELS[card.tier]||card.tier;
-      el.innerHTML='<span class="town-card-gem">'+TOWN_CARD_GEMS(card.tier)+'</span> '+tierName.toUpperCase();
-      el.draggable=true;
-      el.dataset.cardId=card.id;
-      el.ondragstart=function(ev){ ev.dataTransfer.setData('cardId',card.id); el.style.opacity='.4'; };
-      el.ondragend=function(){ el.style.opacity=''; };
-      el.onclick=function(){ openSlotPicker(card.id); };
-      strip.appendChild(el);
-    });
-  }
-}
+function buildTownCardsStrip(){ /* town card strip UI removed — gem slots deprecated */ }
 
 function isBuildingVisible(id){
   var b=PERSIST.town.buildings[id];
@@ -3998,6 +4449,7 @@ function isBuildingVisible(id){
     if(id==='market') return PERSIST.town.buildings.shrine&&PERSIST.town.buildings.shrine.unlocked;
     if(id==='sanctum') return PERSIST.town.buildings.bestiary&&PERSIST.town.buildings.bestiary.unlocked||PERSIST.gold>=150;
     if(id==='shard_well') return PERSIST.town.buildings.market&&PERSIST.town.buildings.market.unlocked||PERSIST.gold>=200;
+    if(id==='expedition_hall') return PERSIST.town.buildings.sanctum&&PERSIST.town.buildings.sanctum.unlocked||PERSIST.gold>=250;
   }
   return false;
 }
@@ -4023,29 +4475,20 @@ function buildTownGrid(){
 
     var b=PERSIST.town.buildings[bdef.id];
     var unlocked=b&&b.unlocked;
-    var slottedCard=b&&b.slottedCard?getTownCardById(b.slottedCard):null;
-    var isActive=!!slottedCard;
+    var slottedCard=null;
+    var isActive=false;
     var cost=BUILDING_UNLOCK_COSTS[bdef.id];
     var canAfford=cost&&cost.gold&&PERSIST.gold>=cost.gold;
 
     var card=document.createElement('div');
-    card.className='building-card'+(isActive?' active':'')+(unlocked?'':' locked');
+    card.className='building-card'+(statusCls==='active'&&unlocked?' active':'')+(unlocked?'':' locked');
 
-    // Drop zone — accept dragged town cards
-    card.ondragover=function(ev){ ev.preventDefault(); if(unlocked||canAfford) card.classList.add('drop-ready'); };
-    card.ondragleave=function(){ card.classList.remove('drop-ready'); };
-    card.ondrop=function(ev){
-      card.classList.remove('drop-ready');
-      if(!unlocked) return; // can't drop onto locked (must buy first)
-      onBuildingDrop(ev,bdef.id);
-    };
+
     var achOnly=cost&&cost.achId&&!cost.gold&&!cost.seenCount;
     if(unlocked) card.onclick=function(){ openBuilding(bdef.id); };
     else if(!achOnly&&canAfford) card.onclick=function(){ openBuilding(bdef.id); };
 
-    var pipHtml=slottedCard
-      ?'<div class="bc-slot-pip '+slottedCard.tier+'">'+TOWN_CARD_GEMS(slottedCard.tier)+'</div>'
-      :'<div class="bc-slot-pip empty">—</div>';
+    var pipHtml='';
 
     var hintHtml='';
     if(!unlocked&&cost){
@@ -4068,8 +4511,60 @@ function buildTownGrid(){
       hintHtml='<div class="bc-unlock-hint'+(hintAffordable?' affordable':'')+'">'+req+'</div>';
     }
 
-    var statusTxt=!unlocked?'LOCKED':isActive?'ACTIVE':'SLOT A GEM';
-    var statusCls=!unlocked?'locked':isActive?'active':'empty';
+    // Per-building meaningful status text
+    var statusTxt='LOCKED', statusCls='locked';
+    if(!unlocked){
+      statusTxt='LOCKED'; statusCls='locked';
+    } else {
+      // Default: OPEN
+      statusTxt='OPEN'; statusCls='empty';
+      // Per-building overrides
+      if(bdef.id==='forge'){
+        var fq=(PERSIST.town.buildings.forge.queue||[]);
+        if(fq.length>0){
+          var fi=fq[0]; var fpct=Math.min(100,Math.round(((Date.now()-fi.startTime)/fi.totalMs)*100));
+          statusTxt='CRAFTING — '+fpct+'%'; statusCls='active';
+        } else { statusTxt='READY TO CRAFT'; statusCls='empty'; }
+      } else if(bdef.id==='shrine'){
+        var sb=PERSIST.town.buildings.shrine;
+        if(sb.activeBlessing){ statusTxt='BLESSING ACTIVE'; statusCls='active'; }
+        else { statusTxt='CHOOSE A BLESSING'; statusCls='empty'; }
+      } else if(bdef.id==='market'){
+        var mb=PERSIST.town.buildings.market;
+        var mstock=(mb.stock||[]).length+(mb.deals||[]).length+(mb.rare?1:0);
+        statusTxt=mstock+' ITEM'+(mstock!==1?'S':'')+' AVAILABLE'; statusCls=mstock>0?'active':'empty';
+      } else if(bdef.id==='sanctum'){
+        var nc=PERSIST.unlockedChamps.length;
+        statusTxt=nc+' CHAMPION'+(nc!==1?'S':''); statusCls='active';
+      } else if(bdef.id==='bestiary'){
+        var nb=PERSIST.seenEnemies.length;
+        statusTxt=nb+' CREATURE'+(nb!==1?'S':'')+' CATALOGUED'; statusCls=nb>0?'active':'empty';
+      } else if(bdef.id==='shard_well'){
+        var ss=PERSIST.soulShards||0;
+        statusTxt=ss+' SOUL SHARD'+(ss!==1?'S':''); statusCls=ss>0?'active':'empty';
+      } else if(bdef.id==='vault'){
+        var vi=(PERSIST.town.items&&Object.keys(PERSIST.town.items).length)||0;
+        var vm=Object.keys(PERSIST.town.materials||{}).filter(function(k){return (PERSIST.town.materials[k]||0)>0;}).length;
+        var vtot=vi+vm;
+        statusTxt=vtot+' ITEM'+(vtot!==1?'S':'')+' STORED'; statusCls=vtot>0?'active':'empty';
+      } else if(bdef.id==='board'){
+        var ba=PERSIST.town.quests&&PERSIST.town.quests.active;
+        statusTxt=ba?'QUEST ACTIVE':'CHECK BOARD'; statusCls=ba?'active':'empty';
+      } else if(bdef.id==='expedition_hall'){
+        var expB=PERSIST.town.buildings.expedition_hall;
+        var readySlots=(expB.slots||[]).filter(function(s){
+          return s.champId && s.startTime && Date.now()>=s.startTime+s.totalMs;
+        });
+        var activeSlots=(expB.slots||[]).filter(function(s){return !!s.champId;});
+        if(readySlots.length>0){
+          statusTxt='✦ '+readySlots.length+' EXPEDITION'+(readySlots.length>1?'S':'')+' COMPLETE';
+          statusCls='active';
+        } else if(activeSlots.length>0){
+          statusTxt=activeSlots.length+' EXPEDITION'+(activeSlots.length>1?'S':'')+' ACTIVE';
+          statusCls='active';
+        } else { statusTxt='SEND CHAMPIONS'; statusCls='empty'; }
+      }
+    }
 
     // Special hint for vault — locked until first run
     if(!unlocked&&bdef.id==='vault'){
@@ -4098,7 +4593,6 @@ function buildTownGrid(){
       +'<div class="bc-body">'
         +'<div class="bc-name">'+bdef.name.toUpperCase()+'</div>'
         +'<div class="bc-desc">'+bdef.desc+'</div>'
-        +'<div class="bc-slot">'+pipHtml+'</div>'
         +hintHtml
         +levelHtml
         +'<div class="bc-status '+statusCls+'">'+statusTxt+'</div>'
@@ -4166,19 +4660,7 @@ function closeTownChampRoster(){
   if(modal) modal.style.display='none';
 }
 
-function onBuildingDrop(ev,buildingId){
-  ev.preventDefault();
-  var cardId=ev.dataTransfer.getData('cardId');
-  if(!cardId) return;
-  var b=PERSIST.town.buildings[buildingId];
-  if(!b||!b.unlocked) return;
-  // Swap: unslot whatever is there first
-  if(b.slottedCard&&b.slottedCard!==cardId) unslotCard(b.slottedCard);
-  slotCardIntoBuilding(cardId,buildingId);
-  buildTownCardsStrip(); buildTownGrid();
-  refreshBuildingPanel(buildingId);
-  showTownToast((BUILDINGS[buildingId]?BUILDINGS[buildingId].name:buildingId)+' activated!');
-}
+function onBuildingDrop(){ /* drag-drop slot UI removed */ }
 
 // ── Shrine blessings pool ──
 // ═══════════════════════════════════════════════════════
@@ -4264,7 +4746,7 @@ function applyShrineBlessing(){
   if(!b||!b.activeBlessing) return;
   var bl=SHRINE_BLESSINGS.find(function(x){return x.id===b.activeBlessing;});
   if(!bl||!isBlessingUnlocked(bl)) return;
-  var g=!!b.slottedCard;
+  var g=false;
 
   switch(bl.id){
     case 'first_aid':     gs._shrineHpOpen=g?0.80:0.90; break;
@@ -4294,6 +4776,7 @@ var BUILDING_UNLOCK_COSTS = {
   market:   { gold:150, desc:'Purchase The Market for 150 gold to buy chests.' },
   sanctum:  { gold:250, desc:'Purchase The Sanctum for 250 gold to customise champion decks and training.' },
   shard_well:{ gold:300, desc:'Purchase the Shard Well for 300 gold.' },
+  expedition_hall:{ gold:400, desc:'Purchase the Expedition Hall for 400 gold.' },
 };
 
 function tryUnlockBuilding(id){
@@ -4343,21 +4826,7 @@ function checkBestiaryAutoUnlock(){
 }
 
 // ── Generic building slot click ──
-function onBuildingSlotClick(id){
-  var b=PERSIST.town.buildings[id];
-  if(b.slottedCard){
-    unslotCard(b.slottedCard);
-  } else {
-    var avail=getUnslottedCards();
-    if(avail.length===0){ showTownToast('No cards in hand — earn from achievements.'); return; }
-    // Auto-slot first available
-    slotCardIntoBuilding(avail[0].id, id);
-  }
-  // Refresh whichever panel is open
-  refreshBuildingPanel(id);
-  buildTownCardsStrip();
-  buildTownGrid();
-}
+function onBuildingSlotClick(){ /* slot click UI removed */ }
 
 function refreshBuildingPanel(id){
   if(id==='vault') refreshVaultPanel();
@@ -4368,6 +4837,7 @@ function refreshBuildingPanel(id){
   else if(id==='sanctum') refreshSanctumPanel();
   else if(id==='board') refreshBoardPanel();
   else if(id==='shard_well') refreshShardWellPanel();
+  else if(id==='expedition_hall') refreshExpeditionHallPanel();
 }
 
 // ── Open a building ──
@@ -4457,99 +4927,270 @@ function getCardCurrentTier(cardId){
 
 function getForgeSpeed(){
   var b=PERSIST.town.buildings.forge;
-  if(!b.slottedCard) return 0;
-  var card=getTownCardById(b.slottedCard);
+  return 0;
   if(!card) return 0;
   return card.tier==='red'?1:card.tier==='green'?2:3; // multiplier
 }
 
-function refreshForgePanel(){
-  showLockedBuildingUI('forge');
-  var b=PERSIST.town.buildings.forge;
-  if(!b.unlocked) return;
+// ── FORGE — Relic Workshop ─────────────────────────────────────────
 
-  // Slot
-  var slotCard=b.slottedCard?getTownCardById(b.slottedCard):null;
-  var slotEl=document.getElementById('forge-slot');
-  slotEl.className='building-slot'+(slotCard?' has-card '+slotCard.tier:'');
-  slotEl.innerHTML=slotCard?'<span class="slot-card-gem">'+TOWN_CARD_GEMS(slotCard.tier)+'</span>':'<span style="color:#3a2810;font-size:18px;">+</span>';
-  document.getElementById('forge-slot-hint').textContent=slotCard
-    ?slotCard.tier.charAt(0).toUpperCase()+slotCard.tier.slice(1)+' Gem — Speed: '+getForgeSpeed()+'× | Click to unslot'
-    :'Slot a gem to speed up upgrades';
+var TIER_COLORS = {base:'#777',ruby:'#c0392b',emerald:'#27ae60',sapphire:'#2980b9',turquoise:'#17a589',amethyst:'#8e44ad'};
+// RELICS, RELIC_CRAFT_TIMES, RELIC_RECIPES — see data/relics.js
 
-  // Queue empty message
-  var qEl=document.getElementById('forge-queue'); qEl.innerHTML='';
-  var queue=b.queue||[];
-  if(!queue.length){
-    var eh=document.createElement('div'); eh.style.cssText='font-size:9px;color:#3a2810;font-style:italic;padding:6px 0;';
-    eh.textContent='No upgrades queued. Select a card below to upgrade.';
-    qEl.appendChild(eh);
-  } else {
-    queue.forEach(function(item,i){
-      var now=Date.now();
-      var elapsed=now-item.startTime;
-      var totalMs=item.totalMs;
-      var pct=Math.min(100,Math.round((elapsed/totalMs)*100));
-      var etaSec=Math.max(0,Math.round((totalMs-elapsed)/1000));
-      var el=document.createElement('div'); el.className='forge-queue-item';
-      el.innerHTML='<div class="forge-queue-name">'+(CARDS[item.cardId]?CARDS[item.cardId].name:item.cardId)
-        +' → '+CARD_TIER_LABELS[item.toTier]+'</div>'
-        +'<div class="forge-queue-prog"><div class="forge-queue-bar" style="width:'+pct+'%"></div></div>'
-        +'<div class="forge-queue-eta">'+etaSec+'s</div>'
-        +(i===0?'<span style="cursor:pointer;color:#c03030;font-size:10px;margin-left:4px;" onclick="forgeCancelItem(0)">✕</span>':'');
-      qEl.appendChild(el);
-    });
-  }
 
-  // Materials
-  var mEl=document.getElementById('forge-mats'); mEl.innerHTML='';
-  Object.keys(MATERIAL_DEFS).forEach(function(k){
-    var el=document.createElement('div'); el.className='forge-mat-item';
-    el.innerHTML=MATERIAL_DEFS[k].icon+' <span class="material-count">'+(PERSIST.town.materials[k]||0)+'</span>';
-    el.title=MATERIAL_DEFS[k].name+': '+(PERSIST.town.materials[k]||0);
-    mEl.appendChild(el);
-  });
+var _forgeSelectedRecipe = null;
 
-  // Upgrade targets — always available, gem speeds up queue
-  var tEl=document.getElementById('forge-targets'); tEl.innerHTML='';
-  var speedNote=slotCard?' <span style="color:#d4a843;font-size:7px;">(gem: '+getForgeSpeed()+'× speed)</span>':'';
-  var seen={};
-  Object.values(CARDS).forEach(function(c){
-    if(seen[c.id]) return; seen[c.id]=true;
-    var fromTier='base', toTier='ruby';
-    var costDef=FORGE_UPGRADE_COSTS[fromTier+'_'+toTier];
-    var canAfford=Object.keys(costDef).every(function(k){return (PERSIST.town.materials[k]||0)>=costDef[k];});
-    var costStr=Object.keys(costDef).map(function(k){return MATERIAL_DEFS[k].icon+costDef[k];}).join(' ');
-    var el=document.createElement('div'); el.className='forge-target'+(canAfford?'':' disabled');
-    el.innerHTML='<div class="forge-target-name">'+c.icon+' '+c.name+'</div>'
-      +'<div class="forge-target-cost">Base → Red | '+costStr+'</div>';
-    if(canAfford) el.onclick=function(){ forgeQueueUpgrade(c.id,'base','red'); refreshForgePanel(); };
-    tEl.appendChild(el);
+function _forgeCanCraft(relicId){
+  var recipe = RELIC_RECIPES[relicId]; if(!recipe) return false;
+  return Object.keys(recipe.mats).every(function(k){
+    return (PERSIST.town.materials[k]||0) >= recipe.mats[k];
   });
 }
 
-function forgeQueueUpgrade(cardId, fromTier, toTier){
-  var b=PERSIST.town.buildings.forge;
-  if(!b.unlocked) return;
-  var costDef=FORGE_UPGRADE_COSTS[fromTier+'_'+toTier];
-  Object.keys(costDef).forEach(function(k){ PERSIST.town.materials[k]=(PERSIST.town.materials[k]||0)-costDef[k]; });
-  var speed=getForgeSpeed();
-  var baseSec=FORGE_UPGRADE_TIMES[fromTier+'_'+toTier];
-  var totalMs=Math.round((baseSec/speed)*1000);
-  if(!b.queue) b.queue=[];
-  b.queue.push({cardId:cardId,fromTier:fromTier,toTier:toTier,startTime:Date.now(),totalMs:totalMs});
+function _forgeCraftTime(relicId){
+  var recipe = RELIC_RECIPES[relicId]; if(!recipe) return 600;
+  var base = RELIC_CRAFT_TIMES[recipe.tier] || 600;
+  // Champion assignment: find any champion assigned to this forge slot
+  var b = PERSIST.town.buildings.forge;
+  var champId = b && b.assignedChamp;
+  if(champId){
+    var cp = getChampPersist(champId);
+    var level = cp ? cp.level : 1;
+    var ascLevel = getAscensionLevel(champId);
+    var reduction = 0.25 + ascLevel * 0.05 + Math.min(level,20) * 0.005;
+    base = Math.round(base * (1 - Math.min(0.6, reduction)));
+  }
+  return base;
+}
+
+function refreshForgePanel(){
+  showLockedBuildingUI('forge');
+  var b = PERSIST.town.buildings.forge;
+  if(!b||!b.unlocked) return;
+  if(!b.queue) b.queue = [];
+
+  // Build recipe list
+  var listEl = document.getElementById('forge-recipe-list');
+  if(!listEl) return;
+  listEl.innerHTML = '';
+
+  // Group by tier
+  var tiers = ['base','ruby','emerald','sapphire'];
+  tiers.forEach(function(tier){
+    var tierRelics = Object.keys(RELIC_RECIPES).filter(function(id){ return RELIC_RECIPES[id].tier===tier; });
+    if(!tierRelics.length) return;
+    var grpLabel = document.createElement('div');
+    grpLabel.className = 'forge-recipe-group-label';
+    grpLabel.textContent = tier.toUpperCase();
+    grpLabel.style.color = TIER_COLORS[tier]||'#777';
+    listEl.appendChild(grpLabel);
+
+    // Craftable first within tier
+    tierRelics.sort(function(a,b){ return _forgeCanCraft(b)?1:-1; });
+
+    tierRelics.forEach(function(relicId){
+      var relic = RELICS[relicId]; if(!relic) return;
+      var canCraft = _forgeCanCraft(relicId);
+      var isSelected = _forgeSelectedRecipe === relicId;
+      var el = document.createElement('div');
+      el.className = 'forge-recipe' + (canCraft?' craftable':'') + (isSelected?' selected':'');
+      el.innerHTML = '<span class="forge-recipe-icon">'+relicImgHTML(relicId,'20px')+'</span>'
+        +'<div style="flex:1;min-width:0;">'
+          +'<div class="forge-recipe-name">'+relic.name+'</div>'
+          +'<div class="forge-recipe-tier" style="color:'+TIER_COLORS[tier]+';">'+tier.toUpperCase()+'</div>'
+        +'</div>';
+      el.onclick = function(){ _forgeSelectedRecipe = relicId; refreshForgePanel(); };
+      listEl.appendChild(el);
+    });
+  });
+
+  // Build inspector
+  _refreshForgeInspector();
+
+  // Build queue
+  _refreshForgeQueue();
+}
+
+function _refreshForgeInspector(){
+  var el = document.getElementById('forge-inspector');
+  if(!el) return;
+  var relicId = _forgeSelectedRecipe;
+  var relic = relicId ? RELICS[relicId] : null;
+  var recipe = relicId ? RELIC_RECIPES[relicId] : null;
+  if(!relic||!recipe){ el.innerHTML='<div class="forge-inspector-empty">Select a recipe from the left to see details and craft.</div>'; return; }
+
+  var tier = recipe.tier;
+  var tc = TIER_COLORS[tier]||'#777';
+  var canCraft = _forgeCanCraft(relicId);
+  var craftSecs = _forgeCraftTime(relicId);
+  var craftTime = craftSecs >= 3600 ? (craftSecs/3600).toFixed(1)+'h' : Math.round(craftSecs/60)+'m';
+
+  // Material rows
+  var matsHTML = Object.keys(recipe.mats).map(function(matId){
+    var need = recipe.mats[matId];
+    var have = PERSIST.town.materials[matId]||0;
+    var mat = MATERIALS[matId];
+    var icon = mat ? mat.icon : '?';
+    var name = mat ? mat.name : matId;
+    var ok = have >= need;
+    return '<div class="fi-mat '+(ok?'have':'missing')+'">'
+      +'<span>'+icon+'</span>'
+      +'<span class="fi-mat-name">'+name+'</span>'
+      +'<span class="fi-mat-count">'+have+'/'+need+'</span>'
+      +(ok?'':'<span class="fi-mat-shortage">need '+(need-have)+' more</span>')
+      +'</div>';
+  }).join('');
+
+  // Where to find — only show areas the player has been to
+  var obtainLines = [];
+  Object.keys(recipe.mats).forEach(function(matId){
+    var mat = MATERIALS[matId]; if(!mat) return;
+    var areas = AREA_DEFS.filter(function(a){ return a.materialGroup===mat.group; });
+    var seen = areas.filter(function(a){
+      return PERSIST.areaRuns && Object.keys(PERSIST.areaRuns).some(function(k){ return k===a.id; });
+    });
+    var areaNames = (seen.length ? seen : areas).slice(0,3).map(function(a){ return a.name; });
+    if(mat && areaNames.length){
+      obtainLines.push('<div class="fi-obtain-line"><span>'+mat.icon+'</span><span>'+mat.name+'</span><span style="color:#5a4020;"> — '+areaNames.join(', ')+'</span></div>');
+    }
+  });
+
+  // Assigned champion
+  var b = PERSIST.town.buildings.forge;
+  var assignedId = b.assignedChamp;
+  var assignedCh = assignedId ? CREATURES[assignedId] : null;
+  var champHTML = '<div class="fi-section-label" style="margin-top:2px;">ASSIGNED CHAMPION</div>'
+    +'<div style="display:flex;align-items:center;gap:8px;background:rgba(15,8,2,.8);border:1px solid #1a0e04;border-radius:4px;padding:6px 8px;flex-wrap:wrap;gap:5px;">';
+  if(assignedCh){
+    var reduction = Math.round((1-(_forgeCraftTime(relicId)/(RELIC_CRAFT_TIMES[tier]||600)))*100);
+    champHTML += '<span style="font-size:16px;">'+assignedCh.icon+'</span>'
+      +'<span style="font-family:Cinzel,serif;font-size:8px;color:#c0a060;flex:1;">'+assignedCh.name+'</span>'
+      +'<span style="font-size:9px;color:#50c050;">-'+reduction+'% time</span>'
+      +'<button class="sanctum-btn" onclick="forgeUnassignChamp()" style="font-size:7px;padding:2px 6px;">Remove</button>';
+  } else {
+    champHTML += '<span style="font-size:10px;color:#3a2810;font-style:italic;flex:1;">No champion assigned</span>';
+    var available = PERSIST.unlockedChamps.filter(function(id){
+      return !PERSIST.champions[id] || !PERSIST.champions[id].lockedExpedition;
+    });
+    if(available.length){
+      available.forEach(function(cid){
+        var c = CREATURES[cid]; if(!c) return;
+        champHTML += '<button class="sanctum-btn" onclick="forgeAssignChamp(\''+cid+'\')" style="font-size:7px;padding:2px 6px;" title="'+c.name+'">'+c.icon+'</button>';
+      });
+    }
+  }
+  champHTML += '</div>';
+
+  el.innerHTML =
+    '<div class="fi-top">'
+      +'<span class="fi-big-icon">'+relicImgHTML(relicId,'38px')+'</span>'
+      +'<div>'
+        +'<div class="fi-name">'+relic.name+'</div>'
+        +'<div class="fi-tier-badge" style="color:'+tc+';border-color:'+tc+'44;">'+tier.toUpperCase()+' TIER</div>'
+        +'<div class="fi-desc">'+relic.desc+'</div>'
+      +'</div>'
+    +'</div>'
+    +'<div class="fi-divider"></div>'
+    +'<div>'
+      +'<div class="fi-section-label">MATERIALS REQUIRED</div>'
+      +'<div class="fi-mats">'+matsHTML+'</div>'
+    +'</div>'
+    +(obtainLines.length?'<div class="fi-obtain"><div class="fi-section-label" style="margin-bottom:4px;">WHERE TO FIND</div>'+obtainLines.join('')+'</div>':'')
+    +'<div class="fi-divider"></div>'
+    + champHTML
+    +'<div style="display:flex;align-items:center;gap:10px;margin-top:4px;">'
+      +'<button class="forge-craft-btn" data-relic="'+relicId+'" '+(canCraft?'onclick="forgeQueueRelic(this.dataset.relic)"':'disabled')+'>'
+        +'CRAFT — '+craftTime
+      +'</button>'
+      +(canCraft?'':'<span style="font-size:10px;color:#7a2020;font-style:italic;">Missing materials</span>')
+    +'</div>';
+}
+
+function _refreshForgeQueue(){
+  var el = document.getElementById('forge-queue-list');
+  if(!el) return;
+  var b = PERSIST.town.buildings.forge;
+  var queue = b&&b.queue||[];
+  if(!queue.length){ el.innerHTML='<div class="forge-queue-empty">No items queued.</div>'; return; }
+  el.innerHTML = '';
+  queue.forEach(function(item, i){
+    var relic = RELICS[item.relicId];
+    var now = Date.now();
+    var elapsed = now - item.startTime;
+    var pct = Math.min(100, Math.round((elapsed/item.totalMs)*100));
+    var etaSec = Math.max(0, Math.round((item.totalMs-elapsed)/1000));
+    var etaStr = etaSec >= 3600 ? (etaSec/3600).toFixed(1)+'h' : etaSec >= 60 ? Math.round(etaSec/60)+'m' : etaSec+'s';
+    var champCh = item.champId ? CREATURES[item.champId] : null;
+    var div = document.createElement('div');
+    div.className = 'forge-queue-item';
+    div.innerHTML = '<span class="forge-queue-icon">'+relicImgHTML(item.relicId,'20px')+'</span>'
+      +'<span class="forge-queue-name">'+(relic?relic.name:item.relicId)+'</span>'
+      +(champCh?'<span class="forge-queue-champ">'+champCh.icon+' <span>-'+item.timeReduction+'%</span></span>':'')
+      +'<div class="forge-queue-prog-wrap"><div class="forge-queue-prog"><div class="forge-queue-bar" style="width:'+pct+'%"></div></div></div>'
+      +'<span class="forge-queue-eta">'+etaStr+'</span>'
+      +(i===0?'<button class="forge-queue-cancel" onclick="forgeCancelItem(0)" title="Cancel and refund materials">✕</button>':'');
+    el.appendChild(div);
+  });
+}
+
+function forgeQueueRelic(relicId){
+  var b = PERSIST.town.buildings.forge;
+  if(!b||!b.unlocked) return;
+  if(!_forgeCanCraft(relicId)){ showTownToast('Not enough materials.'); return; }
+  var recipe = RELIC_RECIPES[relicId];
+  // Spend materials
+  Object.keys(recipe.mats).forEach(function(k){ PERSIST.town.materials[k]-=recipe.mats[k]; });
+  var totalMs = _forgeCraftTime(relicId) * 1000;
+  var reduction = b.assignedChamp ? Math.round((1-(totalMs/(RELIC_CRAFT_TIMES[recipe.tier]*1000)))*100) : 0;
+  if(!b.queue) b.queue = [];
+  b.queue.push({relicId:relicId, startTime:Date.now(), totalMs:totalMs, champId:b.assignedChamp||null, timeReduction:reduction});
   savePersist();
-  addLog('Queued: '+(CARDS[cardId]?CARDS[cardId].name:cardId)+' upgrade ('+Math.round(totalMs/1000)+'s).','sys');
+  addLog('Forge: crafting '+RELICS[relicId].name+' ('+Math.round(totalMs/60000)+'m).','sys');
+  refreshForgePanel();
 }
 
 function forgeCancelItem(idx){
-  var b=PERSIST.town.buildings.forge;
+  var b = PERSIST.town.buildings.forge;
   if(!b.queue||!b.queue[idx]) return;
-  var item=b.queue.splice(idx,1)[0];
+  var item = b.queue.splice(idx,1)[0];
   // Refund materials
-  var costDef=FORGE_UPGRADE_COSTS[item.fromTier+'_'+item.toTier];
-  Object.keys(costDef).forEach(function(k){ PERSIST.town.materials[k]=(PERSIST.town.materials[k]||0)+costDef[k]; });
+  var recipe = RELIC_RECIPES[item.relicId];
+  if(recipe) Object.keys(recipe.mats).forEach(function(k){ PERSIST.town.materials[k]=(PERSIST.town.materials[k]||0)+recipe.mats[k]; });
   savePersist(); refreshForgePanel();
+  showTownToast('Crafting cancelled — materials refunded.');
+}
+
+function forgeAssignChamp(champId){
+  var b = PERSIST.town.buildings.forge;
+  if(!b) return;
+  b.assignedChamp = champId;
+  savePersist(); _refreshForgeInspector();
+}
+
+function forgeUnassignChamp(){
+  var b = PERSIST.town.buildings.forge;
+  if(!b) return;
+  b.assignedChamp = null;
+  savePersist(); _refreshForgeInspector();
+}
+
+function forgeTick(){
+  var b = PERSIST.town.buildings.forge;
+  if(!b||!b.unlocked||!b.queue||!b.queue.length) return;
+  var item = b.queue[0];
+  if(Date.now()-item.startTime >= item.totalMs){
+    b.queue.shift();
+    // Grant relic to inventory
+    if(!PERSIST.town.relics) PERSIST.town.relics = {};
+    PERSIST.town.relics[item.relicId] = (PERSIST.town.relics[item.relicId]||0) + 1;
+    var relic = RELICS[item.relicId];
+    showTownToast('✦ '+(relic?relic.name:'Relic')+' crafted! Check your inventory.');
+    addLog('✦ Forge complete: '+(relic?relic.name:item.relicId)+' added to inventory.','sys');
+    savePersist();
+    // Refresh forge panel if open so queue updates live
+    var fp=document.getElementById('forge-panel-bg');
+    if(fp&&fp.classList.contains('show')) refreshForgePanel();
+  }
 }
 
 // ── SHARD WELL ──────────────────────────────────────────────────────
@@ -4559,9 +5200,7 @@ var SHARD_WELL_GEM_MULT  = 2.5;   // gem makes it 2.5× faster (1 per 2 min)
 function getShardWellRate(){
   var b=PERSIST.town.buildings.shard_well;
   if(!b||!b.unlocked) return 0;
-  var secsPerShard=b.slottedCard
-    ? Math.round(SHARD_WELL_BASE_SECS/SHARD_WELL_GEM_MULT)
-    : SHARD_WELL_BASE_SECS;
+  var secsPerShard=120;
   return secsPerShard;
 }
 
@@ -4722,18 +5361,7 @@ function refreshShardWellPanel(){
   var b=PERSIST.town.buildings.shard_well;
   if(!b||!b.unlocked) return;
 
-  var slotCard=b.slottedCard?getTownCardById(b.slottedCard):null;
-  var slotEl=document.getElementById('shard_well-slot');
-  if(slotEl){
-    slotEl.className='building-slot'+(slotCard?' has-card '+slotCard.tier:'');
-    slotEl.innerHTML=slotCard
-      ?'<span class="slot-card-gem">'+TOWN_CARD_GEMS(slotCard.tier)+'</span>'
-      :'<span style="color:#3a2810;font-size:18px;">+</span>';
-  }
-  var hint=document.getElementById('shard_well-slot-hint');
-  if(hint) hint.textContent=slotCard
-    ?'Gem active — faster gem shard gen + Soul Shard trickle. Click to unslot.'
-    :'Slot a gem to boost generation rates.';
+  // gem slot UI removed
 
   var display=document.getElementById('shard-well-display');
   if(!display) return;
@@ -4842,18 +5470,7 @@ function doSummonUI(){
 }
 
 // Forge tick — called every 5s from a global idle ticker
-function forgeTick(){
-  var b=PERSIST.town.buildings.forge;
-  if(!b||!b.unlocked||!b.queue||!b.queue.length) return;
-  var item=b.queue[0];
-  if(Date.now()-item.startTime>=item.totalMs){
-    b.queue.shift();
-    // Grant upgraded version — just add a town card of the new tier for now
-    addTownCard(item.toTier);
-    addLog('✦ Forge complete: '+(CARDS[item.cardId]?CARDS[item.cardId].name:item.cardId)+' → '+CARD_TIER_LABELS[item.toTier]+' Card!','sys');
-    savePersist();
-  }
-}
+
 
 // ── SHRINE ──
 function refreshShrinePanel(){
@@ -4861,17 +5478,13 @@ function refreshShrinePanel(){
   var b=PERSIST.town.buildings.shrine;
   if(!b.unlocked) return;
 
-  // Slot
-  var slotCard=b.slottedCard?getTownCardById(b.slottedCard):null;
-  var slotEl=document.getElementById('shrine-slot');
-  slotEl.className='building-slot'+(slotCard?' has-card '+slotCard.tier:'');
-  slotEl.innerHTML=slotCard?'<span class="slot-card-gem">'+TOWN_CARD_GEMS(slotCard.tier)+'</span>':'<span style="color:#3a2810;font-size:18px;">+</span>';
-  document.getElementById('shrine-slot-hint').textContent=slotCard
-    ?'Gem active — blessings enhanced (+20% effect). Click to unslot.'
-    :'Slot a gem to enhance blessings (+20% effect).';
+  // gem slot UI removed
+  var slotCard=null;
 
   // Active blessing display — works without gem
-  var bd=document.getElementById('shrine-blessing-display'); bd.innerHTML='';
+  var bd=document.getElementById('shrine-blessing-display');
+  if(!bd) return;
+  bd.innerHTML='';
   var active=b.activeBlessing;
   if(active){
     var bl=SHRINE_BLESSINGS.find(function(x){return x.id===active;});
@@ -4881,7 +5494,9 @@ function refreshShrinePanel(){
   }
 
   // Blessing list — all visible, locked ones show level requirement
-  var bl2=document.getElementById('shrine-blessing-list'); bl2.innerHTML='';
+  var bl2=document.getElementById('shrine-blessing-list');
+  if(!bl2) return;
+  bl2.innerHTML='';
   var shrineLevel=getBuildingLevel('shrine');
   var xp=PERSIST.town.buildingXp&&PERSIST.town.buildingXp.shrine||0;
   var xpToNext=getBuildingXpToNext(shrineLevel);
@@ -4926,7 +5541,7 @@ function setBestiaryTab(tab){
   document.getElementById('btab-locations').className='bestiary-tab'+(tab==='locations'?' active':'');
   document.getElementById('btab-glossary').className='bestiary-tab'+(tab==='glossary'?' active':'');
   document.getElementById('bestiary-creatures-pane').style.display=tab==='creatures'?'':'none';
-  document.getElementById('bestiary-locations-pane').style.display=tab==='locations'?'':'none';
+  document.getElementById('bestiary-locations-pane').style.display=tab==='locations'?'flex':'none';
   document.getElementById('bestiary-glossary-pane').style.display=tab==='glossary'?'':'none';
   if(tab==='glossary') buildBestiaryGlossary();
 }
@@ -4970,18 +5585,6 @@ function refreshBestiaryPanel(){
   showLockedBuildingUI('bestiary');
   var b=PERSIST.town.buildings.bestiary;
   if(!b.unlocked) return;
-
-  var slotCard=b.slottedCard?getTownCardById(b.slottedCard):null;
-  var slotEl=document.getElementById('bestiary-slot');
-  if(slotEl){
-    slotEl.className='building-slot'+(slotCard?' has-card '+slotCard.tier:'');
-    slotEl.innerHTML=slotCard?'<span class="slot-card-gem">'+TOWN_CARD_GEMS(slotCard.tier)+'</span>':'<span style="color:#3a2810;font-size:18px;">+</span>';
-  }
-  var hintEl=document.getElementById('bestiary-slot-hint');
-  if(hintEl) hintEl.textContent=slotCard
-    ?'Gem active — full details including hidden innates revealed.'
-    :'Slot a gem to reveal hidden innates and full enemy deck details.';
-
   buildBestiaryCreatures();
   buildBestiaryLocations();
 }
@@ -5076,89 +5679,105 @@ function renderBestiaryDetail(id){
   var isMastered=PERSIST.unlockedChamps.indexOf(id)!==-1;
 
   var showStats  = isSeen||(res>=BRES.ICON);
-  var showCards  = isSeen||(res>=BRES.DECK_CARD);
   var showInnate = isSeen||(res>=BRES.INNATE);
+  var showCards  = isSeen||(res>=BRES.DECK_CARD);
   var showLore   = isSeen||(res>=BRES.NAME);
-  var showAreas  = res>=BRES.NAME||isSeen;
+  var showAreas  = isSeen||(res>=BRES.NAME);
 
   var areas=getCreatureAreas(id);
+  var html='';
 
-  // Header — large centred creature image
+  // ── Art header ──
   var killColor=kills>100?'#d4a843':kills>10?'#c09030':'#7a5020';
-  var html='<div style="text-align:center;padding:12px 0 6px;">'    +creatureImgHTML(id, e.icon, '120px')    +'</div>'    +'<div style="text-align:center;margin-bottom:8px;">'    +'<div class="bc-detail-name" style="font-size:14px;margin-bottom:4px;">'+e.name+'</div>'    +(isMastered?'<div style="margin-bottom:4px;"><span style="font-size:7px;font-family:Cinzel,serif;color:#d4a843;letter-spacing:1px;border:1px solid #c09030;border-radius:3px;padding:1px 5px;">★ UNLOCKED</span></div>':'')    +'<div class="bc-detail-kills">⚔ <b style="color:'+killColor+'">'+kills+'</b> defeated</div>';
+  html+='<div class="bcd-header">'
+    +'<div class="bcd-portrait">'+creatureImgHTML(id,e.icon,'100px')+'</div>'
+    +'<div class="bcd-header-info">'
+      +'<div class="bcd-name">'+e.name+'</div>'
+      +(isMastered?'<div class="bcd-unlocked">★ CHAMPION UNLOCKED</div>':'')
+      +'<div class="bcd-kills" style="color:'+killColor+';">⚔ '+kills+' defeated</div>'
+      // Location tags with ↗ links
+      +(showAreas&&areas.length
+        ?'<div class="bcd-areas">'+areas.map(function(a){
+            return '<span class="bcd-area-tag" onclick="openLocationInBestiary(\''+a.id+'\')" title="View location">'+a.icon+' '+a.name+' <span class="bcd-area-arrow">↗</span></span>';
+          }).join('')+'</div>'
+        :'')
+    +'</div>'
+    +'</div>';
 
-  if(showAreas&&areas.length){
-    html+='<div style="margin-top:5px;">';
-    areas.forEach(function(a){ html+='<span class="bc-area-tag">'+a.icon+' '+a.name+'</span>'; });
-    html+='</div>';
-  }
-  html+='</div>';
-
-  // Stats — STR/AGI/WIS with HP and speed as sub-labels
+  // ── Stats ──
   if(showStats){
     var maxHp=calcHp(e.baseStats.str);
-    var atkInterval=e.atkInterval||Math.round(2000/(1+e.baseStats.agi*0.05));
+    var atkSec=(e.atkInterval||Math.round(2000/(1+e.baseStats.agi*0.05)))/1000;
     var manaMax=Math.round(e.baseStats.wis*8+40);
-    html+='<div class="bc-section-label">COMBAT STATS</div>'      +'<div class="bc-stat-row">'      +'<div class="bc-stat-box">'        +'<div class="sv" style="color:#e07070;">'+e.baseStats.str+'</div>'        +'<div class="sl">STR</div>'        +'<div style="font-size:7px;color:#7a4020;margin-top:2px;">'+maxHp+' HP</div>'      +'</div>'      +'<div class="bc-stat-box">'        +'<div class="sv" style="color:#70e0a0;">'+e.baseStats.agi+'</div>'        +'<div class="sl">AGI</div>'        +'<div style="font-size:7px;color:#2a6040;margin-top:2px;">'+(atkInterval/1000).toFixed(1)+'s</div>'      +'</div>'      +'<div class="bc-stat-box">'        +'<div class="sv" style="color:#70a0e0;">'+e.baseStats.wis+'</div>'        +'<div class="sl">WIS</div>'        +'<div style="font-size:7px;color:#304060;margin-top:2px;">'+manaMax+' MP</div>'      +'</div>'      +'</div>';
+    html+='<div class="bcd-section-label">COMBAT STATS</div>'
+      +'<div class="bcd-stat-row">'
+        +'<div class="bcd-stat"><div class="bcd-stat-val str">'+e.baseStats.str+'</div><div class="bcd-stat-lbl">STR</div><div class="bcd-stat-sub">'+maxHp+' HP</div></div>'
+        +'<div class="bcd-stat"><div class="bcd-stat-val agi">'+e.baseStats.agi+'</div><div class="bcd-stat-lbl">AGI</div><div class="bcd-stat-sub">'+atkSec.toFixed(1)+'s</div></div>'
+        +'<div class="bcd-stat"><div class="bcd-stat-val wis">'+e.baseStats.wis+'</div><div class="bcd-stat-lbl">WIS</div><div class="bcd-stat-sub">'+manaMax+' MP</div></div>'
+      +'</div>';
   } else {
-    html+='<div class="bc-stat-row"><div class="bc-stat-box" style="flex:1;"><div class="sv" style="color:#3a2810;">?</div><div class="sl">STATS UNKNOWN</div></div></div>';
+    html+='<div class="bcd-section-label">COMBAT STATS</div>'
+      +'<div class="bcd-unknown-block">Observe this creature in combat to reveal its stats.</div>';
   }
 
-  // Lore
+  // ── Lore ──
   if(showLore&&e.lore){
-    html+='<div class="bc-section-label">FIELD NOTES</div>'
-      +'<div class="bc-lore">'+e.lore+'</div>';
+    html+='<div class="bcd-divider"></div>'
+      +'<div class="bcd-section-label">FIELD NOTES</div>'
+      +'<div class="bcd-lore">'+e.lore+'</div>';
   } else if(res>0&&!showLore){
-    html+='<div class="bc-lore" style="color:#3a2810;">Research further to uncover field notes on this creature.</div>';
+    html+='<div class="bcd-divider"></div>'
+      +'<div class="bcd-lore bcd-unknown-text">Research further to uncover field notes on this creature.</div>';
   }
 
-  // Innate
+  // ── Innate ──
   if(showInnate&&e.innate){
-    var innateHidden=e.innate.hidden&&!kills;
-    html+='<div class="bc-section-label">INNATE ABILITY</div>'
-      +'<div class="bc-innate-box">'
-      +'<div class="bc-innate-name">◆ '+(innateHidden?'???':e.innate.name)+'</div>'
-      +'<div class="bc-innate-desc">'+(innateHidden?'Defeat this creature to reveal its innate ability.':e.innate.desc)+'</div>'
+    var hidden=e.innate.hidden&&!kills;
+    html+='<div class="bcd-divider"></div>'
+      +'<div class="bcd-section-label">INNATE ABILITY</div>'
+      +'<div class="bcd-innate">'
+        +'<div class="bcd-innate-name">◆ '+(hidden?'???':e.innate.name)+'</div>'
+        +'<div class="bcd-innate-desc">'+(hidden?'Defeat this creature to reveal its innate ability.':e.innate.desc)+'</div>'
       +'</div>';
   } else if(showStats&&e.innate){
-    html+='<div class="bc-section-label">INNATE ABILITY</div>'
-      +'<div class="bc-innate-box"><div class="bc-innate-desc" style="color:#3a2810;">Research further to reveal this innate ability.</div></div>';
+    html+='<div class="bcd-divider"></div>'
+      +'<div class="bcd-section-label">INNATE ABILITY</div>'
+      +'<div class="bcd-unknown-block">Research further to reveal this innate ability.</div>';
   }
 
-  // Cards
+  // ── Cards ──
   if(showCards&&(e.deck||[]).length){
-    var visibleCards=isSeen?(e.deck||[]).slice(0)
-      :(e.deck||[]).slice(0, Math.max(1,Math.ceil(((res-BRES.DECK_CARD)/(BRES.INNATE-BRES.DECK_CARD))*(e.deck||[]).length)));
-    if(visibleCards.length){
-      html+='<div class="bc-section-label">KNOWN CARDS</div>';
-      visibleCards.forEach(function(c){
-        html+='<div class="bc-card-entry">'
-          +'<span class="bc-card-entry-name">'+c.name+'</span>'
-          +'<span class="bc-card-entry-copies">x'+c.copies+'</span>'
-          +'</div>';
-      });
-      var remaining=(e.deck||[]).length-visibleCards.length;
-      if(remaining>0) html+='<div style="font-size:8px;color:#3a2810;font-style:italic;padding:4px 8px;">+ '+remaining+' card'+(remaining!==1?'s':'')+' not yet observed</div>';
-    }
+    var visible=isSeen?(e.deck||[]).slice()
+      :(e.deck||[]).slice(0,Math.max(1,Math.ceil(((res-BRES.DECK_CARD)/(BRES.INNATE-BRES.DECK_CARD))*(e.deck||[]).length)));
+    html+='<div class="bcd-divider"></div>'
+      +'<div class="bcd-section-label">KNOWN CARDS</div>'
+      +'<div class="bcd-card-list">';
+    visible.forEach(function(c){
+      html+='<div class="bcd-card-entry"><span class="bcd-card-name">'+c.name+'</span><span class="bcd-card-copies">×'+c.copies+'</span></div>';
+    });
+    var rem=(e.deck||[]).length-visible.length;
+    if(rem>0) html+='<div class="bcd-card-more">+ '+rem+' card'+(rem!==1?'s':'')+' not yet observed</div>';
+    html+='</div>';
   } else if(showStats&&(e.deck||[]).length){
-    html+='<div class="bc-section-label">KNOWN CARDS</div>'
-      +'<div style="font-size:9px;color:#3a2810;padding:4px 0;">Research further to identify cards.</div>';
+    html+='<div class="bcd-divider"></div>'
+      +'<div class="bcd-section-label">KNOWN CARDS</div>'
+      +'<div class="bcd-unknown-block">Research further to identify cards.</div>';
   }
 
-  // Research bar
+  // ── Research / catalogued status ──
+  html+='<div class="bcd-divider"></div>';
   if(!isSeen&&res>0){
-    html+='<div class="bc-section-label" style="margin-top:12px;">RESEARCH</div>'
-      +'<div style="height:4px;background:rgba(0,0,0,.5);border-radius:2px;overflow:hidden;margin-bottom:4px;">'
-      +'<div style="height:100%;width:'+res+'%;background:linear-gradient(90deg,#2a1808,#c09030);border-radius:2px;"></div>'
-      +'</div>'
-      +'<div style="font-size:8px;color:#5a4020;text-align:right;">'+Math.round(res)+'% catalogued</div>';
+    html+='<div class="bcd-section-label">RESEARCH</div>'
+      +'<div class="bcd-res-bar-wrap"><div class="bcd-res-bar" style="width:'+res+'%"></div></div>'
+      +'<div class="bcd-res-pct">'+Math.round(res)+'% catalogued</div>';
   } else if(isSeen){
-    html+='<div style="margin-top:10px;font-size:8px;color:'+(isMastered?'#d4a843':'#4a3010')+';font-family:Cinzel,serif;text-align:center;letter-spacing:.5px;">'
-      +(isMastered?'★ FULLY CATALOGUED & UNLOCKED':'✓ FULLY CATALOGUED')+'</div>';
+    html+='<div class="bcd-catalogued'+(isMastered?' bcd-mastered-txt':'')+'">'+
+      (isMastered?'★ FULLY CATALOGUED & UNLOCKED':'✓ FULLY CATALOGUED')+'</div>';
   }
 
   panel.innerHTML=html;
 }
+
 
 // Diminishing returns on area runs — first 3 count at full value, then slower
 function getEffectiveRuns(areaId){
@@ -5168,73 +5787,182 @@ function getEffectiveRuns(areaId){
   return 3+(raw-3)*0.25;
 }
 
-function buildBestiaryLocations(){
-  var grid=document.getElementById('bestiary-location-grid');
-  if(!grid) return;
-  grid.innerHTML='';
+var _locSelected = null;
 
-  // Legend — only show if player has seen a noChampion enemy
-  var hasUnique=false; // noChampion flag removed in Creature unification
-  if(hasUnique){
-    var legend=document.createElement('div');
-    legend.style.cssText='grid-column:1/-1;font-size:8px;color:#7a6030;text-align:right;padding:2px 4px;';
-    legend.textContent='★ = unique encounter · cannot be unlocked as a champion';
-    grid.appendChild(legend);
+function buildBestiaryLocations(){
+  var pane = document.getElementById('bestiary-locations-pane');
+  if(!pane) return;
+
+  // Build three-column layout if not already built
+  if(!document.getElementById('loc-list')){
+    pane.style.cssText='display:flex;flex-direction:row;flex:1;min-height:0;overflow:hidden;max-height:none;';
+    pane.innerHTML=
+      '<div class="loc-list" id="loc-list"></div>'+
+      '<div class="loc-detail" id="loc-detail"><div class="loc-empty">Select a location</div></div>'+
+      '<div class="loc-creatures-col" id="loc-creatures-col"></div>';
   }
 
+  _renderLocList();
+  if(!_locSelected){
+    // Auto-select first explored area
+    var first = AREA_DEFS.find(function(a){ return (PERSIST.areaRuns[a.id]||0)>0; });
+    if(first) _locSelected = first.id;
+  }
+  _renderLocDetail(_locSelected);
+}
+
+function _renderLocList(){
+  var list = document.getElementById('loc-list');
+  if(!list) return;
+  list.innerHTML='';
   AREA_DEFS.forEach(function(area){
-    var rawRuns=PERSIST.areaRuns[area.id]||0;
-    var effRuns=getEffectiveRuns(area.id);
-    var card=document.createElement('div');
-
-    if(rawRuns===0){
-      card.className='bl-card unknown';
-      card.innerHTML='<div class="bl-icon">🌫️</div>'
-        +'<div class="bl-name" style="color:#2a1808;">UNEXPLORED</div>'
-        +'<div style="font-size:7px;color:#1e1006;">Complete a run here to reveal</div>';
-      grid.appendChild(card); return;
+    var runs = PERSIST.areaRuns[area.id]||0;
+    var item = document.createElement('div');
+    if(runs === 0){
+      item.className='loc-item loc-unknown';
+      item.innerHTML='<span class="loc-item-icon">🌫</span><div><div class="loc-item-name">Unexplored</div></div>';
+    } else {
+      item.className='loc-item'+(area.id===_locSelected?' active':'');
+      item.innerHTML='<span class="loc-item-icon">'+areaImgHTML(area.id,area.icon,'18px')+'</span>'
+        +'<div><div class="loc-item-name">'+area.name+'</div>'
+        +'<div class="loc-item-lvl">Lv. '+area.levelRange[0]+'–'+area.levelRange[1]+'</div></div>';
+      (function(id){ item.onclick=function(){ _locSelected=id; _renderLocList(); _renderLocDetail(id); }; })(area.id);
     }
-
-    card.className='bl-card'+(effRuns>=AREA_INTEL.THREAT_NOTES?' charted':effRuns>=AREA_INTEL.VISITED?' visited':'');
-
-    var html='<div class="bl-icon">'+area.icon+'</div>'
-      +'<div class="bl-name">'+area.name+'</div>'
-      +'<div class="bl-level">Lv. '+area.levelRange[0]+'–'+area.levelRange[1]+'</div>';
-
-    if(effRuns>=AREA_INTEL.PARTIAL_ENEMIES){
-      var pool=area.enemyPool||[];
-      var unique=pool.filter(function(v,i,a){return a.indexOf(v)===i;});
-      var visCount=effRuns>=AREA_INTEL.FULL_ENEMIES?unique.length:Math.min(2,unique.length);
-      var shown=unique.slice(0,visCount);
-      var names=shown.map(function(id){
-        if(!CREATURES[id]) return id;
-        var label=CREATURES[id].name;
-        return label;
-      });
-      html+='<div class="bl-enemies">'
-        +names.join(' · ')
-        +(unique.length>visCount?' <span style="color:#3a2810;">+'+( unique.length-visCount)+' more</span>':'')
-        +'</div>';
-    }
-
-    if(effRuns>=AREA_INTEL.THREAT_NOTES&&THREAT_NOTES[area.id]){
-      html+='<div class="bl-threat">'+THREAT_NOTES[area.id]+'</div>';
-    }
-
-    var runNote=rawRuns>3
-      ?rawRuns+' runs <span style="color:#3a2810;">('+effRuns.toFixed(1)+' effective)</span>'
-      :rawRuns+' run'+(rawRuns!==1?'s':'');
-    html+='<div class="bl-runs">'+runNote+'</div>';
-
-    var milestones=[AREA_INTEL.VISITED,AREA_INTEL.PARTIAL_ENEMIES,AREA_INTEL.FULL_ENEMIES,AREA_INTEL.THREAT_NOTES];
-    html+='<div class="bl-intel-bar">';
-    milestones.forEach(function(m){ html+='<div class="bl-intel-pip'+(effRuns>=m?' filled':'')+'"></div>'; });
-    html+='</div>';
-
-    card.innerHTML=html;
-    grid.appendChild(card);
+    list.appendChild(item);
   });
 }
+
+function _renderLocDetail(areaId){
+  var detail   = document.getElementById('loc-detail');
+  var creatCol = document.getElementById('loc-creatures-col');
+  if(!detail||!creatCol) return;
+
+  if(!areaId){
+    detail.innerHTML='<div class="loc-empty">Select a location</div>';
+    creatCol.innerHTML='';
+    return;
+  }
+
+  var area = AREA_DEFS.find(function(a){ return a.id===areaId; });
+  if(!area){ detail.innerHTML=''; creatCol.innerHTML=''; return; }
+
+  var rawRuns = PERSIST.areaRuns[areaId]||0;
+  var effRuns = getEffectiveRuns(areaId);
+
+  if(rawRuns === 0){
+    detail.innerHTML=
+      '<div class="loc-fog-art" style="background:'+area.bg+';">'
+        +'<div class="loc-fog-icon">🌫</div>'
+      +'</div>'
+      +'<div class="loc-lore-body">'
+        +'<div class="loc-lore-text" style="color:#2a1808;font-style:italic;">This area has not been explored. Venture here to reveal its secrets.</div>'
+      +'</div>';
+    creatCol.innerHTML='<div class="loc-cr-label">INHABITANTS</div><div class="loc-cr-list"><div style="font-size:8px;color:#2a1808;padding:8px;font-style:italic;">Explore this area to discover what lives here.</div></div>';
+    return;
+  }
+
+  // Art panel — uses area bg colour + large faded icon
+  var threatHtml = effRuns>=AREA_INTEL.THREAT_NOTES && THREAT_NOTES[areaId]
+    ? '<div class="loc-threat"><span class="loc-threat-label">FIELD NOTES</span> '+THREAT_NOTES[areaId]+'</div>' : '';
+
+  var loreHtml = area.lore
+    ? area.lore.split('\n\n').map(function(p){ return '<p>'+p+'</p>'; }).join('')
+    : '<p style="color:#3a2810;font-style:italic;">'+area.theme+'</p>';
+
+  var runsNote = rawRuns+' run'+(rawRuns!==1?'s':'')+' completed';
+  var totalKills = (area.enemyPool||[]).reduce(function(s,id){
+    return s+(PERSIST.achievements[id+'_kill']||0);
+  }, 0);
+
+  detail.innerHTML=
+    '<div class="loc-art-panel" id="loc-art-panel-img" style="background:'+area.bg+';">'
+      +'<div class="loc-art-fade-icon" id="loc-art-fade-icon">'+areaImgHTML(area.id,area.icon,'80px')+'</div>'
+      +'<div class="loc-art-title">'
+        +'<span class="loc-art-icon-sm">'+areaImgHTML(area.id,area.icon,'20px')+'</span>'
+        +'<span class="loc-art-name">'+area.name+'</span>'
+      +'</div>'
+      +'<div class="loc-art-lvl">Lv. '+area.levelRange[0]+'–'+area.levelRange[1]+'</div>'
+    +'</div>'
+    +'<div class="loc-lore-body">'
+      +'<div class="loc-lore-text">'+loreHtml+'</div>'
+      +threatHtml
+      +'<div class="loc-run-record">'
+        +'<span class="loc-run-note">'+runsNote+'</span>'
+        +(totalKills?' &nbsp;·&nbsp; <span class="loc-kill-note">'+totalKills+' creatures defeated</span>':'')
+      +'</div>'
+    +'</div>';
+
+  // Load background image, fall back to default.png, hide fade icon when image is present
+  (function(id){
+    function applyLocBg(src){
+      var panel = document.getElementById('loc-art-panel-img');
+      var fadeIcon = document.getElementById('loc-art-fade-icon');
+      if(!panel) return;
+      panel.style.backgroundImage    = 'url('+src+')';
+      panel.style.backgroundSize     = 'cover';
+      panel.style.backgroundPosition = 'center center';
+      if(fadeIcon) fadeIcon.style.display = 'none';
+    }
+    var src = 'assets/backgrounds/'+id+'.png';
+    var img = new Image();
+    img.onload  = function(){ applyLocBg(src); };
+    img.onerror = function(){
+      var def = new Image();
+      def.onload  = function(){ applyLocBg('assets/backgrounds/default.png'); };
+      def.onerror = function(){ /* keep solid colour fallback */ };
+      def.src = 'assets/backgrounds/default.png';
+    };
+    img.src = src;
+  })(area.id);
+
+  // Creature column
+  var pool = (area.enemyPool||[]).filter(function(v,i,a){ return a.indexOf(v)===i; });
+  var crHTML = '<div class="loc-cr-label">INHABITANTS</div><div class="loc-cr-list">';
+  pool.forEach(function(id){
+    var c = CREATURES[id];
+    var seen = PERSIST.seenEnemies.indexOf(id)!==-1;
+    var kills = PERSIST.achievements[id+'_kill']||0;
+    if(seen && c){
+      crHTML += '<div class="loc-cr-entry" onclick="openCreatureFromLocation(\''+id+'\')">'
+        +'<div class="loc-cr-art">'+creatureImgHTML(id,c.icon,'24px')+'</div>'
+        +'<div class="loc-cr-info">'
+          +'<div class="loc-cr-name">'+c.name+'</div>'
+          +(kills?'<div class="loc-cr-kills">'+kills+' defeated</div>':'<div class="loc-cr-kills">Encountered</div>')
+        +'</div>'
+        +'<div class="loc-cr-link">↗</div>'
+        +'</div>';
+    } else {
+      crHTML += '<div class="loc-cr-entry loc-cr-unknown">'
+        +'<div class="loc-cr-art loc-cr-art-unknown">?</div>'
+        +'<div class="loc-cr-info">'
+          +'<div class="loc-cr-name" style="color:#2a1808;">???</div>'
+          +'<div class="loc-cr-kills">not yet encountered</div>'
+        +'</div>'
+        +'</div>';
+    }
+  });
+  crHTML += '</div>';
+  creatCol.innerHTML = crHTML;
+}
+
+function openCreatureFromLocation(id){
+  // Switch to creatures tab and select this creature
+  setBestiaryTab('creatures');
+  _bestiarySelected = id;
+  buildBestiaryCreatures();
+}
+
+// Entry point used by the area info button and area select screen
+function openLocationInBestiary(areaId){
+  _locSelected = areaId;
+  openBuilding('bestiary');
+  setTimeout(function(){
+    setBestiaryTab('locations');
+    buildBestiaryLocations();
+  }, 80);
+}
+
+
 
 // ── SANCTUM ────────────────────────────────────────────────────────
 var _sanctumChamp = null;
@@ -5289,15 +6017,8 @@ function refreshSanctumPanel(){
   var fragEl=document.getElementById('sanctum-frag-count');
   if(fragEl) fragEl.textContent=getFragmentCount();
 
-  // Slot display
-  var slotCard=b.slottedCard?getTownCardById(b.slottedCard):null;
-  var slotEl=document.getElementById('sanctum-slot');
-  if(slotEl){
-    slotEl.className='building-slot'+(slotCard?' has-card '+slotCard.tier:'');
-    slotEl.innerHTML=slotCard
-      ?'<span class="slot-card-gem">'+TOWN_CARD_GEMS(slotCard.tier)+'</span>'
-      :'<span style="color:#3a2810;font-size:18px;">+</span>';
-  }
+  // gem slot UI removed
+  var slotCard=null;
 
   // Champion selector tabs (vertical list)
   var tabs=document.getElementById('sanctum-champ-tabs');
@@ -5321,7 +6042,7 @@ function refreshSanctumPanel(){
 
 function setSanctumTab(tab, skipRefresh){
   _sanctumTab=tab;
-  ['overview','deck','upgrades','training'].forEach(function(t){
+  ['overview','deck','relics','upgrades','training'].forEach(function(t){
     var btn=document.getElementById('stab-'+t);
     var pane=document.getElementById('sanctum-'+t+'-pane');
     if(btn) btn.className='sanctum-tab'+(t===tab?' active':'');
@@ -5329,9 +6050,227 @@ function setSanctumTab(tab, skipRefresh){
   });
   if(tab==='overview') buildSanctumOverviewPane();
   else if(tab==='deck'){ buildSanctumDeckPane(); showTutorial('sanctum_deck_edit'); }
+  else if(tab==='relics') buildSanctumRelicsPane();
   else if(tab==='upgrades') buildSanctumUpgradesPane();
   else if(tab==='training') buildSanctumTrainingPane();
 }
+
+// ── RELICS PANE ────────────────────────────────────────────────────
+function buildSanctumRelicsPane(){
+  var champId = _sanctumChamp; if(!champId) return;
+  var ch = CREATURES[champId];
+  var cp = getChampPersist(champId);
+  var equipped = getEquippedRelics(champId);
+  var slots = getRelicSlotCount(champId);
+  var ascLevel = getAscensionLevel(champId);
+  var nextAsc = ASCENSION_TIERS[ascLevel];
+  var tc = {base:'#777',ruby:'#c0392b',emerald:'#27ae60',sapphire:'#2980b9',turquoise:'#17a589',amethyst:'#8e44ad'};
+
+  // Compute relic stat bonuses for this champion (simulating applyRelics)
+  var bonuses = {str:0, agi:0, wis:0};
+  var relicStatMap = {}; // stat -> [relicId, ...]
+  equipped.forEach(function(relicId){
+    var r = RELICS[relicId]; if(!r||!r.apply) return;
+    var fake = {stats:{str:0,agi:0,wis:0},maxMana:0,manaRegen:0,playerMaxHp:0,playerHp:0,maxHand:5,
+      _relicFirstCardBonus:false,_relicFirstCardUsed:false,_relicThorns:0,_relicManaRegenMult:1,
+      _relicPoisonDptBonus:0,_relicPoisonTickMult:1,_relicBurnDurBonus:0,_relicDebuffDurBonus:0,
+      _relicSorceryCostReduction:0,_relicCritMult:null};
+    try{ r.apply(fake); }catch(e){}
+    ['str','agi','wis'].forEach(function(s){
+      if(fake.stats[s]>0){
+        bonuses[s]+=fake.stats[s];
+        if(!relicStatMap[s]) relicStatMap[s]=[];
+        relicStatMap[s].push(relicId);
+      }
+    });
+  });
+
+  // ── STATS COLUMN ──
+  var statsEl = document.getElementById('sr-stats-col');
+  if(statsEl){
+    var statsHTML = '<div class="tp-section-label" style="margin-bottom:4px;">STATS</div>';
+    ['str','agi','wis'].forEach(function(s){
+      var base = cp.stats[s]; var bonus = bonuses[s];
+      var bonusSources = relicStatMap[s]||[];
+      statsHTML += '<div class="sr-stat" id="sr-stat-'+s+'">'
+        +'<div class="sr-stat-name">'+s.toUpperCase()+'</div>'
+        +'<div class="sr-stat-vals">'
+          +'<span class="sr-stat-base">'+base+'</span>'
+          +(bonus>0?'<span class="sr-stat-bonus" '
+            +'onmouseenter="srHoverBonus(\''+s+'\','+JSON.stringify(bonusSources)+')" '
+            +'onmouseleave="srUnhoverBonus()">+'+bonus+'</span>':'')
+        +'</div>'
+        +(bonus>0?'<div class="sr-stat-hint">= '+(base+bonus)+' this run</div>':'<div class="sr-stat-hint">no bonus</div>')
+        +'</div>';
+    });
+    // Level block
+    var xpPct = Math.min(100,Math.round((cp.xp/cp.xpNext)*100));
+    statsHTML += '<div class="sr-lv-block">'
+      +'<div class="sr-lv-n">Lv '+cp.level+'</div>'
+      +'<div class="sr-lv-bg"><div class="sr-lv-bar" style="width:'+xpPct+'%"></div></div>'
+      +'<div class="sr-lv-xp">'+cp.xp+' / '+cp.xpNext+' XP</div>'
+      +'<div class="sr-pip-row">'
+        +'<span style="font-family:\'Cinzel\',serif;font-size:6px;color:#7a5020;letter-spacing:.4px;">'+(ascLevel>0?ASCENSION_TIERS[ascLevel-1].tier.toUpperCase():'BASE')+'</span>';
+    for(var pi=0;pi<5;pi++){
+      statsHTML += '<div class="sr-pip'+(pi<ascLevel?' f':pi===ascLevel?' u':'')+'"></div>';
+    }
+    statsHTML += '</div></div>';
+    statsEl.innerHTML = statsHTML;
+  }
+
+  // ── HERO COLUMN ──
+  var heroEl = document.getElementById('sr-hero-col');
+  if(heroEl){
+    // Build portrait — uses creature image or emoji
+    var portraitInner = creatureImgHTML(champId, ch.icon, '100px', '');
+
+    // Build slots row — 8 slots total
+    var slotsHTML = '';
+    for(var si=0;si<8;si++){
+      var isEquipped = si < equipped.length;
+      var isUnlocked = si < slots;
+      var isEmpty = isUnlocked && !isEquipped;
+      var isLast = si === 7;
+      var cls = isEquipped?'eq' : isEmpty?'ue' : isLast?'lk8':'lk';
+      var relicObj = isEquipped ? RELICS[equipped[si]] : null;
+      slotsHTML += '<div class="sr-slot '+cls+'" id="sr-slot-'+si+'"'
+        +(isEquipped?' onclick="srClickSlot('+si+')" title="'+relicObj.name+' — click to remove"':'')
+        +(isEmpty?' onclick="srClickEmpty()" title="Slot '+(si+1)+' — equip a relic from inventory below"':'')
+        +(cls==='lk'?' title="Unlock at '+ASCENSION_TIERS[si].tier+' ascension"':'')
+        +(cls==='lk8'?' title="Final slot — permanently locked for now"':'')
+        +'>'
+        +(isEquipped?'<span class="sr-slot-icon">'+relicImgHTML(equipped[si],'24px')+'</span>':'')
+        +(isEmpty?'<span class="sr-slot-plus">+</span>':'')
+        +(!isUnlocked?'<span class="sr-slot-lock">🔒</span>':'')
+        +'<span class="sr-slot-num">'+(si+1)+'</span>'
+        +'</div>';
+    }
+
+    var ascTierName = nextAsc ? nextAsc.tier.charAt(0).toUpperCase()+nextAsc.tier.slice(1) : null;
+
+    heroEl.innerHTML =
+      '<div class="sr-hero-name">'+(ch?ch.name:'?')+'</div>'
+      +'<div class="sr-hero-tier">'+(ascLevel>0?ASCENSION_TIERS[ascLevel-1].tier.toUpperCase()+' TIER':'BASE TIER')+'</div>'
+      +'<div class="sr-portrait">'+portraitInner+'</div>'
+      +'<div class="sr-connector"><div class="sr-conn-line"></div><div class="sr-conn-dot"></div><div class="sr-conn-line"></div></div>'
+      +'<div class="sr-slots-row">'+slotsHTML+'</div>'
+      +'<div class="sr-hero-footer">'
+        +(ascTierName?'<button class="sr-asc-btn" data-champ="'+champId+'" onclick="ascendChampion(this.dataset.champ);buildSanctumRelicsPane();">ASCEND TO '+ascTierName.toUpperCase()+'</button>':'<div style="font-family:Cinzel,serif;font-size:8px;color:#4a3010;letter-spacing:.5px;">MAX ASCENSION</div>')
+        +'<div class="sr-destroy-note">Removing a relic destroys it permanently.</div>'
+      +'</div>';
+  }
+
+  // ── EFFECTS COLUMN ──
+  var effEl = document.getElementById('sr-effects-col');
+  if(effEl){
+    if(!equipped.length){
+      effEl.innerHTML = '<div class="tp-section-label" style="margin-bottom:4px;">RELIC EFFECTS</div>'
+        +'<div class="sr-empty-hint">No relics equipped.</div>'
+        +'<div class="sr-forge-cta" style="margin-top:6px;">Craft relics at<br><a onclick="closeBuildingPanel(\'sanctum\');openBuilding(\'forge\');">the Forge →</a></div>';
+    } else {
+      var effHTML = '<div class="tp-section-label" style="margin-bottom:4px;">RELIC EFFECTS</div>';
+      equipped.forEach(function(relicId){
+        var r = RELICS[relicId]; if(!r) return;
+        var rTier = (Object.values(RELIC_RECIPES).find(function(x){ return Object.keys(RELICS).indexOf(relicId)!==-1; })||{}).tier||'base';
+        // Find tier from recipes
+        var recipeTier = RELIC_RECIPES[relicId] ? RELIC_RECIPES[relicId].tier : 'base';
+        effHTML += '<div class="sr-erb" id="sr-erb-'+relicId+'">'
+          +'<div class="sr-erb-head">'
+            +'<span class="sr-erb-icon">'+relicImgHTML(relicId,'18px')+'</span>'
+            +'<span class="sr-erb-name">'+r.name+'</span>'
+          +'</div>'
+          +'<div class="sr-erb-eff">'+r.desc+'</div>'
+          +'</div>';
+      });
+      if(slots > equipped.length){
+        effHTML += '<div class="sr-empty-hint">'+( slots-equipped.length)+' slot'+(slots-equipped.length>1?'s':'')+' empty</div>';
+      }
+      effEl.innerHTML = effHTML;
+    }
+  }
+
+  // ── INVENTORY STRIP ──
+  _buildSanctumRelicsInventory(champId, equipped, slots);
+}
+
+function _buildSanctumRelicsInventory(champId, equipped, slots){
+  var invEl = document.getElementById('sr-inv-strip');
+  if(!invEl) return;
+  var relics = PERSIST.town.relics||{};
+  var ownedIds = Object.keys(relics).filter(function(id){ return relics[id]>0; });
+  var tc = {base:'#777',ruby:'#c0392b',emerald:'#27ae60',sapphire:'#2980b9',turquoise:'#17a589',amethyst:'#8e44ad'};
+
+  var html = '<div class="sr-inv-label">INVENTORY</div>';
+  if(!ownedIds.length){
+    html += '<div style="font-size:10px;color:#2a1e0c;font-style:italic;">No relics in inventory. Craft them at the Forge.</div>';
+  } else {
+    var slotsAvailable = slots - equipped.length;
+    ownedIds.forEach(function(relicId){
+      var r = RELICS[relicId]; if(!r) return;
+      var count = relics[relicId]||0;
+      var recipe = RELIC_RECIPES[relicId];
+      var tier = recipe ? recipe.tier : 'base';
+      var col = tc[tier]||'#777';
+      var canEquip = slotsAvailable > 0;
+      html += '<div class="sr-inv-row">'
+        +'<span class="sr-inv-icon">'+relicImgHTML(relicId,'20px')+'</span>'
+        +'<div style="flex:1;min-width:0;">'
+          +'<div style="display:flex;align-items:center;gap:5px;">'
+            +'<span class="sr-inv-name">'+r.name+'</span>'
+            +'<span class="sr-inv-badge" style="color:'+col+';border-color:'+col+'44;">'+tier.toUpperCase()+'</span>'
+            +'<span class="sr-inv-ct">×'+count+'</span>'
+          +'</div>'
+          +'<div class="sr-inv-desc">'+r.desc+'</div>'
+        +'</div>'
+        +(canEquip
+          ?'<button class="sr-equip-btn" onclick="srEquipRelic(\''+champId+'\',\''+relicId+'\')">EQUIP</button>'
+          :'<button class="sr-equip-btn" disabled>'+(slots===0?'NO SLOTS':'SLOTS FULL')+'</button>')
+        +'</div>';
+    });
+  }
+  invEl.innerHTML = html;
+}
+
+function srEquipRelic(champId, relicId){
+  var err = equipRelic(champId, relicId);
+  if(err){ showTownToast(err); return; }
+  showTownToast('✦ '+RELICS[relicId].name+' equipped!');
+  buildSanctumRelicsPane();
+}
+
+function srClickSlot(slotIdx){
+  var champId = _sanctumChamp;
+  var equipped = getEquippedRelics(champId);
+  var relicId = equipped[slotIdx];
+  if(!relicId) return;
+  var relic = RELICS[relicId];
+  if(!confirm('Remove '+(relic?relic.name:'this relic')+'?\n\nThis will DESTROY it permanently. There is no refund.')) return;
+  unequipRelic(champId, slotIdx);
+  showTownToast('Relic destroyed.');
+  buildSanctumRelicsPane();
+}
+
+function srClickEmpty(){
+  var invEl = document.getElementById('sr-inv-strip');
+  if(invEl) invEl.scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+function srHoverBonus(stat, relicIds){
+  relicIds.forEach(function(id){
+    var erb = document.getElementById('sr-erb-'+id); if(erb) erb.classList.add('glowing');
+    // Find this relic's slot index
+    var equipped = getEquippedRelics(_sanctumChamp);
+    var si = equipped.indexOf(id);
+    if(si!==-1){ var slot=document.getElementById('sr-slot-'+si); if(slot) slot.classList.add('glowing'); }
+  });
+  var statEl = document.getElementById('sr-stat-'+stat); if(statEl) statEl.classList.add('glowing');
+}
+
+function srUnhoverBonus(){
+  document.querySelectorAll('.glowing').forEach(function(el){ el.classList.remove('glowing'); });
+}
+
+
 
 // ── OVERVIEW PANE ──────────────────────────────────────────────────
 function buildSanctumOverviewPane(){
@@ -5613,7 +6552,7 @@ function buildSanctumUpgradesPane(){
   var mods=getSanctumMods(champId);
   var deck=buildStartDeck(champId);
   var frags=getFragmentCount();
-  var active=!!(PERSIST.town.buildings.sanctum&&PERSIST.town.buildings.sanctum.slottedCard);
+  var active=!!(PERSIST.town.buildings.sanctum&&PERSIST.town.buildings.sanctum.unlocked);
   var uniqueIds=[...new Set(deck)];
 
   var intro=document.createElement('div');
@@ -5905,18 +6844,8 @@ function refreshMarketPanel(){
 
   ensureMarketStock();
 
-  var slotCard=b.slottedCard?getTownCardById(b.slottedCard):null;
-  var active=!!slotCard;
-
-  var slotEl=document.getElementById('market-slot');
-  if(slotEl){
-    slotEl.className='building-slot'+(slotCard?' has-card '+slotCard.tier:'');
-    slotEl.innerHTML=slotCard
-      ?'<span class="slot-card-gem">'+TOWN_CARD_GEMS(slotCard.tier)+'</span>'
-      :'<span style="color:#3a2810;font-size:18px;">+</span>';
-  }
-  var hintEl=document.getElementById('market-slot-hint');
-  if(hintEl) hintEl.textContent=slotCard?'Gem active — stock refreshes faster. Click to unslot.':'Slot a gem to boost stock refresh speed.';
+  var slotCard=null;
+  var active=false; // gem slot UI removed
   var goldEl=document.getElementById('market-gold-val');
   if(goldEl) goldEl.textContent='✦ '+PERSIST.gold;
 
@@ -6047,7 +6976,7 @@ function marketTick(seconds){
   var b=PERSIST.town.buildings.market;
   if(!b||!b.unlocked) return;
   // Gem boosts refresh speed by 50%
-  var speedMult=b.slottedCard?1.5:1.0;
+  var speedMult=1.0;
   var ticks=seconds*speedMult;
 
   b.refreshProgress=(b.refreshProgress||0)+ticks;
@@ -6087,44 +7016,50 @@ var VAULT_LEVEL_UNLOCKS=[
 ];
 
 // ── Vault upgrades ──
+// Vault material cap per group: starts at 50, raised by shelf upgrades
+var VAULT_MAT_BASE_CAP = 50;
+function getVaultMatCap(){
+  var u=PERSIST.town.vaultUpgrades||{};
+  return VAULT_MAT_BASE_CAP + (u.shelf1?25:0) + (u.shelf2?25:0) + (u.shelf3?50:0);
+}
 var VAULT_UPGRADES=[
-  {id:'shelf1',  label:'Extra Shelves',     cost:60,  effect:'+8 item slots',  group:'shelves', tier:1, requires:null,     minLevel:1},
-  {id:'shelf2',  label:'Expanded Shelves',  cost:150, effect:'+8 more slots',  group:'shelves', tier:2, requires:'shelf1', minLevel:3},
-  {id:'shelf3',  label:'Grand Shelves',     cost:350, effect:'+8 more slots',  group:'shelves', tier:3, requires:'shelf2', minLevel:5},
-  {id:'sellDesk',label:'Sell Desk',         cost:80,  effect:'Sell items directly from the inspector', group:'other', tier:1, requires:null,     minLevel:2},
-  {id:'recycle', label:'Recycling Bin',     cost:120, effect:'Break down items into Gem Shards',       group:'other', tier:1, requires:null,     minLevel:3},
+  {id:'shelf1',   label:'Iron Shelves',    cost:80,  effect:'Material cap +25 per group',          group:'shelves', requires:null,      minLevel:1},
+  {id:'shelf2',   label:'Stone Shelves',   cost:200, effect:'Material cap +25 per group',          group:'shelves', requires:'shelf1',  minLevel:3},
+  {id:'shelf3',   label:'Vault Shelves',   cost:500, effect:'Material cap +50 per group',          group:'shelves', requires:'shelf2',  minLevel:5},
+  {id:'sellDesk', label:'Sell Desk',       cost:80,  effect:'Sell keys and chests for gold',       group:'other',   requires:null,      minLevel:2},
+  {id:'converter',label:'Converter',       cost:200, effect:'Spend 10 common → 1 uncommon of same group', group:'other', requires:null, minLevel:3},
+  {id:'recycle',  label:'Recycling Bin',   cost:120, effect:'Break down materials for partial value', group:'other', requires:null,    minLevel:3},
 ];
 
 // ── Sell prices ──
 var SELL_PRICES={
-  // Keys: 1g (common) to 5g (rare)
+  // Keys
   key_sewers:1, key_sewers_deep:1, key_sewers_foul:2,
   key_bog:2, key_crypt:2, key_forest:2,
   key_cave:3, key_ruins:3, key_dragon:4, key_bone:4, key_astral:5,
-  // Chests: buy_price / 8 roughly
+  // Chests
   chest_sewers:5, chest_bog:8, chest_crypt:8,
   chest_forest:10, chest_cave:10, chest_ruins:15,
   chest_dragon:15, chest_bone:15, chest_astral:25,
-  // Materials: per unit
-  sparks:0.2, embers:2, flameShards:5, // sparks sell 5 for 1g via batching
+  // Materials by rarity
+  slick_stone:1,      rancid_bile:3,    plague_marrow:8,
+  bog_iron:1,         leech_oil:3,      abyssal_coral:8,
+  bone_dust:1,        grave_iron:3,     cursed_essence:8,
+  thornwood_resin:1,  harpy_talon:3,    ancient_bark:8,
+  ember_grit:1,       dragonscale:3,    smelt_slag:8,
+  stone_cipher:1,     vault_bronze:3,   arcane_residue:8,
+  amber_wax:1,        wax_crystal:3,    ancient_amber:8,
+  void_splinter:1,    mist_silk:3,      null_stone:8,
 };
 
-function getSellPrice(item){
-  if(item.itemType==='towncard') return 0; // not sellable
-  var key=item.lootKey||item.matKey||'';
-  var base=SELL_PRICES[key]||0;
-  if(!base) return 0;
-  if(key==='sparks') return Math.floor(item.count*SELL_PRICES.sparks); // batch
-  return base; // per-item, 1 at a time for everything else
-}
 
 // ── Market deals pool ──
 var DEALS_POOL=[
-  {id:'deal_sparks_sm',  label:'Sparks ×10',  icon:'✨', desc:'10 Sparks',   cost:12, type:'material', matId:'sparks',    qty:10},
-  {id:'deal_sparks_lg',  label:'Sparks ×25',  icon:'✨', desc:'25 Sparks',   cost:28, type:'material', matId:'sparks',    qty:25},
-  {id:'deal_embers_sm',  label:'Embers ×3',   icon:'🔥', desc:'3 Embers',    cost:14, type:'material', matId:'embers',    qty:3},
-  {id:'deal_embers_lg',  label:'Embers ×8',   icon:'🔥', desc:'8 Embers',    cost:32, type:'material', matId:'embers',    qty:8},
-  {id:'deal_shards_sm',  label:'Flame Shards ×2', icon:'💎', desc:'2 Flame Shards', cost:18, type:'material', matId:'flameShards', qty:2},
+  {id:'deal_slick_sm',   label:'Slick Stone ×10',  icon:'🪨', desc:'10 Slick Stone',   cost:10, type:'material', matId:'slick_stone',  qty:10},
+  {id:'deal_slick_lg',   label:'Slick Stone ×25',  icon:'🪨', desc:'25 Slick Stone',   cost:22, type:'material', matId:'slick_stone',  qty:25},
+  {id:'deal_bog_sm',     label:'Bog Iron ×5',       icon:'🔩', desc:'5 Bog Iron',       cost:12, type:'material', matId:'bog_iron',     qty:5},
+  {id:'deal_bone_sm',    label:'Bone Dust ×5',      icon:'🦴', desc:'5 Bone Dust',      cost:12, type:'material', matId:'bone_dust',    qty:5},
+  {id:'deal_ember_sm',   label:'Ember Grit ×5',     icon:'🔥', desc:'5 Ember Grit',     cost:14, type:'material', matId:'ember_grit',   qty:5},
   {id:'deal_keys_sewer', label:'Sewer Keys ×3', icon:'🗝️', desc:'3 Sewer Keys', cost:6, type:'lootbatch', lootId:'key_sewers', qty:3},
   {id:'deal_keys_bog',   label:'Bog Keys ×2',   icon:'🗝️', desc:'2 Bog Keys',   cost:8, type:'lootbatch', lootId:'key_bog',    qty:2},
   {id:'deal_keys_crypt', label:'Crypt Keys ×2', icon:'🗝️', desc:'2 Crypt Keys', cost:8, type:'lootbatch', lootId:'key_crypt',  qty:2},
@@ -6140,7 +7075,7 @@ var RARE_POOL=[
   {id:'rare_shards_10',  label:'Shards ×10',      icon:'💠', desc:'10 Shards — a healthy stockpile',        cost:280, type:'shards',   qty:10},
   {id:'rare_mystery',    label:'Mystery Chest',   icon:'❓', desc:'A chest of unknown origin. Could be anything.', cost:55, type:'mystery'},
   {id:'rare_frags_50',   label:'Card Fragments ×50', icon:'🃏', desc:'50 Card Fragments — halfway to a Ruby Gem', cost:80, type:'fragments', qty:50},
-  {id:'rare_embers_15',  label:'Embers ×15',      icon:'🔥', desc:'15 Embers — substantial forge fuel',    cost:55, type:'material', matId:'embers', qty:15},
+  {id:'rare_ember_grit', label:'Ember Grit ×15',  icon:'🔥', desc:'15 Ember Grit — forge fuel',           cost:55, type:'material', matId:'ember_grit', qty:15},
 ];
 
 var MARKET_DEALS_SECS=90;
@@ -6172,7 +7107,7 @@ var THREAT_NOTES={
 
 function bestiaryTick(seconds){
   var b=PERSIST.town.buildings.bestiary;
-  if(!b||!b.slottedCard) return;
+  if(!b||!b.unlocked) return;
 
   // 1 point per 30 seconds — slow, long-term investment
   PERSIST.bestiary.researchAcc=(PERSIST.bestiary.researchAcc||0)+seconds/30;
@@ -6197,82 +7132,11 @@ function bestiaryTick(seconds){
   }
 }
 
-// Gem tier config for the vault generator
-var VAULT_GEN_CONFIG={
-  ruby:     {minSecs:600, maxSecs:1200, table:[ // 10-20min avg
-    {w:40, type:'loot',    id:'key_sewers',   qty:1},
-    {w:25, type:'material',id:'sparks',        qty:[8,16]},
-    {w:20, type:'material',id:'gemShards',     qty:[1,3]},
-    {w:10, type:'loot',    id:'key_bog',       qty:1},
-    {w:5,  type:'loot',    id:'chest_sewers',  qty:1},
-  ]},
-  emerald:  {minSecs:420, maxSecs:840, table:[  // 7-14min avg
-    {w:30, type:'loot',    id:'key_forest',    qty:1},
-    {w:25, type:'material',id:'embers',        qty:[2,5]},
-    {w:20, type:'material',id:'gemShards',     qty:[3,6]},
-    {w:15, type:'loot',    id:'chest_bog',     qty:1},
-    {w:10, type:'loot',    id:'chest_sewers',  qty:1},
-  ]},
-  sapphire: {minSecs:300, maxSecs:600, table:[  // 5-10min avg
-    {w:30, type:'loot',    id:'chest_forest',  qty:1},
-    {w:25, type:'material',id:'flameShards',   qty:[1,3]},
-    {w:20, type:'material',id:'gemShards',     qty:[5,10]},
-    {w:15, type:'loot',    id:'chest_crypt',   qty:1},
-    {w:10, type:'loot',    id:'key_dragon',    qty:1},
-  ]},
-  turquoise:{minSecs:180, maxSecs:420, table:[  // 3-7min avg
-    {w:30, type:'loot',    id:'chest_ruins',   qty:1},
-    {w:25, type:'material',id:'gemShards',     qty:[8,15]},
-    {w:20, type:'loot',    id:'chest_dragon',  qty:1},
-    {w:15, type:'material',id:'flameShards',   qty:[3,6]},
-    {w:10, type:'loot',    id:'chest_bone',    qty:1},
-  ]},
-};
-// Higher tiers default to turquoise table
-['amethyst','topaz','obsidian','opal'].forEach(function(t){
-  VAULT_GEN_CONFIG[t]=Object.assign({},VAULT_GEN_CONFIG.turquoise,{minSecs:120,maxSecs:300});
-});
 
-function _vaultGenRoll(config){
-  var total=config.table.reduce(function(s,e){return s+e.w;},0);
-  var roll=Math.random()*total;
-  var acc=0;
-  for(var i=0;i<config.table.length;i++){
-    acc+=config.table[i].w;
-    if(roll<=acc) return config.table[i];
-  }
-  return config.table[config.table.length-1];
-}
-
-function _vaultGenCollect(tier){
-  var config=VAULT_GEN_CONFIG[tier];
-  if(!config) return;
-  var entry=_vaultGenRoll(config);
-  var qty=Array.isArray(entry.qty)
-    ? entry.qty[0]+Math.floor(Math.random()*(entry.qty[1]-entry.qty[0]+1))
-    : (entry.qty||1);
-  var msg='';
-  if(entry.type==='loot'){
-    PERSIST.town.items[entry.id]=(PERSIST.town.items[entry.id]||0)+qty;
-    var def=LOOT_DEFS&&LOOT_DEFS[entry.id];
-    msg='Vault gem produced: '+(def?def.name:entry.id)+(qty>1?' ×'+qty:'');
-  } else if(entry.type==='material'){
-    PERSIST.town.materials[entry.id]=(PERSIST.town.materials[entry.id]||0)+qty;
-    var mdef=MATERIAL_DEFS&&MATERIAL_DEFS[entry.id];
-    msg='Vault gem produced: '+(mdef?mdef.name:entry.id)+' ×'+qty;
-  }
-  PERSIST.town.vaultGenProgress=0;
-  PERSIST.town.vaultGenTarget=null;
-  savePersist();
-  showTownToast('✦ '+msg);
-  // Refresh vault panel if open
-  var vp=document.getElementById('vault-panel-bg');
-  if(vp&&vp.classList.contains('show')) refreshVaultPanel();
-}
 
 function vaultTick(seconds){
   var b=PERSIST.town.buildings.vault;
-  if(!b||!b.slottedCard) return;
+  if(!b||!b.unlocked) return;
 
   // ── XP gain for levelling (keep existing) ──
   var lv=PERSIST.town.vaultLevel||1;
@@ -6288,28 +7152,6 @@ function vaultTick(seconds){
       showTownToast('✦ Vault reached Lv.'+(lv+1)+'!'+(unlockMsg?' '+unlockMsg:''));
     }
   }
-
-  // ── Gem generator ──
-  var card=getTownCardById(b.slottedCard);
-  if(!card) return;
-  var tier=card.tier||'ruby';
-  var config=VAULT_GEN_CONFIG[tier];
-  if(!config) return;
-
-  // Pick a random target duration if we don't have one
-  if(!PERSIST.town.vaultGenTarget){
-    var range=config.maxSecs-config.minSecs;
-    PERSIST.town.vaultGenTarget=config.minSecs+Math.random()*range;
-  }
-
-  // Advance progress with ±15% jitter per tick
-  var jitter=0.85+Math.random()*0.30; // 0.85–1.15
-  var progressGain=(seconds/PERSIST.town.vaultGenTarget)*100*jitter;
-  PERSIST.town.vaultGenProgress=Math.min(100,(PERSIST.town.vaultGenProgress||0)+progressGain);
-
-  if(PERSIST.town.vaultGenProgress>=100){
-    _vaultGenCollect(tier);
-  }
 }
 
 // ─────────────────────────────────────────────────────────
@@ -6317,6 +7159,7 @@ function vaultTick(seconds){
 // ─────────────────────────────────────────────────────────
 setInterval(function(){
   forgeTick();
+  expeditionTick();
   vaultTick(5);
   marketTick(5);
   bestiaryTick(5);
@@ -6324,12 +7167,12 @@ setInterval(function(){
   savePersist();
   // Live-update vault bar if vault panel is open
   var vp=document.getElementById('vault-panel-bg');
-  if(vp&&vp.classList.contains('show')){ refreshVaultLevelBar(); _refreshVaultGenBar(); }
+  if(vp&&vp.classList.contains('show')){ refreshVaultLevelBar(); }
   // Live-update market bars if market panel open
   var mp=document.getElementById('market-panel-bg');
   if(mp&&mp.classList.contains('show')){
     var mb=PERSIST.town.buildings.market;
-    if(mb&&mb.unlocked&&mb.slottedCard){
+    if(mb&&mb.unlocked){
       var updBar=function(barId,etaId,prog,max){
         var pct=Math.min(100,(prog/max)*100);
         var eta=Math.max(0,Math.ceil(max-prog));
@@ -6351,1050 +7194,8 @@ function showTownToast(msg){
   },2000);
 }
 
-// ── Vault panel ──
-var _vaultSelected=null; // currently selected inventory item id
-var _vaultPage=0;        // current inventory page (0-indexed)
-var VAULT_PER_PAGE=16;   // matches base capacity — shelves unlock new pages
+// Vault — see data/vault.js
 
-function vaultPageChange(dir){
-  _vaultPage=Math.max(0,_vaultPage+dir);
-  _vaultSelected=null;
-  clearVaultInspector();
-  refreshVaultPanel();
-}
-
-function openVaultPanel(){
-  _vaultSelected=null;
-  _vaultPage=0;
-  refreshVaultPanel();
-  document.getElementById('vault-panel-bg').classList.add('show');
-}
-
-function closeVaultPanel(){
-  document.getElementById('vault-panel-bg').classList.remove('show');
-  buildTownCardsStrip(); buildTownGrid();
-}
-
-function onVaultSlotClick(){
-  var b=PERSIST.town.buildings.vault;
-  if(b.slottedCard){ unslotCard(b.slottedCard); refreshVaultPanel(); buildTownGrid(); buildTownCardsStrip(); }
-}
-
-// Build the flat ordered list of all inventory items for the grid
-function buildInvItems(){
-  var items=[];
-  // Category: Town Cards
-  PERSIST.town.cards.forEach(function(c,i){
-    items.push({cat:'GEMS',id:'tc_'+i,itemType:'towncard',
-      icon:TOWN_CARD_GEMS(c.tier),name:c.tier.charAt(0).toUpperCase()+c.tier.slice(1)+' Card',
-      count:1,cardRef:c,color:c.tier==='red'?'#c03030':c.tier==='green'?'#20a020':'#2040c0'});
-  });
-  // Category: Materials
-  var mats=Object.keys(MATERIAL_DEFS).filter(function(k){return (PERSIST.town.materials[k]||0)>0;});
-  mats.forEach(function(k){
-    items.push({cat:'MATERIALS',id:'mat_'+k,itemType:'material',matKey:k,
-      icon:MATERIAL_DEFS[k].icon,name:MATERIAL_DEFS[k].name,count:PERSIST.town.materials[k],color:'#4a7030'});
-  });
-  // Category: Keys (sorted by biome)
-  var keys=Object.keys(LOOT_DEFS).filter(function(k){return LOOT_DEFS[k].type==='key'&&(PERSIST.town.items[k]||0)>0;});
-  keys.sort(function(a,b){return a.localeCompare(b);});
-  keys.forEach(function(k){
-    items.push({cat:'KEYS',id:'loot_'+k,itemType:'key',lootKey:k,
-      icon:LOOT_DEFS[k].icon,name:LOOT_DEFS[k].name,count:PERSIST.town.items[k],color:LOOT_DEFS[k].color});
-  });
-  // Category: Chests
-  var chests=Object.keys(LOOT_DEFS).filter(function(k){return LOOT_DEFS[k].type==='chest'&&(PERSIST.town.items[k]||0)>0;});
-  chests.sort(function(a,b){return a.localeCompare(b);});
-  chests.forEach(function(k){
-    items.push({cat:'CHESTS',id:'loot_'+k,itemType:'chest',lootKey:k,
-      icon:LOOT_DEFS[k].icon,name:LOOT_DEFS[k].name,count:PERSIST.town.items[k],color:LOOT_DEFS[k].color});
-  });
-  // Category: Champion Cards
-  var champCards=Object.keys(LOOT_DEFS).filter(function(k){return LOOT_DEFS[k].type==='champcard'&&(PERSIST.town.items[k]||0)>0;});
-  champCards.forEach(function(k){
-    items.push({cat:'CHAMPION CARDS',id:'loot_'+k,itemType:'champcard',lootKey:k,
-      icon:LOOT_DEFS[k].icon,name:LOOT_DEFS[k].name,count:PERSIST.town.items[k],color:LOOT_DEFS[k].color});
-  });
-  return items;
-}
-
-// ═══════════════════════════════════════════════════════
-// ADVENTURER'S BOARD — QUEST SYSTEM
-// ═══════════════════════════════════════════════════════
-
-var QUEST_TEMPLATES = [
-  // Area clear quests
-  {id:'q_sewers_1',    type:'area_clear',  areaId:'sewers',    count:1, label:'Clear the Sewers',          reward:{gold:30}},
-  {id:'q_sewers_3',    type:'area_clear',  areaId:'sewers',    count:3, label:'Clear the Sewers 3 times',   reward:{gemShards:8}},
-  {id:'q_swamp_1',     type:'area_clear',  areaId:'swamp',     count:1, label:'Clear Bogmire Swamp',        reward:{gold:40, sparks:5}},
-  {id:'q_crypt_1',     type:'area_clear',  areaId:'crypt',     count:1, label:'Clear the Forgotten Crypt',  reward:{gold:45, embers:2}},
-  {id:'q_forest_1',    type:'area_clear',  areaId:'forest',    count:1, label:'Clear the Thornwood',        reward:{gold:55, gemShards:5}},
-  {id:'q_cave_1',      type:'area_clear',  areaId:'cave',      count:1, label:'Clear the Crystal Caves',    reward:{gold:60, embers:3}},
-  {id:'q_ruins_1',     type:'area_clear',  areaId:'ruins',     count:1, label:'Clear the Ancient Ruins',    reward:{gold:70, gemShards:8}},
-  {id:'q_dragon_1',    type:'area_clear',  areaId:'dragonsnest',count:1,label:'Clear the Dragon\'s Nest',   reward:{gold:90, gemShards:12, flameShards:1}},
-  // Kill quota quests
-  {id:'q_kill_rat_20', type:'kill_quota',  enemyId:'rat',      count:20, label:'Defeat 20 Giant Rats',       reward:{gold:25, sparks:8}},
-  {id:'q_kill_rat_50', type:'kill_quota',  enemyId:'rat',      count:50, label:'Defeat 50 Giant Rats',       reward:{gemShards:10}},
-  {id:'q_kill_goblin_20',type:'kill_quota',enemyId:'goblin',   count:20, label:'Defeat 20 Goblin Scouts',    reward:{gold:30, sparks:6}},
-  {id:'q_kill_goblin_50',type:'kill_quota',enemyId:'goblin',   count:50, label:'Defeat 50 Goblin Scouts',    reward:{gemShards:12}},
-  {id:'q_kill_roach_20', type:'kill_quota',enemyId:'roach',    count:20, label:'Defeat 20 Sewer Roaches',    reward:{gold:20, sparks:10}},
-  {id:'q_kill_skeleton_30',type:'kill_quota',enemyId:'skeleton',count:30,label:'Defeat 30 Skeletons',        reward:{gold:40, embers:2}},
-  {id:'q_kill_troll_10',type:'kill_quota', enemyId:'troll',    count:10, label:'Defeat 10 Forest Trolls',    reward:{gold:50, gemShards:6}},
-  {id:'q_kill_dragon_3', type:'kill_quota',enemyId:'dragon',   count:3,  label:'Defeat 3 Elder Dragons',     reward:{gold:80, gemShards:15}},
-  {id:'q_fungal_1',      type:'area_clear', areaId:'fungalwarren',count:1, label:'Explore the Fungal Warren', reward:{gold:35, gemShards:5}},
-  {id:'q_fungal_3',      type:'area_clear', areaId:'fungalwarren',count:3, label:'Clear the Fungal Warren 3 times', reward:{gemShards:12}},
-  {id:'q_kill_sporepuff_20',type:'kill_quota',enemyId:'sporepuff',count:20,label:'Defeat 20 Spore Puffs',     reward:{gold:20, sparks:8}},
-  {id:'q_kill_venomstalker_10',type:'kill_quota',enemyId:'venomstalker',count:10,label:'Defeat 10 Venom Stalkers', reward:{gold:30, gemShards:5}},
-  {id:'q_blackpool_1',   type:'area_clear', areaId:'blackpool',   count:1, label:'Face the Harbourmaster',    reward:{gemShards:20, gold:50}},
-  {id:'q_harbour_1',     type:'area_clear', areaId:'sunkenhabour',count:1, label:'Explore the Sunken Harbour',reward:{gold:40, gemShards:6}},
-  {id:'q_harbour_3',     type:'area_clear', areaId:'sunkenhabour',count:3, label:'Clear the Harbour 3 times', reward:{gemShards:15}},
-  {id:'q_kill_siren_5',  type:'kill_quota', enemyId:'siren',      count:5, label:'Silence 5 Sirens',          reward:{gold:25, gemShards:4}},
-  {id:'q_kill_sharknight_10',type:'kill_quota',enemyId:'sharknight',count:10,label:'Defeat 10 Shark Knights',  reward:{gold:40, gemShards:8}},
-  {id:'q_mines_1',       type:'area_clear', areaId:'charmines',   count:1, label:'Explore the Char Mines',    reward:{gold:40, gemShards:6}},
-  {id:'q_mines_3',       type:'area_clear', areaId:'charmines',   count:3, label:'Clear the Mines 3 times',   reward:{gemShards:15, sparks:10}},
-  {id:'q_kill_flamesprite_20',type:'kill_quota',enemyId:'flamesprite',count:20,label:'Extinguish 20 Flame Sprites',reward:{gold:20, sparks:10}},
-  {id:'q_kill_lavacrawler_5', type:'kill_quota',enemyId:'lavacrawler', count:5, label:'Defeat 5 Lava Crawlers',   reward:{gold:35, gemShards:6}},
-  // Challenge quests (no damage taken)
-  {id:'q_nodmg_sewers', type:'no_damage',  areaId:'sewers',    count:1, label:'Clear Sewers without taking damage', reward:{gemShards:15, gold:20}},
-  {id:'q_nodmg_swamp',  type:'no_damage',  areaId:'swamp',     count:1, label:'Clear Swamp without taking damage',  reward:{gemShards:20, embers:3}},
-  {id:'q_nodmg_crypt',  type:'no_damage',  areaId:'crypt',     count:1, label:'Clear Crypt without taking damage',  reward:{gemShards:25, embers:4}},
-  // Run count quests
-  {id:'q_runs_5',      type:'run_count',   count:5,  label:'Complete 5 runs',             reward:{gold:50, sparks:15}},
-  {id:'q_runs_10',     type:'run_count',   count:10, label:'Complete 10 runs',            reward:{gemShards:10, gold:40}},
-  {id:'q_gold_earn',   type:'gold_earned', count:500,label:'Earn 500 gold in one run',    reward:{gemShards:8,  gold:60}},
-];
-
-function generateQuestOffers(){
-  var q=PERSIST.town.quests;
-  var available=QUEST_TEMPLATES.filter(function(t){
-    return q.completed.indexOf(t.id)===-1 && (!q.active||q.active.id!==t.id);
-  });
-  // Shuffle and take 3
-  available.sort(function(){return Math.random()-.5;});
-  q.offered=available.slice(0,3).map(function(t){return t.id;});
-  q.offeredRefresh=Date.now();
-  savePersist();
-}
-
-function getQuestTemplate(id){
-  return QUEST_TEMPLATES.find(function(t){return t.id===id;})||null;
-}
-
-function activateQuest(id){
-  var q=PERSIST.town.quests;
-  if(q.active){ showTownToast('Complete your current quest first.'); return; }
-  var tmpl=getQuestTemplate(id);
-  if(!tmpl) return;
-  q.active={id:id,type:tmpl.type,progress:0,startTime:Date.now(),
-    areaId:tmpl.areaId||null, enemyId:tmpl.enemyId||null,
-    count:tmpl.count, label:tmpl.label, reward:tmpl.reward,
-    failed:false};
-  // Remove from offered
-  q.offered=q.offered.filter(function(oid){return oid!==id;});
-  savePersist();
-  refreshBoardPanel();
-  updateQuestIndicator();
-  showTownToast('Quest accepted: '+tmpl.label);
-}
-
-function abandonQuest(){
-  var q=PERSIST.town.quests;
-  if(!q.active) return;
-  q.active=null;
-  savePersist();
-  refreshBoardPanel();
-  updateQuestIndicator();
-  showTownToast('Quest abandoned.');
-}
-
-function checkQuestProgress(eventType, data){
-  var q=PERSIST.town.quests;
-  if(!q.active||q.active.failed) return;
-  var a=q.active;
-
-  if(eventType==='area_clear'&&a.type==='area_clear'&&a.areaId===data.areaId){
-    a.progress=Math.min(a.count,(a.progress||0)+1);
-    if(a.progress>=a.count) completeQuest();
-    else { savePersist(); updateQuestIndicator(); }
-  }
-  if(eventType==='area_clear'&&a.type==='no_damage'&&a.areaId===data.areaId){
-    if(data.damageTaken>0){ a.failed=true; savePersist(); updateQuestIndicator(); showTownToast('Quest failed — took damage!'); }
-    else { a.progress=1; completeQuest(); }
-  }
-  if(eventType==='kill'&&a.type==='kill_quota'&&a.enemyId===data.enemyId){
-    a.progress=Math.min(a.count,(a.progress||0)+1);
-    if(a.progress>=a.count) completeQuest();
-    else savePersist();
-  }
-  if(eventType==='run_complete'&&a.type==='run_count'){
-    a.progress=Math.min(a.count,(a.progress||0)+1);
-    if(a.progress>=a.count) completeQuest();
-    else { savePersist(); updateQuestIndicator(); }
-  }
-  if(eventType==='run_complete'&&a.type==='gold_earned'&&data.goldEarned>=a.count){
-    a.progress=data.goldEarned;
-    completeQuest();
-  }
-  updateQuestIndicator();
-}
-
-function completeQuest(){
-  var q=PERSIST.town.quests;
-  if(!q.active) return;
-  var a=q.active;
-  a.readyToClaim=true;
-  savePersist();
-  updateQuestIndicator();
-  playQuestNotifySfx();
-  showTownToast('📋 Quest complete! Visit the Board to claim your reward.');
-  // Badge + pulse the TOWN nav tab
-  var qb=document.getElementById('quest-badge');
-  if(qb){
-    qb.textContent='!';
-    qb.style.display='inline-block';
-    qb.classList.remove('notify-pop');
-    void qb.offsetWidth;
-    qb.classList.add('notify-pop');
-  }
-  var tb=document.getElementById('nav-town');
-  if(tb){
-    tb.style.setProperty('--glow-col','#b0601080');
-    tb.classList.remove('has-notif');
-    void tb.offsetWidth;
-    tb.classList.add('has-notif');
-  }
-}
-
-function claimQuestReward(){
-  var q=PERSIST.town.quests;
-  if(!q.active||!q.active.readyToClaim) return;
-  var a=q.active;
-  var r=a.reward;
-  var msgs=[];
-  if(r.gold){ PERSIST.gold+=r.gold; msgs.push('+'+r.gold+'g'); }
-  if(r.gemShards){ PERSIST.town.materials.gemShards=(PERSIST.town.materials.gemShards||0)+r.gemShards; msgs.push('+'+r.gemShards+' 💎 Shards'); }
-  if(r.soulShards){ PERSIST.soulShards=(PERSIST.soulShards||0)+r.soulShards; msgs.push('+'+r.soulShards+' 🔮 Soul Shards'); }
-  if(r.sparks){ PERSIST.town.materials.sparks=(PERSIST.town.materials.sparks||0)+r.sparks; msgs.push('+'+r.sparks+' ✨'); }
-  if(r.embers){ PERSIST.town.materials.embers=(PERSIST.town.materials.embers||0)+r.embers; msgs.push('+'+r.embers+' 🔥'); }
-  if(r.flameShards){ PERSIST.town.materials.flameShards=(PERSIST.town.materials.flameShards||0)+r.flameShards; msgs.push('+'+r.flameShards+' 🔮'); }
-  q.completed.push(a.id);
-  q.active=null;
-  savePersist();
-  updateNavBar('town');
-  refreshBoardPanel();
-  updateQuestIndicator();
-  // Clear quest badge
-  var qb=document.getElementById('quest-badge');
-  if(qb){ qb.style.display='none'; qb.textContent=''; }
-  showTownToast('Reward claimed: '+msgs.join(', ')+'!');
-  // Refresh offers if empty
-  if(q.offered.length===0) generateQuestOffers();
-}
-
-function updateQuestIndicator(){
-  var el=document.getElementById('quest-indicator');
-  var txtEl=document.getElementById('quest-indicator-text');
-  var progEl=document.getElementById('quest-indicator-progress');
-  if(!el) return;
-  var q=PERSIST.town.quests;
-  if(!q||!q.active){ el.style.display='none'; return; }
-  var a=q.active;
-  el.style.display='block';
-  txtEl.textContent=a.label;
-  if(a.readyToClaim){
-    el.style.borderColor='#c09030';
-    progEl.textContent='✦ READY TO CLAIM';
-    progEl.style.color='#d4a843';
-  } else if(a.failed){
-    el.style.borderColor='#c03030';
-    progEl.textContent='✗ FAILED';
-    progEl.style.color='#c06060';
-  } else {
-    el.style.borderColor='#5a3010';
-    progEl.style.color='#7a6030';
-    if(a.type==='no_damage') progEl.textContent='No damage yet ✓';
-    else progEl.textContent=(a.progress||0)+' / '+a.count;
-  }
-}
-
-function formatReward(r){
-  var parts=[];
-  if(r.gold) parts.push(r.gold+'g');
-  if(r.gemShards) parts.push(r.gemShards+' 💎');
-  if(r.sparks) parts.push(r.sparks+' ✨');
-  if(r.embers) parts.push(r.embers+' 🔥');
-  if(r.flameShards) parts.push(r.flameShards+' 🔮');
-  return parts.join(' · ')||'Reward';
-}
-
-function refreshBoardPanel(){
-  showLockedBuildingUI('board');
-  var b=PERSIST.town.buildings.board;
-  if(!b||!b.unlocked) return;
-  var panel=document.getElementById('board-panel');
-  if(!panel) return;
-
-  var q=PERSIST.town.quests;
-  if(q.offered.length===0&&!q.active) generateQuestOffers();
-
-  var html='<div style="font-family:Cinzel,serif;font-size:10px;color:#d4a843;letter-spacing:1px;margin-bottom:12px;">ADVENTURER\'S BOARD</div>';
-
-  // Active quest
-  if(q.active){
-    var a=q.active;
-    var statusHtml, btnHtml;
-    if(a.readyToClaim){
-      statusHtml='<div style="color:#d4a843;font-size:9px;margin:4px 0;">✦ Complete! Claim your reward.</div>';
-      btnHtml='<button class="btn btn-gold" style="font-size:10px;padding:5px 14px;" onclick="claimQuestReward()">CLAIM REWARD</button>';
-    } else if(a.failed){
-      statusHtml='<div style="color:#c06060;font-size:9px;margin:4px 0;">✗ Quest failed.</div>';
-      btnHtml='<button class="btn btn-dim" style="font-size:10px;padding:5px 14px;" onclick="abandonQuest()">DISMISS</button>';
-    } else {
-      var prog=a.type==='no_damage'?'No damage taken so far':(a.progress||0)+' / '+a.count;
-      statusHtml='<div style="color:#c0a060;font-size:9px;margin:4px 0;">Progress: '+prog+'</div>';
-      btnHtml='<button class="btn btn-dim" style="font-size:10px;padding:5px 14px;" onclick="abandonQuest()">ABANDON</button>';
-    }
-    html+='<div style="background:rgba(20,12,2,.8);border:1px solid #7a5010;border-radius:6px;padding:10px 12px;margin-bottom:14px;">'
-      +'<div style="font-size:8px;color:#5a4020;letter-spacing:.5px;margin-bottom:3px;">ACTIVE QUEST</div>'
-      +'<div style="font-size:11px;color:#d4a843;margin-bottom:2px;">'+a.label+'</div>'
-      +'<div style="font-size:8px;color:#7a6030;">Reward: '+formatReward(a.reward)+'</div>'
-      +statusHtml+btnHtml
-      +'</div>';
-  }
-
-  // Offered quests
-  if(!q.active){
-    html+='<div style="font-size:8px;color:#5a4020;letter-spacing:.5px;margin-bottom:8px;">AVAILABLE QUESTS</div>';
-    if(q.offered.length===0){
-      html+='<div style="font-size:9px;color:#3a2010;">No quests available. Check back later.</div>';
-    } else {
-      q.offered.forEach(function(qid){
-        var tmpl=getQuestTemplate(qid);
-        if(!tmpl) return;
-        var typeIcon={area_clear:'⚔️',kill_quota:'💀',no_damage:'🛡️',run_count:'🏃',gold_earned:'✦'}[tmpl.type]||'📋';
-        html+='<div style="background:rgba(12,7,2,.9);border:1px solid #3a2010;border-radius:6px;padding:8px 10px;margin-bottom:6px;display:flex;align-items:center;justify-content:space-between;gap:8px;">'
-          +'<div style="flex:1;">'
-          +'<div style="font-size:10px;color:#c0a060;">'+typeIcon+' '+tmpl.label+'</div>'
-          +'<div style="font-size:8px;color:#7a6030;margin-top:2px;">Reward: '+formatReward(tmpl.reward)+'</div>'
-          +'</div>'
-          +'<button class="btn btn-dim" style="font-size:9px;padding:4px 10px;flex-shrink:0;" onclick="activateQuest(\''+qid+'\')">ACCEPT</button>'
-          +'</div>';
-      });
-    }
-    html+='<div style="margin-top:8px;text-align:right;">'
-      +'<button class="btn btn-dim" style="font-size:8px;padding:3px 8px;" onclick="generateQuestOffers();refreshBoardPanel();">🔄 NEW QUESTS</button>'
-      +'</div>';
-  }
-
-  panel.innerHTML=html;
-}
-
-function claimCardFragment(){
-  if((PERSIST.town.cardFragments||0)<100){ showTownToast('Need 100 Card Fragments.'); return; }
-  PERSIST.town.cardFragments-=100;
-  addTownCard('ruby');
-  savePersist();
-  refreshVaultPanel();
-  buildTownCardsStrip();
-  showTownToast('Ruby Gem crafted!');
-}
-
-var GEM_CRAFT_COSTS={ruby:30,emerald:75,sapphire:150,turquoise:300,amethyst:600,topaz:1200,obsidian:2500,opal:5000};
-
-function craftGem(tier){
-  tier=tier||'ruby';
-  var cost=GEM_CRAFT_COSTS[tier]||30;
-  var shards=PERSIST.town.materials.gemShards||0;
-  if(shards<cost){ showTownToast('Need '+cost+' Gem Shards to craft a '+CARD_TIER_LABELS[tier]+' gem.'); return; }
-  PERSIST.town.materials.gemShards-=cost;
-  addTownCard(tier);
-  savePersist();
-  refreshVaultPanel();
-  buildTownCardsStrip();
-  var icon={'ruby':'💎','emerald':'💚','sapphire':'🔷','turquoise':'🩵','amethyst':'💜','topaz':'🟡','obsidian':'⬛','opal':'🌈'}[tier]||'💎';
-  showTownToast(icon+' '+CARD_TIER_LABELS[tier]+' gem crafted!');
-}
-
-function buyVaultUpgrade(id){
-  var upg=VAULT_UPGRADES.find(function(u){return u.id===id;});
-  if(!upg) return;
-  var u=PERSIST.town.vaultUpgrades;
-  if(u[id]){ showTownToast('Already purchased!'); return; }
-  if((upg.minLevel||1)>getVaultLevel()){ showTownToast('Requires Vault Lv.'+(upg.minLevel||1)+'.'); return; }
-  if(upg.requires&&!u[upg.requires]){ showTownToast('Requires '+VAULT_UPGRADES.find(function(x){return x.id===upg.requires;}).label+' first.'); return; }
-  if(PERSIST.gold<upg.cost){ showTownToast('Need '+upg.cost+'g to purchase.'); return; }
-  PERSIST.gold-=upg.cost;
-  u[id]=true;
-  savePersist();
-  updateNavBar('town');
-  refreshVaultPanel();
-  showTownToast(upg.label+' purchased!');
-}
-
-function _getSelectedVaultItem(){
-  if(!_vaultSelected) return null;
-  return buildInvItems().find(function(x){return x.id===_vaultSelected;})||null;
-}
-
-function sellSelectedVaultItem(){
-  var item=_getSelectedVaultItem(); if(!item) return;
-  sellVaultItem({itemType:item.itemType,lootKey:item.lootKey||null,matKey:item.matKey||null,name:item.name,count:item.count});
-}
-
-function recycleSelectedVaultItem(){
-  var item=_getSelectedVaultItem(); if(!item) return;
-  recycleVaultItem({itemType:item.itemType,lootKey:item.lootKey||null,matKey:item.matKey||null,name:item.name,count:item.count});
-}
-
-function recycleVaultItem(item){
-  if(item.itemType==='towncard'){ showTownToast('Town cards cannot be recycled.'); return; }
-  var shards=getRecycleValue(item);
-  if(!shards){ showTownToast('This item cannot be recycled.'); return; }
-  if(item.lootKey){
-    if((PERSIST.town.items[item.lootKey]||0)<=0){ showTownToast('None left to recycle.'); return; }
-    PERSIST.town.items[item.lootKey]--;
-  } else if(item.matKey){
-    if((PERSIST.town.materials[item.matKey]||0)<=0){ showTownToast('None left to recycle.'); return; }
-    PERSIST.town.materials[item.matKey]--;
-  }
-  PERSIST.town.materials.gemShards=(PERSIST.town.materials.gemShards||0)+shards;
-  savePersist(); updateNavBar('town');
-  showTownToast('Recycled '+item.name+' → +'+shards+' 💎 Gem Shard'+(shards!==1?'s':''));
-  _vaultSelected=null;
-  refreshVaultPanel();
-}
-
-var RECYCLE_VALUES={
-  // Keys: 1-4 shards depending on tier
-  key_sewers:1, key_sewers_deep:1, key_sewers_foul:2,
-  key_bog:2, key_crypt:2, key_forest:2,
-  key_cave:3, key_ruins:3, key_dragon:4,
-  key_bone:4, key_astral:5, key_mist:2,
-  // Chests: 2-8 shards
-  chest_sewers:2, chest_bog:3, chest_crypt:3,
-  chest_forest:4, chest_cave:4, chest_ruins:5,
-  chest_dragon:6, chest_bone:6, chest_astral:8,
-  chest_mist:3,
-  // Materials: generally not recyclable (they are crafting ingredients)
-  embers:1, flameShards:2,
-};
-
-function getRecycleValue(item){
-  if(item.itemType==='towncard') return 0;
-  if(item.lootKey) return RECYCLE_VALUES[item.lootKey]||0;
-  if(item.matKey) return RECYCLE_VALUES[item.matKey]||0;
-  return 0;
-}
-
-function sellVaultItem(item){
-  if(item.itemType==='towncard'){ showTownToast('Town cards cannot be sold.'); return; }
-  var price=getSellPrice(item);
-  if(!price){ showTownToast('This item cannot be sold.'); return; }
-  // Sell one unit
-  if(item.lootKey){
-    if((PERSIST.town.items[item.lootKey]||0)<=0){ showTownToast('None left to sell.'); return; }
-    PERSIST.town.items[item.lootKey]--;
-  } else if(item.matKey){
-    if(item.matKey==='sparks'){
-      // Sell in batches of 5
-      var batchSize=5; var batchPrice=1;
-      if((PERSIST.town.materials.sparks||0)<batchSize){ showTownToast('Need at least 5 Sparks to sell.'); return; }
-      PERSIST.town.materials.sparks-=batchSize;
-      PERSIST.gold+=batchPrice;
-      savePersist(); updateNavBar('town'); _vaultSelected=null; refreshVaultPanel();
-      showTownToast('Sold 5 Sparks for '+batchPrice+'g');
-      return;
-    }
-    if((PERSIST.town.materials[item.matKey]||0)<=0){ showTownToast('None left to sell.'); return; }
-    PERSIST.town.materials[item.matKey]--;
-  }
-  PERSIST.gold+=price;
-  savePersist(); updateNavBar('town');
-  showTownToast('Sold '+item.name+' for '+price+'g');
-  _vaultSelected=null;
-  refreshVaultPanel();
-}
-
-function refreshVaultPanel(){
-  var b=PERSIST.town.buildings.vault;
-  // Show locked state if vault hasn't been unlocked by first run
-  var lockedMsg=document.getElementById('vault-locked-msg');
-  if(lockedMsg){
-    if(!b.unlocked){
-      lockedMsg.style.display='block';
-      lockedMsg.innerHTML='<div style="font-family:Cinzel,serif;font-size:10px;color:#5a4020;margin-bottom:4px;">🔒 VAULT LOCKED</div>'
-        +'<div style="font-size:9px;color:#3a2010;">Complete your first run to open the Vault.</div>';
-      return; // don't render rest of panel
-    } else {
-      lockedMsg.style.display='none';
-    }
-  }
-  refreshVaultLevelBar();
-  _refreshVaultGenBar();
-  var slotCard=b.slottedCard?getTownCardById(b.slottedCard):null;
-  var cap=getTownCardCap();
-  var activated=!!slotCard;
-
-  // Slot display
-  var slotEl=document.getElementById('vault-slot');
-  if(slotEl){
-    slotEl.className='building-slot'+(slotCard?' has-card '+slotCard.tier:'');
-    slotEl.innerHTML=slotCard?'<span class="slot-card-gem">'+TOWN_CARD_GEMS(slotCard.tier)+'</span>':'<span style="color:#3a2810;font-size:16px;">+</span>';
-  }
-  var hint=document.getElementById('vault-slot-hint');
-  if(hint) hint.textContent=slotCard?(slotCard.tier+' · '+cap+' slots'):'drag gem here';
-  var capTxt=document.getElementById('vault-cap-txt');
-  if(capTxt) capTxt.textContent='Your inventory · '+cap+' slots';
-
-  // Sort controls
-  var sortBar=document.getElementById('vault-sort-bar');
-  var sortVal=sortBar?sortBar.value:'cat';
-
-  // Build grid
-  var grid=document.getElementById('vault-inv-grid');
-  if(!grid) return;
-  grid.innerHTML='';
-  var items=buildInvItems();
-
-  // Sort
-  if(sortVal==='name') items.sort(function(a,b){return a.name.localeCompare(b.name);});
-  else if(sortVal==='count') items.sort(function(a,b){return b.count-a.count;});
-  else if(sortVal==='type') items.sort(function(a,b){return a.itemType.localeCompare(b.itemType)||a.name.localeCompare(b.name);});
-
-  // Pagination — pages cover whichever is larger: cap or actual item count
-  // This ensures items are always accessible even if inventory is "overfull"
-  var totalSlots=Math.max(cap, items.length);
-  var totalPages=Math.max(1,Math.ceil(totalSlots/VAULT_PER_PAGE));
-  _vaultPage=Math.max(0,Math.min(totalPages-1,_vaultPage));
-  var pgLbl=document.getElementById('vault-pg-lbl');
-  var pgPrev=document.getElementById('vault-pg-prev');
-  var pgNext=document.getElementById('vault-pg-next');
-  if(pgLbl) pgLbl.textContent=totalPages>1?(_vaultPage+1)+'/'+totalPages:'';
-  if(pgPrev){ pgPrev.disabled=_vaultPage===0; pgPrev.style.display=totalPages>1?'':'none'; }
-  if(pgNext){ pgNext.disabled=_vaultPage>=totalPages-1; pgNext.style.display=totalPages>1?'':'none'; }
-
-  var pageStart=_vaultPage*VAULT_PER_PAGE;
-  var pageEnd=pageStart+VAULT_PER_PAGE;
-
-  // Render this page's slots — items or empty boxes, always VAULT_PER_PAGE cells
-  for(var si=pageStart;si<pageEnd;si++){
-    var item=items[si]||null;
-    var cell=document.createElement('div');
-    var isOverCap=si>=cap; // item exists but exceeds capacity
-    if(item){
-      cell.className='vault-slot-cell has-item'+(item.id===_vaultSelected?' selected':'')+(isOverCap?' overcap':'');
-      if(item.color) cell.style.borderColor=isOverCap?'#6a1010':item.color+'44';
-      if(isOverCap) cell.title='Over capacity — sell or recycle items, or upgrade shelves';
-      cell.innerHTML='<div class="vault-cell-icon">'+item.icon+'</div>'
-        +'<div class="vault-cell-name">'+item.name.split(' ').slice(-2).join(' ')+'</div>'
-        +(item.count>1?'<div class="vault-cell-count">'+item.count+'</div>':'');
-      (function(it){ cell.onclick=function(){ selectVaultItem(it.id); }; })(item);
-    } else {
-      cell.className='vault-slot-cell empty-slot';
-    }
-    grid.appendChild(cell);
-  }
-
-  // Re-render inspector for currently selected item
-  if(_vaultSelected){
-    var found=items.find(function(x){return x.id===_vaultSelected;});
-    if(found) renderVaultInspector(found);
-    else { _vaultSelected=null; clearVaultInspector(); }
-  }
-
-  // Card fragments shown in Sanctum, not here
-
-  // Gem shards row — craft Ruby gems only (upgrading done in Forge)
-  var gemRow=document.getElementById('vault-gem-shards-row');
-  if(gemRow){
-    var shards=PERSIST.town.materials.gemShards||0;
-    var rubyCost=GEM_CRAFT_COSTS.ruby||30;
-    if(shards>0){
-      var canCraft=shards>=rubyCost;
-      gemRow.innerHTML=gemImgHTML('ruby','18px')+' '+shards+' Gem Shards'
-        +(canCraft?' &nbsp;<button class="vault-upg-btn" style="width:auto;padding:2px 8px;border-color:#c09030;color:#d4a843;" onclick="craftGem(\'ruby\')">CRAFT RUBY ('+rubyCost+')</button>':' / '+rubyCost+' → 💎 Ruby');
-      gemRow.style.color=canCraft?'#d4a843':'#5a4020';
-    } else {
-      gemRow.textContent='';
-    }
-  }
-
-  // Upgrades grid — shelves show as one slot that upgrades, others separate
-  var upgGrid=document.getElementById('vault-upg-grid');
-  if(upgGrid){
-    upgGrid.innerHTML='';
-    var u=PERSIST.town.vaultUpgrades||{};
-    var lv=getVaultLevel();
-
-    // Shelves: show as one item representing current tier + next upgrade
-    var shelfTier=u.shelf3?3:u.shelf2?2:u.shelf1?1:0;
-    var shelfLabels=['Extra Shelves','Expanded Shelves','Grand Shelves'];
-    var shelfCosts=[60,150,350];
-    var shelfEl=document.createElement('div');
-    shelfEl.className='vault-upg-item'+(shelfTier>=3?' purchased':'');
-    var currentSlots=16+(shelfTier*8);
-    if(shelfTier>=3){
-      shelfEl.innerHTML='<div class="vault-upg-name">Grand Shelves ✓</div>'
-        +'<div class="vault-upg-effect">'+currentSlots+' total slots · Max tier reached</div>'
-        +'<button class="vault-upg-btn" disabled>✓ MAXED</button>';
-    } else {
-      var nextId='shelf'+(shelfTier+1);
-      var nextUpg=VAULT_UPGRADES.find(function(x){return x.id===nextId;});
-      var nextLabel=nextUpg.label;
-      var nextCost=nextUpg.cost;
-      var nextMinLvl=nextUpg.minLevel||1;
-      var meetsLevel=lv>=nextMinLvl;
-      var canAfford=PERSIST.gold>=nextCost;
-      shelfEl.innerHTML='<div class="vault-upg-name">'+(shelfTier>0?'✓ → ':'')+nextLabel+'</div>'
-        +'<div class="vault-upg-effect">'+currentSlots+' slots now · +8 more after upgrade</div>'
-        +(!meetsLevel?'<div class="vault-upg-lvl">Requires Vault Lv.'+nextMinLvl+'</div>':'')
-        +'<button class="vault-upg-btn"'+((meetsLevel&&canAfford)?'':' disabled')+' onclick="buyVaultUpgrade(\''+nextId+'\')">'
-        +(!meetsLevel?'🔒 Lv.'+nextMinLvl+' required':canAfford?'✦ '+nextCost+'g':'Need '+(nextCost-PERSIST.gold)+'g more')+'</button>';
-    }
-    upgGrid.appendChild(shelfEl);
-
-    // Other upgrades (sell desk, recycle)
-    ['sellDesk','recycle'].forEach(function(id){
-      var upg=VAULT_UPGRADES.find(function(x){return x.id===id;});
-      if(!upg) return;
-      var purchased=!!u[upg.id];
-      var meetsLevel=lv>=(upg.minLevel||1);
-      var canAfford=PERSIST.gold>=upg.cost;
-      var el=document.createElement('div');
-      el.className='vault-upg-item'+(purchased?' purchased':'');
-      var locked=!meetsLevel;
-      var btnLabel=purchased?'✓ OWNED':locked?'🔒 Lv.'+upg.minLevel+' required':canAfford?'✦ '+upg.cost+'g':'Need '+(upg.cost-PERSIST.gold)+'g more';
-      el.innerHTML='<div class="vault-upg-name">'+upg.label+'</div>'
-        +'<div class="vault-upg-effect">'+upg.effect+'</div>'
-        +(!purchased&&locked?'<div class="vault-upg-lvl">Vault Lv.'+upg.minLevel+' required</div>':'')
-        +'<button class="vault-upg-btn"'+((purchased||locked||!canAfford)?' disabled':'')+' onclick="buyVaultUpgrade(\''+upg.id+'\')">'+btnLabel+'</button>';
-      upgGrid.appendChild(el);
-    });
-  }
-}
-
-function selectVaultItem(itemId){
-  _vaultSelected=itemId;
-  var items=buildInvItems();
-  var item=items.find(function(x){return x.id===itemId;});
-  if(item) renderVaultInspector(item);
-  // Refresh grid to update selected highlight
-  var cells=document.getElementById('vault-inv-grid');
-  if(cells) cells.querySelectorAll('.vault-slot-cell').forEach(function(c){ c.classList.remove('selected'); });
-  // Find and re-add
-  refreshVaultPanel();
-}
-
-function clearVaultInspector(){
-  var col=document.getElementById('vault-inspector');
-  if(col) col.innerHTML='<div class="vault-inspector-empty">← Select an item</div>';
-}
-
-var ITEM_FLAVOUR={
-  key_sewers:'A rusted key caked with grime and worse. It smells of things best left unnamed.',
-  key_sewers_deep:'A corroded key from deeper tunnels. Something tried to clean it. Failed.',
-  key_sewers_foul:'A twisted key dripping with foul ichor. Opening what this unlocks feels unwise.',
-  key_bog:'A mossy key dredged from murky water. Still warm from whatever last held it.',
-  key_crypt:'A bone-carved key etched with faded runes. The runes seem to shift in dim light.',
-  key_forest:'A key of ironwood, harder than steel. Something that shouldn\'t be dead made it.',
-  key_cave:'A key worn smooth by talon-calloused hands. Lighter than it looks.',
-  key_ruins:'An ancient key still holding its original gleam. The lock it fits has not moved in centuries.',
-  key_dragon:'A key smelted from dragonscale. It hums faintly with residual heat.',
-  key_bone:'A key carved from something older than the ruins themselves.',
-  key_astral:'A key that doesn\'t quite exist here. It leaves a faint afterimage when you look away.',
-  chest_sewers:'A battered iron chest dredged from the dark. Waterlogged but the lock holds.',
-  chest_bog:'A chest wrapped in swamp vine. Something inside shifts when you tilt it.',
-  chest_crypt:'A sepulchral chest sealed with undead magic. Cold to the touch.',
-  chest_forest:'A chest of living wood, still growing. Small leaves sprout from the hinges.',
-  chest_cave:'A talon-scarred chest, scratched open and re-locked many times over the years.',
-  chest_ruins:'An ancient reliquary sealed with mechanisms that shouldn\'t still function.',
-  chest_dragon:'A chest fireproofed through necessity. Still faintly hot inside.',
-  chest_bone:'A chest that seems to breathe. It doesn\'t.',
-  chest_astral:'A chest that holds more inside than outside. The laws of space have negotiated.',
-};
-var ITEM_INFO={
-  key_sewers:'Opens Sewer Chests · Provides +1 bonus loot roll when used with a Sewer Chest',
-  key_sewers_deep:'Opens Sewer Chests · Provides +1 bonus loot roll when used with a Sewer Chest',
-  key_sewers_foul:'Opens Sewer Chests · Provides +1 bonus loot roll when used with a Sewer Chest',
-  key_bog:'Opens Bog Chests · +1 bonus roll when opening a Bog Chest',
-  key_crypt:'Opens Crypt Chests · +1 bonus roll when opening a Crypt Chest',
-  key_forest:'Opens Forest Chests · +1 bonus roll when opening a Forest Chest',
-  key_cave:'Opens Cave Chests · +1 bonus roll when opening a Cave Chest',
-  key_ruins:'Opens Ancient Chests · +1 bonus roll when opening an Ancient Chest',
-  key_dragon:'Opens Dragon Chests · +1 bonus roll when opening a Dragon Chest',
-  key_bone:'Opens Bone Chests · +1 bonus roll when opening a Bone Chest',
-  key_astral:'Opens Astral Chests · +1 bonus roll when opening an Astral Chest',
-  chest_sewers:'2 loot rolls · +1 bonus roll if you have a Sewer Key · Drops from the Sewers',
-  chest_bog:'2 loot rolls · +1 bonus roll with a Bog Key · Drops from Bogmire Swamp',
-  chest_crypt:'2 loot rolls · +1 bonus roll with a Crypt Key · Drops from the Forgotten Crypt',
-  chest_forest:'3 loot rolls · +1 bonus roll with a Forest Key · Drops from Thornwood Forest',
-  chest_cave:'3 loot rolls · +1 bonus roll with a Cave Key · Drops from Eagle\'s Cave',
-  chest_ruins:'4 loot rolls · +1 bonus roll with an Ancient Key · Drops from the Sunken Ruins',
-  chest_dragon:'4 loot rolls · +1 bonus roll with a Dragon Key · Drops from the Dragon\'s Nest',
-  chest_bone:'4 loot rolls · +1 bonus roll with a Bone Key · Drops from the Boneyard',
-  chest_astral:'5 loot rolls · +1 bonus roll with an Astral Key · Drops from the Star Maze',
-};
-
-function _refreshVaultGenBar(){
-  var wrap=document.getElementById('vault-gen-wrap');
-  var bar=document.getElementById('vault-gen-bar');
-  var tierEl=document.getElementById('vault-gen-tier');
-  if(!wrap||!bar) return;
-  var b=PERSIST.town.buildings.vault;
-  var active=b&&b.slottedCard;
-  wrap.style.display=active?'block':'none';
-  if(active){
-    var card=getTownCardById(b.slottedCard);
-    var tier=card?card.tier:'ruby';
-    var tierLabels={ruby:'Ruby',emerald:'Emerald',sapphire:'Sapphire',turquoise:'Turquoise',amethyst:'Amethyst',topaz:'Topaz',obsidian:'Obsidian',opal:'Opal'};
-    if(tierEl) tierEl.textContent=(tierLabels[tier]||tier)+' gem';
-    var pct=Math.min(100,PERSIST.town.vaultGenProgress||0);
-    bar.style.width=pct.toFixed(1)+'%';
-    bar.style.background=pct>=90
-      ?'linear-gradient(90deg,#c09030,#ffd040)'
-      :'linear-gradient(90deg,#3a2808,#c09030)';
-  }
-}
-
-function refreshVaultLevelBar(){
-  var lv=PERSIST.town.vaultLevel||1;
-  var xp=PERSIST.town.vaultXp||0;
-  var maxLv=VAULT_XP_THRESHOLDS.length+1;
-  var thresh=lv<maxLv?(VAULT_XP_THRESHOLDS[lv-1]||9999):9999;
-  var pct=thresh<9999?Math.min(100,(xp/thresh)*100):100;
-  var badge=document.getElementById('vault-level-badge');
-  var bar=document.getElementById('vault-xp-bar');
-  var txt=document.getElementById('vault-xp-txt');
-  if(badge) badge.textContent='VAULT Lv.'+lv+(lv>=maxLv?' ✦MAX':'');
-  if(bar) bar.style.width=pct.toFixed(1)+'%';
-  if(txt) txt.textContent=lv>=maxLv?'Fully researched':(xp.toFixed(1)+' / '+thresh+' XP');
-}
-
-function getVaultLevel(){ return PERSIST.town.vaultLevel||1; }
-
-function renderVaultInspector(item){
-  var drawer=document.getElementById('vault-inspector');
-  if(!drawer) return;
-  var vLvl=getVaultLevel();
-  var flavour=ITEM_FLAVOUR[item.lootKey||item.matKey||'']||'';
-  var info=ITEM_INFO[item.lootKey||item.matKey||'']||(item.matKey?MATERIAL_DEFS[item.matKey].desc:'');
-
-  // Icon
-  var iconEl=document.getElementById('vi-icon');
-  if(iconEl) iconEl.textContent=item.icon;
-
-  // Main content
-  var mainEl=document.getElementById('vi-main');
-  if(mainEl){
-    var html='<div class="vi-name">'+item.name+'</div>'
-      +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">'
-        +'<span class="vi-type-badge vi-type-'+item.itemType+'">'+item.itemType.toUpperCase()+'</span>'
-        +'<span class="vi-count">Owned: <strong>'+item.count+'</strong></span>'
-      +'</div>';
-    if(vLvl>=2&&flavour) html+='<div class="vi-flavour">'+flavour+'</div>';
-    else if(vLvl<2&&flavour) html+='<div class="vi-locked-info">📖 Vault Lv.2 — Lore unlocks</div>';
-    if(vLvl>=3&&info) html+='<div class="vi-info">'+info+'</div>';
-    else if(vLvl<3&&info) html+='<div class="vi-locked-info">🗺 Vault Lv.3 — Source info unlocks</div>';
-    mainEl.innerHTML=html;
-  }
-
-  // Actions
-  var actEl=document.getElementById('vi-actions');
-  if(actEl){
-    var ahtml='';
-    if(item.itemType==='chest'){
-      var lk=item.lootKey;
-      var biome=LOOT_DEFS[lk]?LOOT_DEFS[lk].biome:null;
-      var matchKeyId=null;
-      if(biome){
-        var keyIds=Object.keys(LOOT_DEFS).filter(function(k){return LOOT_DEFS[k].type==='key'&&LOOT_DEFS[k].biome===biome;});
-        matchKeyId=keyIds.find(function(k){return (PERSIST.town.items[k]||0)>0;})||null;
-      }
-      var bonus=!!matchKeyId;
-      ahtml+='<button class="vi-btn" onclick="openChest(\''+lk+'\''+(bonus?',\''+matchKeyId+'\'':'')+')">⚡ OPEN'+(bonus?' + KEY BONUS':'')+' →</button>';
-      if(bonus) ahtml+='<span class="vi-btn-note">Uses 1 '+LOOT_DEFS[matchKeyId].name+'</span>';
-    } else if(item.itemType==='towncard'){
-      var card=item.cardRef;
-      if(card.slottedIn){
-        ahtml+='<div class="vi-locked-info">Slotted in: '+card.slottedIn+'</div>';
-        ahtml+='<button class="vi-btn" onclick="unslotCard(\''+card.id+'\');refreshVaultPanel();buildTownGrid();buildTownCardsStrip();">UNSLOT</button>';
-      } else {
-        ahtml+='<div class="vi-locked-info">In hand — drag onto a building to slot</div>';
-      }
-    }
-    var hasSellDesk=PERSIST.town.vaultUpgrades&&PERSIST.town.vaultUpgrades.sellDesk;
-    var hasRecycle=PERSIST.town.vaultUpgrades&&PERSIST.town.vaultUpgrades.recycle;
-    if(item.itemType!=='towncard'){
-      var sp=getSellPrice(item);
-      if(sp>0){
-        var sellLabel=item.matKey==='sparks'?'Sell 5 for 1g':'Sell for '+sp+'g';
-        if(hasSellDesk) ahtml+='<button class="vi-btn" style="border-color:#6a3010;color:#c06030;" onclick="sellSelectedVaultItem()">🪙 '+sellLabel+'</button>';
-        else ahtml+='<div class="vi-locked-info">🛒 '+sellLabel+' · Sell Desk needed</div>';
-      }
-      var rs=getRecycleValue(item);
-      if(rs>0){
-        if(hasRecycle) ahtml+='<button class="vi-btn" style="border-color:#2a4a2a;color:#60c060;" onclick="recycleSelectedVaultItem()">♻ → '+rs+' 💎</button>';
-        else ahtml+='<div class="vi-locked-info">♻ '+rs+' 💎 shards · Recycling Bin needed</div>';
-      }
-    }
-    actEl.innerHTML=ahtml;
-  }
-
-  // Open the drawer
-  drawer.classList.add('open');
-}
-
-function clearVaultInspector(){
-  _vaultSelected=null;
-  var drawer=document.getElementById('vault-inspector');
-  if(drawer) drawer.classList.remove('open');
-  // Deselect grid highlight
-  var grid=document.getElementById('vault-inv-grid');
-  if(grid) grid.querySelectorAll('.vault-slot-cell.selected').forEach(function(c){c.classList.remove('selected');});
-}
-
-// Slot picker for hand strip clicks (fallback for non-drag)
-function openSlotPicker(cardId){
-  // Open vault and let player drag from there, or auto-slot into first free building
-  showTownToast('Drag the card onto a building to slot it, or open a building panel.');
-}
-
-// ═══════════════════════════════════════════════════════
-// CHEST LOOT SYSTEM
-// ═══════════════════════════════════════════════════════
-var CHEST_LOOT_TABLES={
-  chest_sewers:{rolls:2,rolls_key:3,keyBiome:'sewers',table:[
-    {w:40,type:'material',id:'sparks',qty:[3,8]},
-    {w:19,type:'loot',id:'key_sewers',qty:1},
-    {w:16,type:'gold',qty:[10,25]},
-    {w:10,type:'material',id:'embers',qty:[1,2]},
-    {w:5, type:'material',id:'gemShards',qty:1},
-    {w:3, type:'towncard',tier:'ruby'},
-    {w:7, type:'champcard',qty:1},
-  ]},
-  chest_bog:{rolls:2,rolls_key:3,keyBiome:'swamp',table:[
-    {w:35,type:'material',id:'sparks',qty:[4,10]},
-    {w:17,type:'loot',id:'key_bog',qty:1},
-    {w:16,type:'gold',qty:[15,35]},
-    {w:12,type:'material',id:'embers',qty:[1,3]},
-    {w:5, type:'material',id:'gemShards',qty:1},
-    {w:6, type:'towncard',tier:'ruby'},
-    {w:9, type:'champcard',qty:1},
-  ]},
-  chest_crypt:{rolls:2,rolls_key:3,keyBiome:'crypt',table:[
-    {w:33,type:'material',id:'sparks',qty:[5,12]},
-    {w:15,type:'loot',id:'key_crypt',qty:1},
-    {w:18,type:'gold',qty:[15,40]},
-    {w:13,type:'material',id:'embers',qty:[2,4]},
-    {w:5, type:'material',id:'gemShards',qty:1},
-    {w:6, type:'towncard',tier:'ruby'},
-    {w:10,type:'champcard',qty:1},
-  ]},
-  chest_forest:{rolls:3,rolls_key:4,keyBiome:'forest',table:[
-    {w:29,type:'material',id:'sparks',qty:[6,14]},
-    {w:12,type:'loot',id:'key_forest',qty:1},
-    {w:18,type:'gold',qty:[20,50]},
-    {w:16,type:'material',id:'embers',qty:[2,5]},
-    {w:8, type:'material',id:'gemShards',qty:[1,2]},
-    {w:6, type:'towncard',tier:'ruby'},
-    {w:1, type:'towncard',tier:'emerald'},
-    {w:10,type:'champcard',qty:[1,2]},
-  ]},
-  chest_cave:{rolls:3,rolls_key:4,keyBiome:'cave',table:[
-    {w:27,type:'material',id:'sparks',qty:[7,15]},
-    {w:12,type:'loot',id:'key_cave',qty:1},
-    {w:18,type:'gold',qty:[20,55]},
-    {w:16,type:'material',id:'embers',qty:[3,6]},
-    {w:8, type:'material',id:'gemShards',qty:[1,2]},
-    {w:7, type:'towncard',tier:'ruby'},
-    {w:2, type:'towncard',tier:'emerald'},
-    {w:10,type:'champcard',qty:[1,2]},
-  ]},
-  chest_ruins:{rolls:4,rolls_key:5,keyBiome:'ruins',table:[
-    {w:22,type:'material',id:'sparks',qty:[8,18]},
-    {w:9, type:'loot',id:'key_ruins',qty:1},
-    {w:18,type:'gold',qty:[30,70]},
-    {w:14,type:'material',id:'embers',qty:[3,7]},
-    {w:10,type:'material',id:'flameShards',qty:[1,2]},
-    {w:8, type:'material',id:'gemShards',qty:[1,2]},
-    {w:6, type:'towncard',tier:'ruby'},
-    {w:2, type:'towncard',tier:'emerald'},
-    {w:11,type:'champcard',qty:[1,2]},
-  ]},
-  chest_dragon:{rolls:4,rolls_key:5,keyBiome:'dragon',table:[
-    {w:20,type:'material',id:'embers',qty:[4,9]},
-    {w:9, type:'loot',id:'key_dragon',qty:1},
-    {w:18,type:'gold',qty:[35,80]},
-    {w:18,type:'material',id:'flameShards',qty:[1,3]},
-    {w:9, type:'material',id:'sparks',qty:[10,20]},
-    {w:12,type:'material',id:'gemShards',qty:[2,3]},
-    {w:4, type:'towncard',tier:'ruby'},
-    {w:2, type:'towncard',tier:'emerald'},
-    {w:8, type:'champcard',qty:[1,2]},
-  ]},
-  chest_bone:{rolls:4,rolls_key:5,keyBiome:'boneyard',table:[
-    {w:20,type:'material',id:'embers',qty:[4,9]},
-    {w:9, type:'loot',id:'key_bone',qty:1},
-    {w:18,type:'gold',qty:[35,80]},
-    {w:18,type:'material',id:'flameShards',qty:[1,3]},
-    {w:9, type:'material',id:'sparks',qty:[10,20]},
-    {w:12,type:'material',id:'gemShards',qty:[2,3]},
-    {w:4, type:'towncard',tier:'ruby'},
-    {w:2, type:'towncard',tier:'emerald'},
-    {w:8, type:'champcard',qty:[1,2]},
-  ]},
-  chest_astral:{rolls:5,rolls_key:6,keyBiome:'starmaze',table:[
-    {w:14,type:'material',id:'flameShards',qty:[2,5]},
-    {w:7, type:'loot',id:'key_astral',qty:1},
-    {w:16,type:'gold',qty:[50,120]},
-    {w:14,type:'material',id:'embers',qty:[5,12]},
-    {w:11,type:'material',id:'sparks',qty:[15,30]},
-    {w:12,type:'material',id:'gemShards',qty:[2,4]},
-    {w:6, type:'towncard',tier:'ruby'},
-    {w:5, type:'towncard',tier:'emerald'},
-    {w:2, type:'towncard',tier:'sapphire'},
-    {w:13,type:'champcard',qty:[2,3]},
-  ]},
-  chest_mist:{rolls:2,rolls_key:3,keyBiome:'mistwoods',table:[
-    {w:33,type:'material',id:'sparks',qty:[5,12]},
-    {w:17,type:'loot',id:'key_mist',qty:1},
-    {w:16,type:'gold',qty:[15,40]},
-    {w:13,type:'material',id:'embers',qty:[1,3]},
-    {w:5, type:'material',id:'gemShards',qty:1},
-    {w:7, type:'towncard',tier:'ruby'},
-    {w:9, type:'champcard',qty:1},
-  ]},
-  chest_wax:{rolls:2,rolls_key:3,keyBiome:'waxdunes',table:[
-    {w:36,type:'material',id:'sparks',qty:[4,10]},
-    {w:19,type:'loot',id:'key_wax',qty:1},
-    {w:19,type:'gold',qty:[12,30]},
-    {w:8, type:'material',id:'embers',qty:[1,2]},
-    {w:5, type:'material',id:'gemShards',qty:1},
-    {w:4, type:'towncard',tier:'ruby'},
-    {w:9, type:'champcard',qty:1},
-  ]},
-};
-function rollChestTable(tableEntry){
-  var total=tableEntry.reduce(function(s,e){return s+e.w;},0);
-  var r=Math.random()*total,cum=0;
-  for(var i=0;i<tableEntry.length;i++){ cum+=tableEntry[i].w; if(r<=cum) return tableEntry[i]; }
-  return tableEntry[tableEntry.length-1];
-}
-
-var _chestPendingLoot=[];
-
-function openChest(chestId, keyId){
-  var tbl=CHEST_LOOT_TABLES[chestId];
-  if(!tbl){ showTownToast('Unknown chest type.'); return; }
-  if((PERSIST.town.items[chestId]||0)<=0){ showTownToast('No chests of this type.'); return; }
-
-  // Consume chest
-  PERSIST.town.items[chestId]--;
-  // Consume key if provided
-  var useKey=keyId&&(PERSIST.town.items[keyId]||0)>0;
-  if(useKey) PERSIST.town.items[keyId]--;
-
-  // Roll loot
-  var rolls=useKey?tbl.rolls_key:tbl.rolls;
-  var loot=[];
-  for(var i=0;i<rolls;i++){
-    var entry=rollChestTable(tbl.table);
-    loot.push({entry:entry,isBonus:useKey&&i===rolls-1});
-  }
-
-  // Store pending loot (applied on close)
-  _chestPendingLoot=loot;
-  savePersist();
-
-  // Show overlay
-  showChestOverlay(chestId, loot, useKey?LOOT_DEFS[keyId]:null);
-}
-
-function pickChampCardRecipient(){
-  // Weight towards unlocked champions, fallback to starters
-  var unlocked=PERSIST.unlockedChamps.filter(function(id){return !!CREATURES[id];});
-  if(!unlocked.length) unlocked=['druid','paladin','thief'];
-  return unlocked[Math.floor(Math.random()*unlocked.length)];
-}
-
-function showChestOverlay(chestId, loot, keyDef){
-  var def=LOOT_DEFS[chestId]||{icon:'📦',name:'Chest'};
-  var ov=document.getElementById('chest-overlay');
-  document.getElementById('chest-ov-label').textContent='OPENING '+def.name.toUpperCase();
-  var iconEl=document.getElementById('chest-ov-icon');
-  iconEl.textContent=def.icon;
-  iconEl.className='chest-ov-icon';
-  document.getElementById('chest-loot-list').innerHTML='';
-  document.getElementById('chest-ov-btn').style.display='none';
-  ov.style.display='flex';
-
-  // Phase 1: idle float → shake → burst → reveal
-  setTimeout(function(){
-    iconEl.className='chest-ov-icon shaking';
-    setTimeout(function(){
-      iconEl.className='chest-ov-icon bursting';
-      setTimeout(function(){
-        iconEl.style.display='none';
-        revealLootItems(loot, keyDef, 0);
-      }, 450);
-    }, 900);
-  }, 800);
-}
-
-function revealLootItems(loot, keyDef, idx){
-  if(idx>=loot.length){
-    setTimeout(function(){
-      document.getElementById('chest-ov-btn').style.display='inline-block';
-    }, 300);
-    return;
-  }
-  var entry=loot[idx].entry;
-  var isBonus=loot[idx].isBonus;
-  var list=document.getElementById('chest-loot-list');
-  var el=document.createElement('div');
-  el.className='chest-loot-item'+(isBonus?' chest-loot-bonus':'');
-
-  var icon='?', name='Unknown', qty='';
-  if(entry.type==='material'&&MATERIAL_DEFS[entry.id]){
-    icon=MATERIAL_DEFS[entry.id].icon;
-    name=MATERIAL_DEFS[entry.id].name;
-    var amount=entry.qty?Math.floor(Math.random()*(entry.qty[1]-entry.qty[0]+1))+entry.qty[0]:1;
-    qty='×'+amount;
-    // Store resolved amount for apply
-    entry._resolved=amount;
-  } else if(entry.type==='gold'){
-    icon='✦'; name='Gold';
-    var g=Math.floor(Math.random()*(entry.qty[1]-entry.qty[0]+1))+entry.qty[0];
-    qty='+'+g+'g'; entry._resolved=g;
-  } else if(entry.type==='loot'&&LOOT_DEFS[entry.id]){
-    icon=LOOT_DEFS[entry.id].icon; name=LOOT_DEFS[entry.id].name; qty='×1';
-  } else if(entry.type==='towncard'){
-    var tierName=CARD_TIER_LABELS[entry.tier]||(entry.tier.charAt(0).toUpperCase()+entry.tier.slice(1));
-    icon=TOWN_CARD_GEMS(entry.tier)||'💎'; name=tierName+' Gem'; qty='×1';
-  } else if(entry.type==='champcard'){
-    // Pick a random unlocked champion's card
-    var champId=pickChampCardRecipient();
-    entry._champId=champId;
-    var cdId='card_'+champId;
-    var cDef=LOOT_DEFS[cdId]||{icon:'📘',name:'Champion Card'};
-    icon=cDef.icon; name=cDef.name;
-    var cQty=entry.qty?Math.floor(Math.random()*(entry.qty[1]-entry.qty[0]+1))+entry.qty[0]:1;
-    qty='×'+cQty; entry._resolved=cQty;
-  }
-
-  el.innerHTML=(isBonus?'<div class="chest-bonus-badge">🗝️ BONUS ROLL</div>':'')+
-    '<div style="display:flex;align-items:center;gap:14px;width:100%;">'
-    +'<div class="chest-loot-icon">'+icon+'</div>'
-    +'<div class="chest-loot-name">'+name+'</div>'
-    +'<div class="chest-loot-qty">'+qty+'</div>'
-    +'</div>';
-
-  list.appendChild(el);
-  // Trigger animation after brief paint delay
-  setTimeout(function(){ el.classList.add('revealed'); },20);
-
-  setTimeout(function(){ revealLootItems(loot,keyDef,idx+1); }, 480);
-}
 
 // ── SPOILS CARD PICK ─────────────────────────────────────────────
 var _spoilsChampId=null;
@@ -7481,32 +7282,6 @@ function closeSpoilsOverlay(){
 }
 
 
-function closeChestOverlay(){
-  // Apply all loot to PERSIST
-  _chestPendingLoot.forEach(function(lootEntry){
-    var entry=lootEntry.entry;
-    if(entry.type==='material'){
-      PERSIST.town.materials[entry.id]=(PERSIST.town.materials[entry.id]||0)+(entry._resolved||1);
-    } else if(entry.type==='gold'){
-      PERSIST.gold+=(entry._resolved||0);
-    } else if(entry.type==='loot'){
-      addLootItem(entry.id,1);
-    } else if(entry.type==='towncard'){
-      addTownCard(entry.tier);
-    } else if(entry.type==='champcard'){
-      var cid='card_'+(entry._champId||'druid');
-      addLootItem(cid, entry._resolved||1);
-    }
-  });
-  _chestPendingLoot=[];
-  savePersist();
-  document.getElementById('chest-overlay').style.display='none';
-  document.getElementById('chest-ov-icon').style.display='block';
-  document.getElementById('chest-ov-icon').className='chest-ov-icon';
-  // Refresh vault if open
-  refreshVaultPanel();
-  updateNavBar('town');
-}
 
 // ── Wire up town unlock ──
 // Town tab always visible in nav (locked or unlocked)
@@ -8396,5 +8171,4 @@ startRun=function(champId,area){
   _kbCardIdx=-1;
   _kbOrigStartRun(champId,area);
 };
-
-
+// Expedition Hall — see data/expedition.js

@@ -7,24 +7,47 @@
 // ════════════════════════════════════════════════════════════════
 
 var KEYWORDS = {
-  Burn:      {cls:'burn',      def:'Deals WIS×1 dmg every 3s. Stacks indefinitely — each application adds more damage and refreshes duration.'},
-  Poison:    {cls:'poison',    def:'Deals X dmg every 2s for a set duration.'},
-  Cursed:    {cls:'cursed',    def:'Enemy deals 15% less damage for the duration.'},
-  Shield:    {cls:'shielded',  def:'A temporary HP buffer. Absorbs direct damage before your HP is touched. DoTs (Poison, Burn, Bleed) bypass it entirely. Depletes or expires after its duration.'},
-  Shielded:  {cls:'shielded',  def:'Incoming damage drains mana instead of HP while active. When mana runs out the effect ends. Applied by Aegis.'},
-  Root:      {cls:'root',      def:'Cannot draw cards for the duration. Dispelled on draw.'},
-  Slow:      {cls:'slow',      def:'Draw interval increased by a flat amount for the duration.'},
-  Dodge:     {cls:'dodge',     def:'The next incoming attack is completely evaded.'},
-  Haste:     {cls:'haste',     def:'Attack or draw speed increased by X% for the duration.'},
-  Drain:     {cls:'drain',     def:'Steals X mana from the target directly.'},
+  // ── Damage over time ──
+  Burn:      {cls:'burn',      def:'Deals X dmg every 3s. Non-stacking — reapplication refreshes duration only. Bypasses Shield.'},
+  Poison:    {cls:'poison',    def:'Deals X dmg every 2s for a set duration. Stacks — each application adds damage and refreshes timer. Bypasses Shield.'},
+
+  // ── Debuffs ──
+  Weaken:    {cls:'cursed',    def:'Target deals 15% less damage for the duration.'},
+  Cursed:    {cls:'cursed',    def:'Target deals 15% less damage for the duration.'},  // legacy alias
+  Slow:      {cls:'slow',      def:'Draw interval increased by 600ms. Non-stacking — reapplication refreshes duration only.'},
+  Root:      {cls:'root',      def:'Cannot draw cards for the duration.'},
   Webbed:    {cls:'webbed',    def:'Draw interval permanently increased by 800ms for this fight.'},
-  Condemned: {cls:'cursed',    def:'Each stack increases Retribution damage by +15% (max ×5 stacks, 12s). Applied by Retribution.'},
-  Marked:    {cls:'cursed',    def:'Enemy takes 50% more damage from all sources while active. Applied by Death Mark.'},
+  Marked:     {cls:'cursed',    def:'Target takes 50% more damage from all sources while active.'},
+  Vulnerable: {cls:'cursed',    def:'Target takes 50% more damage from all sources while active.'},
+  Condemned: {cls:'cursed',    def:'Each stack increases Retribution damage by +15% (max 5 stacks, 12s).'},
+
+  // ── Buffs ──
+  Shield:    {cls:'shielded',  def:'A temporary HP buffer. Absorbs direct damage before HP is touched. DoTs (Poison, Burn) bypass it entirely. Depletes or expires after its duration.'},
+  Shielded:  {cls:'shielded',  def:'Incoming damage drains mana instead of HP while active. When mana runs out the effect ends.'},
+  Dodge:     {cls:'dodge',     def:'The next incoming attack is completely evaded.'},
+  Haste:     {cls:'haste',     def:'Draw speed increased by X% for the duration.'},
+  Frenzy:    {cls:'hastened',  def:'Stacking draw-speed buff. Each stack = +10% draw speed. Duration shortens as stacks grow. Collapses when timer expires or mana hits 0. Drains 3 mana/s while active.'},
+  Thorns:    {cls:'burn',      def:'While active, each hit dealt to this creature reflects X damage back to the attacker. Non-stacking — reapplication refreshes duration only.'},
+
+  // ── New status mechanics ──
+  Volatile:  {cls:'burn',      def:'Stacking. Timer resets on each new stack. At 5+ stacks: detonates for 2× base damage. Below 5 stacks when timer expires: fizzles for 1× base damage. [Stabilize] raises threshold to 10 stacks (10+ = 4× damage).'},
+
+  // ── Action keywords ──
+  Sorcery:   {cls:'drain',     def:'Sorcery [X]: spend X mana to trigger this bonus. If mana is below X the effect does not fire and no mana is spent. Multiple Sorcery effects on one card resolve top to bottom, each spending from remaining mana.'},
+  Sacrifice: {cls:'burn',      def:'Sacrifice [X]: pay X of a specified resource (HP, mana, or status stacks) to trigger this effect. If the cost cannot be paid the effect does not fire. Base effect always resolves.'},
+  Drain:     {cls:'drain',     def:'Steal X mana from the target directly.'},
+  Refresh:   {cls:'echo',      def:'Shuffle your discard pile into your draw pile.'},
+  Churn:     {cls:'echo',      def:'Churn [X]: discard X random cards from hand, then draw X cards. Discard resolves before draw.'},
+  Hellbent:  {cls:'burn',      def:'This effect only triggers if you have no cards in hand.'},
+  Suspend:   {cls:'echo',      def:'Suspend [X]: pause all active buff and debuff timers on this creature for X seconds.'},
+  Stabilize: {cls:'hastened',  def:'Raises the Volatile detonation threshold from 5 stacks to 10. At 5-9 stacks: 2× damage. At 10+ stacks: 4× damage.'},
+  Convert:   {cls:'echo',      def:'Remove the oldest card in hand and replace it with the specified card. The new card is played immediately.'},
+  Shed:      {cls:'poison',    def:'Shed [X]: transfer all stacks of [X] from self to target.'},
+
+  // ── Misc ──
   Crit:      {cls:'hastened',  def:'A strike that deals double damage. Triggered by chance or special conditions.'},
   Echo:      {cls:'echo',      def:'If this card is discarded by any effect — innate, overflow, or another card — its Echo effect still triggers at the listed potency.'},
-  Frenzy:    {cls:'hastened',  def:'Stacking draw-speed buff. Each stack = +10% draw speed. Duration shortens as stacks grow (base 2s, ×0.9 per stack). Collapses entirely when the timer runs out or when mana hits 0. Drains 3 mana/s while active.'},
-  Sorcery:   {cls:'drain',     def:'Sorcery X: if you have X or more mana, spend it to trigger the bonus effect listed after Sorcery. If you cannot afford it, only the base effect resolves — no mana is spent.'},
-  Ethereal:  {cls:'echo',      def:'This card vanishes when played or discarded — it does not return to your deck. Ethereal cards are created temporarily by special abilities.'},
+  Ethereal:  {cls:'echo',      def:'This card vanishes when played or discarded — it does not return to your deck. Created temporarily by special abilities.'},
 };
 
 // Replace [BracketWord] tokens in effect strings with styled keyword spans.
@@ -78,23 +101,232 @@ var CARDS = {
 
 
   // ── Starcaller Druid ──
-  void_bolt:   {id:'void_bolt',   name:'Void Bolt',     icon:'🔵', type:'attack',  unique:true,  champ:'druid', statId:'wis', effect:'Deal 12+WIS damage.\n[Echo]: draw speed +50% for 1s.', effects:[{type:'dmg_stat',base:12,stat:'wis',div:1}], onDiscard:[{type:'draw_speed',pct:50,dur:1}]},
+  druid_void_bolt: {id:'druid_void_bolt', name:'Void Bolt', icon:'🔵', type:'attack', unique:true, champ:'druid', statId:'wis',
+    effect:'Deal 10 + WIS damage.\n[Echo]: Draw 1 card.',
+    effects:[{type:'dmg_stat',base:10,stat:'wis',div:1}],
+    onDiscard:[{type:'draw_cards',count:1}]},
 
-  drifting_comet:{id:'drifting_comet',name:'Drifting Comet',icon:'💫',type:'attack',unique:true, champ:'druid', statId:'agi', effect:'Deal 16 damage. If auto-played: stun enemy 0.8s instead.'},
-  nova_burst:  {id:'nova_burst',  name:'Nova Burst',    icon:'💥', type:'attack',  unique:true,  champ:'druid', statId:'wis', effect:'Deal 15 × cards-in-hand damage (min 15).'},
-  focus:       {id:'focus',       name:'Focus',         icon:'🔮', type:'utility', unique:true,  champ:'druid', statId:'wis', effect:'[Drain] 80% of max mana. Draw 2 cards.\n[Drain]: removes mana from your bar.'},
-  nebula_shield:{id:'nebula_shield',name:'Nebula Ward', icon:'🌌',type:'defense',  unique:true,  champ:'druid', statId:'str', effect:'Apply [Shield] (30) for 6s. On expiry: gain 100 mana.\n[Shield] absorbs direct damage before HP. DoTs bypass it.', effects:[{type:'shield',amt:30,dur:6,onexpiry:'gain_mana',expiry_val:100}]},
-  stellar_shards:{id:'stellar_shards',name:'Stellar Shards',icon:'✨',type:'attack',unique:true, champ:'druid', statId:'wis', effect:'Deal 7 damage 3 times. Discard other [Stellar Shards] in hand — deal 1 extra hit per discarded copy.'},
+  druid_nebula_ward: {id:'druid_nebula_ward', name:'Nebula Ward', icon:'🌌', type:'defense', unique:true, champ:'druid', statId:'str',
+    effect:'Gain [Shield] (20) for 5s.\nOn expiry: Gain 80 mana.',
+    effects:[{type:'shield',amt:20,dur:5,onexpiry:'gain_mana',expiry_val:80}]},
+
+  druid_nova_burst: {id:'druid_nova_burst', name:'Nova Burst', icon:'💥', type:'attack', unique:true, champ:'druid', statId:'wis',
+    effect:'Deal 12 damage per card in hand (min 12).\n[Churn] 3.',
+    effects:[{type:'dmg_per_hand_card',base:12,min:12},{type:'churn',count:3}]},
+
+  druid_focus: {id:'druid_focus', name:'Focus', icon:'🔮', type:'utility', unique:true, champ:'druid', statId:'wis',
+    effect:'[Drain] 60% of max mana. Draw 3 cards.',
+    effects:[{type:'drain_self_pct',pct:60},{type:'draw_cards',count:3}],
+    unlock:{champion:'druid',level:5,gold:50}},
+
+  druid_stellar_shards: {id:'druid_stellar_shards', name:'Stellar Shards', icon:'✨', type:'attack', unique:true, champ:'druid', statId:'wis',
+    effect:'Deal 8 damage. Draw 1 card.\n[Sorcery] [30]: Deal 8 additional damage.',
+    effects:[{type:'dmg',base:8},{type:'draw_cards',count:1},{type:'sorcery',cost:30,effect:{type:'dmg',base:8}}],
+    unlock:{champion:'druid',level:5,gold:50}},
+
+  druid_drifting_comet: {id:'druid_drifting_comet', name:'Drifting Comet', icon:'💫', type:'attack', unique:true, champ:'druid', statId:'agi',
+    effect:'Deal 18 damage.\n[Sorcery] [40]: [Suspend] (2).',
+    effects:[{type:'dmg',base:18},{type:'sorcery',cost:40,effect:{type:'suspend',dur:2}}],
+    unlock:{champion:'druid',level:5,gold:50}},
 
   // ── Cursed Paladin ──
-  retribution: {id:'retribution', name:'Retribution',   icon:'⚖️', type:'attack',  unique:true,  champ:'paladin',statId:'str', effect:'Deal 15 damage. If enemy is debuffed: deal 30 instead. Add a stack of [Condemned] for 12s. (Max 5)\n[Condemned]: each stack increases Retribution damage by +15%.'},
-  holy_shield: {id:'holy_shield', name:'Aegis',         icon:'🛡️', type:'defense', unique:true,  champ:'paladin',statId:'str', effect:'Apply [Shielded] for 5s.\n[Shielded]: incoming damage drains mana instead of HP.'},
-  consecrate:  {id:'consecrate',  name:'Consecrate',    icon:'🕊️', type:'attack',  unique:true,  champ:'paladin',statId:'wis', effect:'Deal 12 damage. Apply [Cursed] for 5s.\n[Cursed]: enemy deals 15% less damage.', effects:[{type:'dmg',base:12}, {type:'cursed',dur:5}, {type:'holy_flame'}]},
+  paladin_smite: {id:'paladin_smite', name:'Smite', icon:'🔥', type:'attack', unique:true, champ:'paladin', statId:'wis',
+    effect:'Deal 8 damage. Apply [Burn] (WIS dmg/3s) for 9s.'},
 
-  judgment:    {id:'judgment',    name:'Judgment',      icon:'⚡', type:'attack',  unique:true,  champ:'paladin',statId:'str', effect:'Deal 20 damage. If enemy has 3+ active debuffs: deal 40 instead and apply [Condemned].\n[Condemned]: stacks — each increases Retribution damage by +15%.'},
-  hellfire:    {id:'hellfire',    name:'Hellfire',      icon:'🔥', type:'attack',  unique:true,  champ:'paladin',statId:'wis', effect:'Apply [Burn] (WIS×2 dmg/3s). Gain 30 mana.\nDirectly fuels Holy Flame — every Burn stack is a debuff applied.', effects:[{type:'burn_stat',base:0,stat:'wis',div:1,dur:9}, {type:'mana',amt:30}, {type:'holy_flame'}]},
+  paladin_consecrate: {id:'paladin_consecrate', name:'Consecrate', icon:'🕊️', type:'utility', unique:true, champ:'paladin', statId:'wis',
+    effect:'Apply [Weaken] for 6s.\n[Sorcery] [20]: Apply [Burn] (WIS dmg/3s) for 9s.',
+    effects:[{type:'weaken',dur:6},{type:'sorcery',cost:20,effect:{type:'burn_stat',base:0,stat:'wis',div:1,dur:9}}]},
 
-  bulwark:     {id:'bulwark',     name:'Bulwark',       icon:'🏰', type:'defense', unique:true,  champ:'paladin',statId:'str', effect:'Apply [Shielded] for 8s. While [Shielded] is active, your next damaging card deals +50% damage.\nOffense through defense — the shield is the setup.'},
+  paladin_aegis: {id:'paladin_aegis', name:'Aegis', icon:'🛡️', type:'defense', unique:true, champ:'paladin', statId:'str',
+    effect:'Gain [Shield] (STR ÷ 2) for 6s.\n[Sorcery] [25]: Also apply [Weaken] for 4s.',
+    effects:[{type:'shield_stat',stat:'str',div:2,dur:6},{type:'sorcery',cost:25,effect:{type:'weaken',dur:4}}]},
+
+  paladin_judgment: {id:'paladin_judgment', name:'Judgment', icon:'⚡', type:'attack', unique:true, champ:'paladin', statId:'wis',
+    effect:'Deal damage equal to current [Burn] damage remaining (min 8). Bypass [Shield].',
+    unlock:{champion:'paladin',level:5,gold:50}},
+
+  paladin_hellfire: {id:'paladin_hellfire', name:'Hellfire', icon:'🔥', type:'attack', unique:true, champ:'paladin', statId:'wis',
+    effect:'Apply [Burn] (WIS × 2 dmg/3s) for 9s. Gain 30 mana.\n[Sorcery] [30]: Apply [Weaken] for 5s.'},
+
+  paladin_bulwark: {id:'paladin_bulwark', name:'Bulwark', icon:'🏰', type:'defense', unique:true, champ:'paladin', statId:'str',
+    effect:'Gain [Shield] (STR) for 8s.\n[Sorcery] [35]: While active, your next damaging card deals +50% damage.'},
+
+  // ── Faceless Thief ──
+  thief_quick_slash: {id:'thief_quick_slash', name:'Quick Slash', icon:'⚡', type:'attack', unique:true, champ:'thief', statId:'agi',
+    effect:'Deal 10 + AGI ÷ 4 damage. 15% chance to [Crit]: deal double damage.',
+    effects:[{type:'dmg_crit',base:10,pct:15},{type:'dmg_stat',base:0,stat:'agi',div:4}]},
+
+  thief_poison_dart: {id:'thief_poison_dart', name:'Poison Dart', icon:'🎯', type:'attack', unique:true, champ:'thief', statId:'wis',
+    effect:'Deal 5 damage. Apply 8 [Poison].\n[Sorcery] [20]: Apply 8 additional [Poison].',
+    effects:[{type:'dmg',base:5},{type:'poison',dpt:8,dur:8},{type:'sorcery',cost:20,effect:{type:'poison',dpt:8,dur:8}}]},
+
+  thief_smoke_bomb: {id:'thief_smoke_bomb', name:'Smoke Bomb', icon:'💨', type:'utility', unique:true, champ:'thief', statId:'agi',
+    effect:'Apply [Slow] for 5s.\n[Sorcery] [15]: Also apply [Weaken] for 4s.',
+    effects:[{type:'slow_draw',dur:5},{type:'sorcery',cost:15,effect:{type:'weaken',dur:4}}]},
+
+  thief_shadow_step: {id:'thief_shadow_step', name:'Shadow Step', icon:'👣', type:'utility', unique:true, champ:'thief', statId:'agi',
+    effect:'Apply [Dodge]. Gain 50 mana.\n[Sorcery] [20]: Also apply [Weaken] for 3s.',
+    effects:[{type:'dodge',dur:0},{type:'mana_gain',amt:50},{type:'sorcery',cost:20,effect:{type:'weaken',dur:3}}]},
+
+  thief_backstab: {id:'thief_backstab', name:'Backstab', icon:'🗡️', type:'attack', unique:true, champ:'thief', statId:'agi',
+    effect:'Deal 12 damage. If enemy is debuffed: deal 33 additional damage.',
+    unlock:{champion:'thief',level:5,gold:50}},
+
+  thief_death_mark: {id:'thief_death_mark', name:'Death Mark', icon:'🩸', type:'utility', unique:true, champ:'thief', statId:'wis',
+    effect:'Apply [Vulnerable] for 6s.\n[Vulnerable]: enemy takes 50% more damage from all sources.',
+    effects:[{type:'marked',dur:6}],
+    unlock:{champion:'thief',level:5,gold:50}},
+
+  thief_flicker: {id:'thief_flicker', name:'Flicker', icon:'💨', type:'attack', unique:true, champ:'thief', statId:'agi',
+    effect:'Deal 5 damage. Apply 4 [Poison]. Gain [Haste] 20% for 2s.',
+    effects:[{type:'dmg',base:5},{type:'poison',dpt:4,dur:6},{type:'haste',pct:20,dur:2}],
+    unlock:{champion:'thief',level:5,gold:50}},
+
+  // Shadow Mark ghost card — generated by innate, not in any deck
+  ghost_shadow_mark: {id:'ghost_shadow_mark', name:'Shadow Mark', icon:'🌑', type:'utility', unique:false, champ:'thief', statId:'agi',
+    effect:'Apply 12 [Poison]. Your next card is a guaranteed [Crit].\n[Crit]: 1.5× damage.'},
+
+  // ── Giant Rat ──
+  rat_gnaw:   {id:'rat_gnaw',   name:'Gnaw',   icon:'🐀', type:'attack',  champ:'rat',      statId:'agi',
+    effect:'Deal 6 damage. Gain 1 [Frenzy] stack.',
+    effects:[{type:'dmg',base:6},{type:'frenzy',stacks:1}]},
+  rat_dart:   {id:'rat_dart',   name:'Dart',   icon:'💨', type:'utility', champ:'rat',      statId:'agi',
+    effect:'Gain [Haste] 20% for 3s. Gain 1 [Frenzy] stack.',
+    effects:[{type:'haste',pct:20,dur:3},{type:'frenzy',stacks:1}]},
+
+  // ── Goblin Scavenger ──
+  goblin_filth_toss:    {id:'goblin_filth_toss',    name:'Filth Toss',      icon:'💀', type:'attack',  champ:'goblin', statId:'wis',
+    effect:'Deal 5 damage. Apply [Weaken] for 4s. Apply [Poison] (3/2s) for 6s.',
+    effects:[{type:'dmg',base:5},{type:'weaken',dur:4},{type:'poison',dpt:3,dur:6}]},
+  goblin_crippling_jab: {id:'goblin_crippling_jab', name:'Crippling Jab',  icon:'🗡️', type:'attack',  champ:'goblin', statId:'str',
+    effect:'Deal 7 damage. Apply [Weaken] for 5s.',
+    effects:[{type:'dmg',base:7},{type:'weaken',dur:5}]},
+  goblin_pocket_sand:   {id:'goblin_pocket_sand',   name:'Pocket Sand',    icon:'✨', type:'utility', champ:'goblin', statId:'agi',
+    effect:'Apply [Slow] for 4s.',
+    effects:[{type:'slow_draw',dur:4}]},
+  goblin_toxic_blade:   {id:'goblin_toxic_blade',   name:'Toxic Blade',    icon:'🗡️', type:'attack',  champ:'goblin', statId:'wis',
+    effect:'Deal 8 damage. Apply [Poison] (6/2s) for 6s.',
+    effects:[{type:'dmg',base:8},{type:'poison',dpt:6,dur:6}],
+    unlock:{champion:'goblin',level:5,gold:50}},
+  goblin_festering_strike:{id:'goblin_festering_strike',name:'Festering Strike',icon:'☠️',type:'attack',champ:'goblin',statId:'wis',
+    effect:'Deal 4 damage per active debuff on target (min 4).',
+    effects:[{type:'dmg_per_debuff',base:4,min:4}],
+    unlock:{champion:'goblin',level:5,gold:50}},
+
+  // ── Smuggler ──
+  smuggler_shiv:         {id:'smuggler_shiv',         name:'Shiv',          icon:'🗡️', type:'attack',  champ:'smuggler', statId:'agi',
+    effect:'Deal 8 damage.\n[Sorcery] [20]: Deal 8 additional damage.',
+    effects:[{type:'dmg',base:8},{type:'sorcery',cost:20,effect:{type:'dmg',base:8}}]},
+  smuggler_smoke_cover:  {id:'smuggler_smoke_cover',  name:'Smoke Cover',   icon:'💨', type:'utility', champ:'smuggler', statId:'agi',
+    effect:'Apply [Slow] for 3s.\n[Sorcery] [15]: Gain [Shield] (10) for 4s.',
+    effects:[{type:'slow_draw',dur:3},{type:'sorcery',cost:15,effect:{type:'shield',amt:10,dur:4}}]},
+  smuggler_lifted_purse: {id:'smuggler_lifted_purse', name:'Lifted Purse',  icon:'👜', type:'utility', champ:'smuggler', statId:'wis',
+    effect:'Apply [Slow] for 3s.\n[Sorcery] [25]: [Refresh].',
+    effects:[{type:'slow_draw',dur:3},{type:'sorcery',cost:25,effect:{type:'refresh'}}]},
+  smuggler_fence:        {id:'smuggler_fence',        name:'Fence the Goods',icon:'💰',type:'attack',  champ:'smuggler', statId:'agi',
+    effect:'Deal 12 damage.\n[Sorcery] [25]: Reduce next draw delay by 1.5s.',
+    effects:[{type:'dmg',base:12},{type:'sorcery',cost:25,effect:{type:'draw_speed_once',amt:1500}}],
+    unlock:{champion:'smuggler',level:5,gold:50}},
+  smuggler_dirty_cut:    {id:'smuggler_dirty_cut',    name:'Dirty Cut',     icon:'🗡️', type:'attack',  champ:'smuggler', statId:'wis',
+    effect:'Deal damage equal to your missing mana ÷ 3 (min 5).\n[Sorcery] [30]: Also apply [Poison] (2 stacks).',
+    effects:[{type:'dmg_missing_mana',div:3,min:5},{type:'sorcery',cost:30,effect:{type:'poison',dpt:4,dur:6}}],
+    unlock:{champion:'smuggler',level:5,gold:50}},
+
+  // ── Squanchback ──
+  squanchback_lunge:  {id:'squanchback_lunge',  name:'Lunge',   icon:'👊', type:'attack',  champ:'squanchback', statId:'str',
+    effect:'Deal 14 damage.',
+    effects:[{type:'dmg',base:14}]},
+  squanchback_harden: {id:'squanchback_harden', name:'Harden',  icon:'🛡️', type:'defense', champ:'squanchback', statId:'str',
+    effect:'Gain [Shield] (18) for 5s.',
+    effects:[{type:'shield',amt:18,dur:5}]},
+  squanchback_gnash:  {id:'squanchback_gnash',  name:'Gnash',   icon:'🦷', type:'attack',  champ:'squanchback', statId:'str',
+    effect:'Deal 10 damage. Apply [Weaken] for 4s.',
+    effects:[{type:'dmg',base:10},{type:'weaken',dur:4}]},
+  squanchback_spine_rake:{id:'squanchback_spine_rake',name:'Spine Rake',icon:'🦔',type:'attack',champ:'squanchback',statId:'str',
+    effect:'Deal 8 damage. Apply [Thorns] (10) for 8s.',
+    effects:[{type:'dmg',base:8},{type:'thorns',val:10,dur:8}],
+    unlock:{champion:'squanchback',level:5,gold:50}},
+  squanchback_death_throes:{id:'squanchback_death_throes',name:'Death Throes',icon:'💀',type:'attack',champ:'squanchback',statId:'str',
+    effect:'Deal damage equal to your missing HP ÷ 2.',
+    effects:[{type:'dmg_missing_hp',div:2,min:4}],
+    unlock:{champion:'squanchback',level:5,gold:50}},
+
+  // ── Escaped Experiment ──
+  experiment_caustic_throw:   {id:'experiment_caustic_throw',   name:'Caustic Throw',    icon:'🧪', type:'attack',  champ:'escaped_experiment', statId:'agi',
+    effect:'Deal 6 damage. Apply 1 [Volatile] stack.\n[Sacrifice] [8 HP]: Apply 1 additional [Volatile] stack.',
+    effects:[{type:'dmg',base:6},{type:'volatile_apply',stacks:1},{type:'sacrifice_hp',cost:8,effect:{type:'volatile_apply',stacks:1}}]},
+  experiment_unstable_mixture:{id:'experiment_unstable_mixture',name:'Unstable Mixture', icon:'⚗️', type:'utility', champ:'escaped_experiment', statId:'wis',
+    effect:'Apply 1 [Volatile] stack.\n[Sorcery] [35]: Double current [Volatile] stacks.',
+    effects:[{type:'volatile_apply',stacks:1},{type:'sorcery',cost:35,effect:{type:'volatile_double'}}]},
+  experiment_mend:            {id:'experiment_mend',            name:'Mend',             icon:'💉', type:'utility', champ:'escaped_experiment', statId:'wis',
+    effect:'Heal 12 HP. [Suspend] (2).',
+    effects:[{type:'heal_self',amt:12},{type:'suspend',dur:2}]},
+  experiment_galvanise:       {id:'experiment_galvanise',       name:'Galvanise',        icon:'⚡', type:'utility', champ:'escaped_experiment', statId:'agi',
+    effect:'Gain [Haste] 40% for 5s.\n[Sacrifice] [15 HP]: Gain [Shield] (30) for 4s.',
+    effects:[{type:'haste',pct:40,dur:5},{type:'sacrifice_hp',cost:15,effect:{type:'shield',amt:30,dur:4}}],
+    unlock:{champion:'escaped_experiment',level:5,gold:50}},
+  experiment_compound:        {id:'experiment_compound',        name:'Compound',         icon:'🔬', type:'attack',  champ:'escaped_experiment', statId:'wis',
+    effect:'Deal 8 damage. Apply 2 [Volatile] stacks. [Stabilize].',
+    effects:[{type:'dmg',base:8},{type:'volatile_apply',stacks:2},{type:'stabilize'}],
+    unlock:{champion:'escaped_experiment',level:5,gold:50}},
+
+  // ── Plagued One ──
+  plagued_festering_touch: {id:'plagued_festering_touch', name:'Festering Touch', icon:'🤚', type:'attack',  champ:'plagued_one', statId:'wis',
+    effect:'Deal 5 damage. Apply 2 [Poison] to self and target.',
+    effects:[{type:'dmg',base:5},{type:'poison_both',dpt:4,dur:8,stacks:2}]},
+  plagued_plague_offering: {id:'plagued_plague_offering', name:'Plague Offering', icon:'☠️', type:'attack',  champ:'plagued_one', statId:'wis',
+    effect:'Deal 4 damage per [Poison] stack on target (min 4).',
+    effects:[{type:'dmg_per_poison_on_enemy',base:4,min:4}]},
+  plagued_spread:          {id:'plagued_spread',          name:'Spread',          icon:'🦠', type:'utility', champ:'plagued_one', statId:'wis',
+    effect:'Apply 4 [Poison] to target. Apply 2 [Poison] to self.',
+    effects:[{type:'poison',dpt:4,dur:8,stacks:4},{type:'poison_self',dpt:2,dur:8,stacks:2}]},
+  plagued_communion:       {id:'plagued_communion',       name:'Communion',       icon:'🩸', type:'utility', champ:'plagued_one', statId:'wis',
+    effect:'Transfer all [Poison] stacks from self to target.',
+    effects:[{type:'shed_poison'}],
+    unlock:{champion:'plagued_one',level:5,gold:50}},
+  plagued_blessed_rot:     {id:'plagued_blessed_rot',     name:'Blessed Rot',     icon:'💀', type:'attack',  champ:'plagued_one', statId:'wis',
+    effect:'Deal 6 damage. Apply 3 [Poison] to target.\n[Sacrifice] [3 Poison stacks]: Apply [Weaken] for 6s.',
+    effects:[{type:'dmg',base:6},{type:'poison',dpt:3,dur:8,stacks:3},{type:'sacrifice_poison_stacks',cost:3,effect:{type:'weaken',dur:6}}],
+    unlock:{champion:'plagued_one',level:5,gold:50}},
+
+  // ── Drowned ──
+  drowned_slam:             {id:'drowned_slam',             name:'Slam',             icon:'👊', type:'attack',  champ:'drowned', statId:'str',
+    effect:'Deal 10 damage.\n[Sorcery] [15]: Apply [Slow] for 4s.',
+    effects:[{type:'dmg',base:10},{type:'sorcery',cost:15,effect:{type:'slow_draw',dur:4}}]},
+  drowned_soak:             {id:'drowned_soak',             name:'Soak',             icon:'🛡️', type:'defense', champ:'drowned', statId:'str',
+    effect:'Gain [Shield] (20) for 5s.\n[Sorcery] [15]: Apply [Slow] for 4s.',
+    effects:[{type:'shield',amt:20,dur:5},{type:'sorcery',cost:15,effect:{type:'slow_draw',dur:4}}]},
+  drowned_waterlogged_fist: {id:'drowned_waterlogged_fist', name:'Waterlogged Fist', icon:'💧', type:'attack',  champ:'drowned', statId:'str',
+    effect:'Deal damage equal to (opponent STR − own STR) × 2 (min 4).\n[Sorcery] [15]: Apply [Slow] for 4s.',
+    effects:[{type:'dmg_str_diff',mult:2,min:4},{type:'sorcery',cost:15,effect:{type:'slow_draw',dur:4}}]},
+  drowned_undertow:         {id:'drowned_undertow',         name:'Undertow',         icon:'🌊', type:'utility', champ:'drowned', statId:'wis',
+    effect:'[Drain] 15 mana.\n[Sorcery] [15]: Apply [Slow] for 4s.',
+    effects:[{type:'drain_enemy_mana',amt:15},{type:'sorcery',cost:15,effect:{type:'slow_draw',dur:4}}],
+    unlock:{champion:'drowned',level:5,gold:50}},
+  drowned_drown:            {id:'drowned_drown',            name:'Drown',            icon:'💀', type:'attack',  champ:'drowned', statId:'wis',
+    effect:'Deal 6 damage per active second of [Slow] remaining on target (min 6).\n[Sorcery] [15]: Apply [Slow] for 4s.',
+    effects:[{type:'dmg_per_slow_seconds',base:6,min:6},{type:'sorcery',cost:15,effect:{type:'slow_draw',dur:4}}],
+    unlock:{champion:'drowned',level:5,gold:50}},
+
+  // ── Carrion Collector ──
+  carrion_consume: {id:'carrion_consume', name:'Consume',       icon:'👄', type:'attack',  champ:'carrion_collector', statId:'str',
+    effect:'Deal 8 damage. [Churn] 1.',
+    effects:[{type:'dmg',base:8},{type:'churn',count:1}]},
+  carrion_shell:   {id:'carrion_shell',   name:'Carrion Shell', icon:'🛡️', type:'defense', champ:'carrion_collector', statId:'str',
+    effect:'Gain [Shield] (12) for 4s.\n[Echo]: Gain [Shield] (8) for 3s.',
+    effects:[{type:'shield',amt:12,dur:4}],
+    onDiscard:[{type:'shield',amt:8,dur:3}]},
+  carrion_retch:   {id:'carrion_retch',   name:'Retch',         icon:'🤢', type:'utility', champ:'carrion_collector', statId:'agi',
+    effect:'[Churn] 3.',
+    effects:[{type:'churn',count:3}]},
+  carrion_bloat:   {id:'carrion_bloat',   name:'Bloat',         icon:'🫧', type:'defense', champ:'carrion_collector', statId:'str',
+    effect:'Gain [Shield] equal to cards in discard pile × 2. [Churn] 1.',
+    effects:[{type:'shield_from_discard',mult:2},{type:'churn',count:1}],
+    unlock:{champion:'carrion_collector',level:5,gold:50}},
+  carrion_putrefy: {id:'carrion_putrefy', name:'Putrefy',       icon:'☠️', type:'attack',  champ:'carrion_collector', statId:'str',
+    effect:'Deal 8 damage.\n[Hellbent]: [Sacrifice] [10 HP], draw 2 cards.',
+    effects:[{type:'dmg',base:8},{type:'hellbent',effect:{type:'sacrifice_hp',cost:10,effect:{type:'draw_cards',count:2}}}],
+    unlock:{champion:'carrion_collector',level:5,gold:50}},
 
   // ── Spoils cards (earned from area clears, enemy-derived) ──
   rusty_stab:   {id:'rusty_stab',   name:'Rusty Stab',    icon:'🗡️', type:'attack',  unique:false, champ:null, statId:'str', effect:'Deal 8 damage. Apply [Poison] by 4.\n[Poison]: deals damage every 2s. Bypasses [Shield].', effects:[{type:'dmg',base:8}, {type:'poison',dpt:4,dur:8}]},
@@ -124,16 +356,7 @@ var CARDS = {
   dragon_breath:{id:'dragon_breath',name:'Dragon Breath',  icon:'🐲', type:'attack',  unique:false, champ:null, statId:'wis', effect:'Deal 12 damage three times. Increase [Burn] by WIS×2.\n[Burn]: deals damage every 3s. Bypasses [Shield].', effects:[{type:'dmg_multi',hits:3,dmg:12,delay:300}, {type:'burn_stat',base:0,stat:'wis',div:1,dur:9}, {type:'holy_flame'}]},
   ancient_roar: {id:'ancient_roar', name:'Ancient Roar',   icon:'🗣️', type:'debuff',  unique:false, champ:null, statId:'str', effect:'Apply [Marked] for 5s. Deal 10 damage.\n[Marked]: enemy takes 50% more damage from all sources.', effects:[{type:'marked',dur:5}, {type:'dmg',base:10}]},
 
-  ghost_shadow_mark:{id:'ghost_shadow_mark',name:'Shadow Mark',icon:'🌑',type:'utility',unique:false,champ:'thief',statId:'agi',effect:'Apply 16 [Poison]. Your next card is guaranteed to [Crit].\n[Crit]: 1.5× damage, or 2× if the card has its own crit chance.'},
-  quick_slash: {id:'quick_slash', name:'Quick Slash',   icon:'⚡', type:'attack',  unique:true,  champ:'thief', statId:'agi', effect:'Deal 10+AGI damage. 15% chance to [Crit]: deal double damage.\n[Crit]: a lucky strike that deals double damage.'},
-  flicker:     {id:'flicker',     name:'Flicker',       icon:'💨', type:'attack',  unique:true,  champ:'thief', statId:'agi', effect:'Deal 5 damage. Draw speed +30% for 2s.\nHigher AGI means faster draws — Flicker stacks with itself.', effects:[{type:'dmg',base:5}, {type:'draw_speed',pct:30,dur:2}]},
 
-  poison_dart: {id:'poison_dart', name:'Poison Dart',   icon:'🎯', type:'debuff',  unique:true,  champ:'thief', statId:'wis', effect:'Increase [Poison] by 8. 15% chance to [Crit]: detonate all [Poison] as instant damage.\n[Poison]: 8 damage every 2s. Bypasses [Shield]. Detonation also bypasses [Shield].'},
-  backstab:    {id:'backstab',    name:'Backstab',      icon:'🗡️', type:'attack',  unique:true,  champ:'thief', statId:'agi', effect:'Deal 12 damage. If the enemy is debuffed: deal 45 instead.'},
-  smoke_bomb:  {id:'smoke_bomb',  name:'Smoke Bomb',    icon:'💨', type:'debuff',  unique:true,  champ:'thief', statId:'agi', effect:'Apply [Slow] for 5s.\n[Slow]: enemy attack speed reduced by 40%.', effects:[{type:'slow',dur:5}]},
-
-  shadow_step: {id:'shadow_step', name:'Shadow Step',   icon:'👣', type:'utility', unique:true,  champ:'thief', statId:'agi', effect:'Apply [Dodge]. Gain 50 mana.\n[Dodge]: next incoming attack is evaded.'},
-  death_mark:  {id:'death_mark',  name:'Death Mark',    icon:'🩸', type:'debuff',  unique:true,  champ:'thief', statId:'wis', effect:'Apply [Marked] for 4s.\n[Marked]: enemy takes 50% more damage from all sources.', effects:[{type:'marked',dur:4}]},
 
 
   // ── Gorby — Conversion archetype ──

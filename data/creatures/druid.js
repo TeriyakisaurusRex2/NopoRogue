@@ -1,14 +1,34 @@
 // ════════════════════════════════════════════════════
-// CREATURE: DRUID
-// Drop druid.png into assets/creatures/ for a custom sprite.
+// CREATURE: STARCALLER DRUID
 // ════════════════════════════════════════════════════
 
-CREATURES.druid = {id:'druid',name:'STARCALLER DRUID',icon:'🌙',baseStats:{str:20,agi:20,wis:20},growth:{str:1,agi:1,wis:3},baseDmg:6,dmgGrowth:0.8,gold:[5,10],
-    playable:true, cardRewards:['void_bolt','nebula_shield'],
-    innate:{id:'starfall',name:'Starfall',desc:'Deal 3 dmg per card in hand, then discard half at random.'},
-    openingMove:'druid_bolt',
-    deck:[
-      {id:'druid_bolt',   copies:3, name:'Void Bolt',  effect:'dmg', value:8, msg:'fires a void bolt!'},
-      {id:'druid_comet',  copies:2, name:'Comet',      effect:'dmg', value:12,msg:'launches a drifting comet!'},
-      {id:'druid_nova',   copies:2, name:'Nova Burst', effect:'dmg_multi', value:5,hits:3, msg:'erupts in nova energy!'},
-    ]};
+CREATURES.druid = {
+  id:       'druid',
+  name:     'STARCALLER DRUID',
+  icon:     '🌙',
+  lore:     'The ritual shard is shattered. Whatever was sealed inside it is no longer contained. The druid does not yet understand what was released — only that the sky answers differently now, and the stars have begun to move.',
+  role:     'Mana Engine / Hand Burst',
+  bossOnly: false,
+
+  baseStats: { str:10, agi:12, wis:22 },
+  growth:    { str:1,  agi:1,  wis:3  },
+
+  innate: {
+    id:       'starfall',
+    name:     'Starfall',
+    desc:     '[Churn] your entire hand. Deal 5 damage per card churned.',
+    active:   true,
+    cost:     50,
+    cooldown: 8000,
+  },
+
+  deck: [
+    'druid_void_bolt',
+    'druid_void_bolt',
+    'druid_void_bolt',
+    'druid_nebula_ward',
+    'druid_nebula_ward',
+    'druid_nova_burst',
+    'druid_nova_burst',
+  ],
+};

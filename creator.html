@@ -648,6 +648,7 @@ function creatureDeckSize(){}
             <button class="btn btn-dim btn-sm" onclick="filterMechanics('buff')"       id="mf-buff">BUFFS</button>
             <button class="btn btn-dim btn-sm" onclick="filterMechanics('utility')"    id="mf-utility">UTILITY</button>
             <button class="btn btn-dim btn-sm" onclick="filterMechanics('escalation')" id="mf-escalation">ESCALATION</button>
+            <button class="btn btn-dim btn-sm" onclick="filterMechanics('sorcery')"    id="mf-sorcery">SORCERY</button>
           </div>
           <div id="mechanic-picker" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(195px,1fr));gap:6px;max-height:280px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent;"></div>
         </div>
@@ -1061,7 +1062,7 @@ const CARD_ROLES = [
     ]},
   { id:'escalation',
     icon:'📈', name:'ESCALATION',
-    hint:'Gets permanently better the more it\'s played.',
+    hint:'Gets permanently better the more it's played.',
     desc:'Cards that mutate the run the more you use them. Rewards building around a single card.',
     suggestedCats:['escalation','utility'],
     archetypes:[
@@ -1104,6 +1105,7 @@ function getMechanics(filterCat) {
     var cat = def.cat;
     if(id.startsWith('dmg_if_') || id.startsWith('bonus_if_') || id === 'mana_if_debuffed' || id === 'dmg_first_card') cat = 'conditional';
     if(id === 'draw_speed_permanent' || id === 'dmg_scaling_played') cat = 'escalation';
+    if(id === 'sorcery') cat = 'sorcery';
     return Object.assign({}, def, {id, _cat: cat});
   }).filter(function(d){
     if(!filterCat || filterCat === 'all') return true;
@@ -1201,7 +1203,7 @@ function _buildBlocksFromDef(blockDefs) {
 
 function filterMechanics(cat) {
   _mechFilterMode = cat;
-  ['all','damage','conditional','debuff','buff','utility','escalation'].forEach(c => {
+  ['all','damage','conditional','debuff','buff','utility','escalation','sorcery'].forEach(c => {
     const btn = document.getElementById('mf-'+c);
     if(btn){ btn.style.borderColor = c===cat?'var(--gold2)':''; btn.style.color = c===cat?'var(--gold)':''; }
   });
@@ -1412,7 +1414,7 @@ function rebuildCard() {
     if(echoOn && !echoMechanics.length) notes.push('⚠ Echo is enabled but has no mechanics — add at least one in section ④.');
     if(echoOn && echoMechanics.length) notes.push('✓ Echo active — this card works both when played and when discarded.');
     const hasConditional = cardMechanics.some(m => m.id.startsWith('dmg_if_'));
-    if(hasConditional && role && role.id==='payoff') notes.push('💡 Payoff card — make sure there\'s a Setup card in the same deck that creates the required condition.');
+    if(hasConditional && role && role.id==='payoff') notes.push('💡 Payoff card — make sure there's a Setup card in the same deck that creates the required condition.');
     if(cardMechanics.some(m=>m.id==='dmg_scaling_played')) notes.push('💡 Scaling card — put multiple copies in the deck to maximise stacks.');
     if(cardMechanics.length>3) notes.push('⚠ 4+ mechanics — complex card, consider splitting into two.');
     if(notes.length===1) notes.push('✓ Looks balanced for its role.');
@@ -1428,7 +1430,7 @@ function rebuildCard() {
       const pairs = Object.entries(m.vals).map(([k,v]) => {
         return typeof v==='string' && isNaN(v) ? k+":'"+v+"'" : k+':'+v;
       });
-      return '{type:'+m.id+''+( pairs.length?', '+pairs.join(', '):'')+'}';
+      return '{type:''+m.id+'''+( pairs.length?', '+pairs.join(', '):'')+'}';
     }).join(', ');
   }
 

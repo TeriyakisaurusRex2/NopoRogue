@@ -31,17 +31,37 @@
 
 // Stack-or-create Poison (2s tick, bypasses Shield)
 function _applyPoison(dpt, durMs){
+  var bonusDpt=(gs&&gs._relicPoisonDptBonus)||0; dpt+=bonusDpt;
+  var tickMs=Math.round(2000*((gs&&gs._relicPoisonTickMult)||1));
+  var lbl='Poison ('+dpt+'/'+(tickMs/1000)+'s)';
   var e=gs.statusEffects.enemy.find(function(s){return s.id==='poison';});
   if(e){
-    e.dpt+=dpt; e.remaining=Math.max(e.remaining,durMs||8000); e.maxRemaining=durMs||8000;
-    removeTagByLabel('enemy',e.label);
-    e.label='Poison ('+e.dpt+'/2s)';
-    addTag('enemy','debuff',e.label,0,'dot','Poison: '+e.dpt+' dmg/2s. Bypasses Shield.');
+    e.dpt+=dpt; e.tickMs=tickMs; e.remaining=Math.max(e.remaining,durMs||8000); e.maxRemaining=durMs||8000;
+    removeTagByLabel('enemy',e.label); e.label='Poison ('+e.dpt+'/'+(tickMs/1000)+'s)';
+    addTag('enemy','debuff',e.label,0,'dot','Poison: '+e.dpt+' dmg/'+(tickMs/1000)+'s. Bypasses Shield.');
   } else {
-    gs.statusEffects.enemy.push({id:'poison',label:'Poison ('+dpt+'/2s)',cls:'debuff',stat:'dot',
+    gs.statusEffects.enemy.push({id:'poison',label:lbl,cls:'debuff',stat:'dot',
+      remaining:durMs||8000,maxRemaining:durMs||8000,dot:true,dpt:dpt,tickMs:tickMs,tickAcc:0,
+      desc:'Poison: '+dpt+' dmg/'+(tickMs/1000)+'s. Bypasses Shield.'});
+    addTag('enemy','debuff',lbl,0,'dot','Poison: '+dpt+' dmg/'+(tickMs/1000)+'s. Bypasses Shield.');
+  }
+}
+
+// Apply Poison to the player (enemy-context, e.g. Plagued One self-poison on enemy turn)
+function _applyPoisonToPlayer(dpt, durMs){
+  // Skip if player has Plague Bearer immunity
+  if(_hasPoisonImmunity()) return;
+  var e=gs.statusEffects.player.find(function(s){return s.id==='poison';});
+  if(e){
+    e.dpt+=dpt; e.remaining=Math.max(e.remaining,durMs||8000); e.maxRemaining=durMs||8000;
+    removeTagByLabel('player',e.label);
+    e.label='Poison ('+e.dpt+'/2s)';
+    addTag('player','debuff',e.label,0,'dot','Poison: '+e.dpt+' dmg/2s. Bypasses Shield.');
+  } else {
+    gs.statusEffects.player.push({id:'poison',label:'Poison ('+dpt+'/2s)',cls:'debuff',stat:'dot',
       remaining:durMs||8000,maxRemaining:durMs||8000,dot:true,dpt:dpt,tickMs:2000,tickAcc:0,
       desc:'Poison: '+dpt+' dmg/2s. Bypasses Shield.'});
-    addTag('enemy','debuff','Poison ('+dpt+'/2s)',0,'dot','Poison: '+dpt+' dmg/2s. Bypasses Shield.');
+    addTag('player','debuff','Poison ('+dpt+'/2s)',0,'dot','Poison: '+dpt+' dmg/2s. Bypasses Shield.');
   }
 }
 
@@ -49,14 +69,12 @@ function _applyPoison(dpt, durMs){
 // Apply Burn — non-stacking. Reapplication refreshes duration only, never increases dpt.
 // Burn is a single flat DoT. Use poison for stacking pressure.
 function _applyBurn(dpt, durMs){
+  var dur=(durMs||9000)+((gs&&gs._relicBurnDurBonus)||0);
   var e=gs.statusEffects.enemy.find(function(s){return s.id==='burn';});
-  if(e){
-    // Refresh duration only — do NOT add dpt
-    e.remaining=durMs||9000; e.maxRemaining=durMs||9000;
-    // No tag change needed — label stays the same
-  } else {
+  if(e){ e.remaining=dur; e.maxRemaining=dur; }
+  else {
     gs.statusEffects.enemy.push({id:'burn',label:'Burn ('+dpt+'/3s)',cls:'debuff',stat:'dot',
-      remaining:durMs||9000,maxRemaining:durMs||9000,dot:true,dpt:dpt,tickMs:3000,tickAcc:0,
+      remaining:dur,maxRemaining:dur,dot:true,dpt:dpt,tickMs:3000,tickAcc:0,
       desc:'Burn: '+dpt+' dmg/3s. Bypasses Shield. Does not stack — reapplication refreshes duration.'});
     addTag('enemy','debuff','Burn ('+dpt+'/3s)',0,'dot','Burn: '+dpt+' dmg/3s. Bypasses Shield.');
   }
@@ -74,8 +92,163 @@ function _applyShield(amt, durMs, onExpiry){
   }, durMs);
 }
 
-// ═══════════════════════════════════════════════════════
-// EFFECT TYPES  —  single source of truth
+// ── Apply Poison to self (player) ──
+function _applyPoisonSelf(dpt, durMs, stacks){
+  stacks=stacks||1;
+  var e=gs.statusEffects.player.find(function(s){return s.id==='poison_self';});
+  if(e){
+    e.dpt+=dpt*stacks; e.remaining=Math.max(e.remaining,durMs||8000); e.maxRemaining=durMs||8000;
+    removeTagByLabel('player',e.label);
+    e.label='Poison ('+e.dpt+'/2s)';
+    addTag('player','debuff',e.label,0,'dot','Self-Poison: '+e.dpt+' dmg/2s.');
+  } else {
+    var totalDpt=dpt*stacks;
+    gs.statusEffects.player.push({id:'poison_self',label:'Poison ('+totalDpt+'/2s)',cls:'debuff',
+      stat:'dot',remaining:durMs||8000,maxRemaining:durMs||8000,dot:true,dpt:totalDpt,
+      tickMs:2000,tickAcc:0,desc:'Self-Poison: '+totalDpt+' dmg/2s.',selfPoison:true});
+    addTag('player','debuff','Poison ('+totalDpt+'/2s)',0,'dot','Self-Poison: '+totalDpt+' dmg/2s.');
+  }
+}
+
+// Apply Poison to enemy self (when enemy is the Plagued One)
+function _applyPoisonSelfEnemy(dpt, durMs, stacks){
+  stacks=stacks||1;
+  var totalDpt=dpt*stacks;
+  var e=gs.statusEffects.enemy.find(function(s){return s.id==='poison_self_enemy';});
+  if(e){
+    e.dpt+=totalDpt; e.remaining=Math.max(e.remaining,durMs||8000); e.maxRemaining=durMs||8000;
+    removeTagByLabel('enemy',e.label);
+    e.label='Self-Poison ('+e.dpt+'/2s)';
+    addTag('enemy','debuff',e.label,0,'dot','Self-Poison: '+e.dpt+' dmg/2s.');
+  } else {
+    gs.statusEffects.enemy.push({id:'poison_self_enemy',label:'Self-Poison ('+totalDpt+'/2s)',cls:'debuff',
+      stat:'dot',remaining:durMs||8000,maxRemaining:durMs||8000,dot:true,dpt:totalDpt,
+      tickMs:2000,tickAcc:0,desc:'Self-Poison: '+totalDpt+' dmg/2s.'});
+    addTag('enemy','debuff','Self-Poison ('+totalDpt+'/2s)',0,'dot','Self-Poison: '+totalDpt+' dmg/2s.');
+  }
+}
+
+// ── Get enemy Poison stack count ──
+function _getEnemyPoisonStacks(){
+  var e=gs.statusEffects.enemy.find(function(s){return s.id==='poison';});
+  return e?Math.floor(e.dpt/4):0; // 4 dpt per stack baseline
+}
+
+// ── Get self Poison stack count ──
+function _getSelfPoisonStacks(){
+  var e=gs.statusEffects.player.find(function(s){return s.id==='poison_self';});
+  return e?Math.floor(e.dpt/4):0;
+}
+
+// ── Consume N self Poison stacks (for Sacrifice) — returns true if successful ──
+function _consumeSelfPoison(n){
+  var e=gs.statusEffects.player.find(function(s){return s.id==='poison_self';});
+  if(!e) return false;
+  var stacks=Math.floor(e.dpt/4);
+  if(stacks<n) return false;
+  e.dpt-=n*4;
+  if(e.dpt<=0){
+    gs.statusEffects.player=gs.statusEffects.player.filter(function(s){return s.id!=='poison_self';});
+    removeTagByLabel('player',e.label);
+  } else {
+    removeTagByLabel('player',e.label);
+    e.label='Poison ('+e.dpt+'/2s)';
+    addTag('player','debuff',e.label,0,'dot','Self-Poison: '+e.dpt+' dmg/2s.');
+  }
+  return true;
+}
+
+// ── Shed Poison (transfer all self Poison to enemy) ──
+function _shedPoison(){
+  var self=gs.statusEffects.player.find(function(s){return s.id==='poison_self';});
+  if(!self||self.dpt<=0) return;
+  _applyPoison(self.dpt, self.remaining);
+  gs.statusEffects.player=gs.statusEffects.player.filter(function(s){return s.id!=='poison_self';});
+  removeTagByLabel('player',self.label);
+  addLog('[Shed] — all Poison transferred to target.','debuff');
+}
+
+// Enemy version: transfer enemy self-poison to player
+function _shedPoisonEnemy(){
+  var self=gs.statusEffects.enemy.find(function(s){return s.id==='poison_self_enemy';});
+  if(!self||self.dpt<=0) return;
+  _applyPoisonToPlayer(self.dpt, self.remaining);
+  gs.statusEffects.enemy=gs.statusEffects.enemy.filter(function(s){return s.id!=='poison_self_enemy';});
+  removeTagByLabel('enemy',self.label);
+  addLog('[Shed] — enemy Poison transferred to you.','debuff');
+}
+
+// ── Volatile system ──
+// gs._volatile = { stacks, timer, stabilized, baseDmg }
+var VOLATILE_BASE_DMG = 8; // base damage for fizzle/detonate
+var VOLATILE_DURATION_MS = 8000;
+
+function _applyVolatile(n){
+  if(!gs._volatile) gs._volatile={stacks:0,timer:null,stabilized:false};
+  gs._volatile.stacks+=n;
+  // Reset timer
+  if(gs._volatile.timer) clearTimeout(gs._volatile.timer);
+  gs._volatile.timer=setTimeout(function(){
+    if(!gs) return;
+    _detonateVolatile(false);
+  }, VOLATILE_DURATION_MS);
+  // Update tag
+  removeTagByLabel('enemy','Volatile');
+  addTag('enemy','debuff','Volatile ×'+gs._volatile.stacks,0,'volatile','Volatile: '+gs._volatile.stacks+' stacks — detonates at '+(gs._volatile.stabilized?10:5)+'+.');
+  updateAll();
+}
+
+function _detonateVolatile(forced){
+  if(!gs||!gs._volatile) return;
+  var v=gs._volatile;
+  var threshold=v.stabilized?10:5;
+  var dmg=VOLATILE_BASE_DMG;
+  var msg;
+  if(v.stacks>=threshold*2){ dmg=Math.round(VOLATILE_BASE_DMG*(v.stabilized?4:2)); msg='DETONATE'; }
+  else if(v.stacks>=threshold){ dmg=Math.round(VOLATILE_BASE_DMG*2); msg='DETONATE'; }
+  else { msg='fizzle'; } // 1× damage
+  dealDamageToPlayer(dmg);
+  addLog('[Volatile] '+msg+'! ('+v.stacks+' stacks) — '+dmg+' dmg.','dmg');
+  spawnFloatNum('player',msg==='fizzle'?'fizzle':'BOOM!',true,'crit-num');
+  removeTagByLabel('enemy','Volatile');
+  gs._volatile=null;
+}
+
+// ── Thorns reflect on hit ──
+// Called from dealDamageToEnemy to check for Thorns
+function _checkThornsReflect(){
+  var t=gs.statusEffects.player.find(function(s){return s.stat==='thorns';});
+  if(!t||!t.val) return;
+  gs.enemyHp=Math.max(0,gs.enemyHp-t.val);
+  addLog('[Thorns] — '+t.val+' reflected.','dmg');
+  updateAll();
+}
+
+// ── Suspend (pause all status timers) ──
+function _suspendTimers(durSecs){
+  var ms=durSecs*1000;
+  gs._suspended=true;
+  // Pause all status effect remaining timers by storing the suspend start
+  gs._suspendEnd=Date.now()+ms;
+  setTimeout(function(){
+    if(!gs) return;
+    gs._suspended=false;
+    gs._suspendEnd=0;
+  }, ms);
+  addTag('player','buff','Suspended',0,'suspend','All timers paused for '+durSecs+'s.');
+  setTimeout(function(){
+    if(!gs) return;
+    removeTagByLabel('player','Suspended');
+  }, ms);
+}
+
+// ── Poison immunity check (Plague Bearer innate) ──
+function _hasPoisonImmunity(){
+  var c=CREATURES[gs.champId];
+  return c&&c.innate&&c.innate.id==='plague_bearer';
+}
+
+
 //
 // Each entry:
 //   label       — name in the card creator picker
@@ -103,7 +276,8 @@ var EFFECT_TYPES = {
     typeHint:'attack',
     run: function(v,ctx){
       var d=ctx.pdmg(+v.base);
-      dealDamageToEnemy(d);
+      if(ctx.isEnemy) dealDamageToPlayer(d);
+      else dealDamageToEnemy(d);
       addLog(ctx.cardName+'! '+d+' dmg.','dmg');
     }
   },
@@ -207,16 +381,542 @@ var EFFECT_TYPES = {
 
   // ── DEBUFFS ─────────────────────────────────────────
 
-  slow: {
+  // Updated: Slow is now a fixed +600ms draw interval increase (non-stacking, refreshes)
+  slow_draw: {
     label:'Apply [Slow]', cat:'debuff',
-    desc:'Reduce enemy attack speed for a duration.',
+    desc:'Increase enemy draw interval by 600ms. Non-stacking, refreshes duration.',
     fields:[{id:'dur', label:'Duration (s)', type:'number', default:4, min:1, max:15}],
-    effectText:  function(v){ return 'Apply Slow for '+v.dur+'s.'; },
-    tooltipText: function(v){ return 'Slow: reduces enemy attack speed by 40%.'; },
+    effectText:  function(v){ return 'Apply [Slow] for '+v.dur+'s.'; },
+    tooltipText: function(v){ return 'Slow: draw interval +600ms. Non-stacking.'; },
     typeHint:'debuff',
     run: function(v,ctx){
-      applyStatus('enemy','debuff','Slow',-0.4,'atkspeed',(+v.dur)*1000,'Slow: atk speed -40%.');
-      addLog(ctx.cardName+'! Slowed '+v.dur+'s.','debuff');
+      var tgt=ctx.isEnemy?'player':'enemy';
+      applyStatus(tgt,'debuff','Slow',600,'slow_draw',(+v.dur)*1000,'Slow: draw interval +600ms.');
+      addLog(ctx.cardName+'! [Slow] applied.','debuff');
+    }
+  },
+
+  // Keep legacy slow as alias for backwards compat with existing cards
+  slow: {
+    label:'Apply [Slow] (legacy)', cat:'debuff',
+    desc:'Legacy slow — maps to slow_draw.',
+    fields:[{id:'dur', label:'Duration (s)', type:'number', default:4, min:1, max:15}],
+    effectText:  function(v){ return 'Apply [Slow] for '+v.dur+'s.'; },
+    tooltipText: function(v){ return 'Slow: draw interval +600ms.'; },
+    typeHint:'debuff',
+    run: function(v,ctx){
+      applyStatus('enemy','debuff','Slow',600,'slow_draw',(+v.dur)*1000,'Slow: draw interval +600ms.');
+      addLog(ctx.cardName+'! [Slow] applied.','debuff');
+    }
+  },
+
+  // ── Weaken (renamed from cursed for clarity) ──
+  weaken: {
+    label:'Apply [Weaken]', cat:'debuff',
+    desc:'Reduce target damage output by 15%.',
+    fields:[{id:'dur', label:'Duration (s)', type:'number', default:4, min:1, max:20}],
+    effectText:  function(v){ return 'Apply [Weaken] for '+v.dur+'s.'; },
+    tooltipText: function(v){ return 'Weaken: target deals 15% less damage.'; },
+    typeHint:'debuff',
+    run: function(v,ctx){
+      var tgt=ctx.isEnemy?'player':'enemy';
+      applyStatus(tgt,'debuff','Weaken',-0.15,'dmg',(+v.dur)*1000,'Weaken: target dmg -15%.');
+      addLog(ctx.cardName+'! [Weaken] '+v.dur+'s.','debuff');
+    }
+  },
+
+  // ── Thorns ──
+  thorns: {
+    label:'Apply [Thorns]', cat:'buff',
+    desc:'Reflect X damage back to attacker on each hit.',
+    fields:[
+      {id:'val', label:'Reflect dmg', type:'number', default:8,  min:1, max:50},
+      {id:'dur', label:'Duration (s)',type:'number', default:6,  min:1, max:20}
+    ],
+    effectText:  function(v){ return 'Apply [Thorns] ('+v.val+') for '+v.dur+'s.'; },
+    tooltipText: function(v){ return 'Thorns: each hit dealt to this creature reflects '+v.val+' damage back. Non-stacking.'; },
+    typeHint:'defense',
+    run: function(v,ctx){
+      var tgt=ctx.isEnemy?'enemy':'player';
+      applyStatus(tgt,'buff','Thorns',+v.val,'thorns',(+v.dur)*1000,'Thorns: reflects '+v.val+' dmg per hit.');
+      addLog(ctx.cardName+'! [Thorns] ('+v.val+') for '+v.dur+'s.','buff');
+    }
+  },
+
+  // ── Volatile ──
+  volatile_apply: {
+    label:'Apply [Volatile] stacks', cat:'debuff',
+    desc:'Apply N Volatile stacks to the target.',
+    fields:[{id:'stacks', label:'Stacks', type:'number', default:1, min:1, max:5}],
+    effectText:  function(v){ return 'Apply '+v.stacks+' [Volatile] stack'+(+v.stacks>1?'s':'')+'.'; },
+    tooltipText: function(v){ return 'Volatile: at 5+ stacks detonates for 2× damage. Fizzles below 5.'; },
+    typeHint:'attack',
+    run: function(v,ctx){ _applyVolatile(+v.stacks); addLog(ctx.cardName+'! +'+v.stacks+' [Volatile].','debuff'); }
+  },
+
+  volatile_double: {
+    label:'Double [Volatile] stacks', cat:'debuff',
+    desc:'Double the current Volatile stack count on the target.',
+    fields:[],
+    effectText:  function(v){ return 'Double current [Volatile] stacks.'; },
+    tooltipText: function(v){ return 'Doubles existing Volatile stacks.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      if(!gs._volatile) return;
+      var add=gs._volatile.stacks;
+      _applyVolatile(add);
+      addLog(ctx.cardName+'! [Volatile] doubled to '+gs._volatile.stacks+'.','debuff');
+    }
+  },
+
+  stabilize: {
+    label:'[Stabilize]', cat:'utility',
+    desc:'Raise Volatile detonation threshold to 10 stacks (10+ = 4× damage).',
+    fields:[],
+    effectText:  function(v){ return '[Stabilize].'; },
+    tooltipText: function(v){ return 'Stabilize: raises Volatile threshold to 10 stacks. 10+ = 4× damage.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      if(gs._volatile) gs._volatile.stabilized=true;
+      else gs._volatile={stacks:0,timer:null,stabilized:true};
+      addLog(ctx.cardName+'! [Stabilize] — Volatile threshold raised to 10.','buff');
+    }
+  },
+
+  // ── Poison self ──
+  poison_self: {
+    label:'Apply [Poison] to self', cat:'debuff',
+    desc:'Apply Poison stacks to this creature (self).',
+    fields:[
+      {id:'dpt',    label:'Dmg/tick',    type:'number', default:2, min:1, max:20},
+      {id:'dur',    label:'Duration (s)',type:'number', default:8, min:1, max:20},
+      {id:'stacks', label:'Stacks',      type:'number', default:1, min:1, max:6}
+    ],
+    effectText:  function(v){ return 'Apply '+v.stacks+' [Poison] to self.'; },
+    tooltipText: function(v){ return ''; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      if(ctx.isEnemy) _applyPoisonSelfEnemy(+v.dpt,+v.dur*1000,+v.stacks||1);
+      else _applyPoisonSelf(+v.dpt,+v.dur*1000,+v.stacks||1);
+      addLog(ctx.cardName+'! Self-[Poison].','debuff');
+    }
+  },
+
+  // ── Poison both ──
+  poison_both: {
+    label:'Apply [Poison] to self and target', cat:'debuff',
+    desc:'Apply Poison to both this creature and the opponent simultaneously.',
+    fields:[
+      {id:'dpt',    label:'Dmg/tick',    type:'number', default:4, min:1, max:20},
+      {id:'dur',    label:'Duration (s)',type:'number', default:8, min:1, max:20},
+      {id:'stacks', label:'Stacks each', type:'number', default:2, min:1, max:6}
+    ],
+    effectText:  function(v){ return 'Apply '+v.stacks+' [Poison] to self and target.'; },
+    tooltipText: function(v){ return ''; },
+    typeHint:'debuff',
+    run: function(v,ctx){
+      if(ctx.isEnemy){
+        _applyPoisonToPlayer(+v.dpt, +v.dur*1000);
+        _applyPoisonSelfEnemy(+v.dpt, +v.dur*1000, +v.stacks||2);
+      } else {
+        _applyPoison(+v.dpt, +v.dur*1000);
+        _applyPoisonSelf(+v.dpt, +v.dur*1000, +v.stacks||2);
+      }
+      addLog(ctx.cardName+'! [Poison] to both.','debuff');
+    }
+  },
+
+  // ── Dmg per poison stacks on enemy ──
+  dmg_per_poison_on_enemy: {
+    label:'Damage per Poison on target', cat:'damage',
+    desc:'Deal damage equal to N × enemy Poison stacks.',
+    fields:[
+      {id:'base', label:'Dmg per stack', type:'number', default:4, min:1, max:20},
+      {id:'min',  label:'Minimum dmg',   type:'number', default:4, min:1, max:20}
+    ],
+    effectText:  function(v){ return 'Deal '+v.base+' damage per [Poison] stack on target (min '+v.min+').'; },
+    tooltipText: function(v){ return ''; },
+    typeHint:'attack',
+    run: function(v,ctx){
+      var stacks=ctx.isEnemy?_getSelfPoisonStacks():_getEnemyPoisonStacks();
+      var d=ctx.pdmg(Math.max(+v.min, stacks*(+v.base)));
+      if(ctx.isEnemy) dealDamageToPlayer(d); else dealDamageToEnemy(d);
+      addLog(ctx.cardName+'! '+d+' dmg ('+stacks+' Poison stacks).','dmg');
+    }
+  },
+
+  // ── Shed poison ──
+  shed_poison: {
+    label:'Transfer all [Poison] to target', cat:'utility',
+    desc:'Move all self Poison stacks to the opponent.',
+    fields:[],
+    effectText:  function(v){ return 'Transfer all [Poison] stacks from self to target.'; },
+    tooltipText: function(v){ return 'Shed: transfers all Poison from self to opponent.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      if(ctx.isEnemy) _shedPoisonEnemy(); else _shedPoison();
+      addLog(ctx.cardName+'! [Shed] — Poison transferred.','debuff');
+    }
+  },
+
+  // ── Sacrifice HP ──
+  sacrifice_hp: {
+    label:'[Sacrifice] HP for effect', cat:'utility',
+    desc:'Pay X HP to trigger a nested effect.',
+    fields:[
+      {id:'cost',   label:'HP cost',     type:'number', default:10, min:1, max:50},
+      {id:'effect', label:'Effect obj',  type:'json',   default:'{}'}
+    ],
+    effectText:  function(v){ return '[Sacrifice] ['+v.cost+' HP]: '+((v.effect&&v.effect.type)||'effect')+'.'; },
+    tooltipText: function(v){ return 'Sacrifice: pay '+v.cost+' HP to trigger this.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      if(ctx.isEnemy){
+        if(gs.enemyHp<=+v.cost) return;
+        gs.enemyHp-=+v.cost;
+        updateAll();
+        addLog('[Sacrifice] enemy -'+v.cost+' HP.','debuff');
+      } else {
+        if(gs.playerHp<=+v.cost) return;
+        gs.playerHp-=+v.cost;
+        updateAll();
+        addLog('[Sacrifice] -'+v.cost+' HP.','debuff');
+      }
+      if(v.effect&&v.effect.type&&EFFECT_TYPES[v.effect.type])
+        EFFECT_TYPES[v.effect.type].run(v.effect,ctx);
+    }
+  },
+
+  // ── Sacrifice poison stacks ──
+  sacrifice_poison_stacks: {
+    label:'[Sacrifice] Poison stacks for effect', cat:'utility',
+    desc:'Pay X self Poison stacks to trigger a nested effect.',
+    fields:[
+      {id:'cost',   label:'Stack cost', type:'number', default:3, min:1, max:10},
+      {id:'effect', label:'Effect obj', type:'json',   default:'{}'}
+    ],
+    effectText:  function(v){ return '[Sacrifice] ['+v.cost+' Poison stacks]: '+((v.effect&&v.effect.type)||'effect')+'.'; },
+    tooltipText: function(v){ return 'Sacrifice: pay '+v.cost+' Poison stacks to trigger this.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      if(!_consumeSelfPoison(+v.cost)) return;
+      addLog('[Sacrifice] -'+v.cost+' Poison stacks.','debuff');
+      if(v.effect&&v.effect.type&&EFFECT_TYPES[v.effect.type])
+        EFFECT_TYPES[v.effect.type].run(v.effect,ctx);
+    }
+  },
+
+  // ── Sorcery wrapper ──
+  sorcery: {
+    label:'[Sorcery] conditional', cat:'utility',
+    desc:'Spend X mana to trigger a nested effect.',
+    fields:[
+      {id:'cost',   label:'Mana cost',  type:'number', default:20, min:5, max:100},
+      {id:'effect', label:'Effect obj', type:'json',   default:'{}'}
+    ],
+    effectText:  function(v){ return '[Sorcery] ['+v.cost+']: '+((v.effect&&v.effect.type)||'effect')+'.'; },
+    tooltipText: function(v){ return 'Sorcery: spend '+v.cost+' mana to trigger.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      var pool=ctx.isEnemy?gs.enemyMana:gs.mana;
+      if(pool<+v.cost) return;
+      if(ctx.isEnemy) gs.enemyMana-=+v.cost; else gs.mana-=+v.cost;
+      updateAll();
+      addLog('[Sorcery] ['+v.cost+'] fired.','mana');
+      if(v.effect&&v.effect.type&&EFFECT_TYPES[v.effect.type])
+        EFFECT_TYPES[v.effect.type].run(v.effect,ctx);
+    }
+  },
+
+  // ── Hellbent wrapper ──
+  hellbent: {
+    label:'[Hellbent] conditional', cat:'utility',
+    desc:'Only triggers if you have no cards in hand.',
+    fields:[{id:'effect', label:'Effect obj', type:'json', default:'{}'}],
+    effectText:  function(v){ return '[Hellbent]: '+((v.effect&&v.effect.type)||'effect')+'.'; },
+    tooltipText: function(v){ return 'Hellbent: only triggers with no cards in hand.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      var handLen=ctx.isEnemy?gs.enemyHand.length:gs.hand.length;
+      if(handLen>0) return;
+      addLog('[Hellbent] triggered!','innate');
+      if(v.effect&&v.effect.type&&EFFECT_TYPES[v.effect.type])
+        EFFECT_TYPES[v.effect.type].run(v.effect,ctx);
+    }
+  },
+
+  // ── Refresh (shuffle discard into draw) ──
+  refresh: {
+    label:'[Refresh]', cat:'utility',
+    desc:'Shuffle discard pile into draw pile.',
+    fields:[],
+    effectText:  function(v){ return '[Refresh].'; },
+    tooltipText: function(v){ return 'Refresh: shuffle your discard pile into your draw pile.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      if(ctx.isEnemy){
+        gs.enemyDrawPool=gs.enemyDrawPool.concat(gs.enemyDiscardPile.splice(0));
+        for(var i=gs.enemyDrawPool.length-1;i>0;i--){
+          var j=Math.floor(Math.random()*(i+1));
+          var tmp=gs.enemyDrawPool[i]; gs.enemyDrawPool[i]=gs.enemyDrawPool[j]; gs.enemyDrawPool[j]=tmp;
+        }
+      } else {
+        gs.drawPile=gs.drawPile.concat(gs.discardPile.splice(0));
+        for(var i=gs.drawPile.length-1;i>0;i--){
+          var j=Math.floor(Math.random()*(i+1));
+          var tmp=gs.drawPile[i]; gs.drawPile[i]=gs.drawPile[j]; gs.drawPile[j]=tmp;
+        }
+        renderPiles();
+      }
+      addLog('[Refresh] — discard shuffled back into deck.','draw');
+    }
+  },
+
+  // ── Churn ──
+  churn: {
+    label:'[Churn]', cat:'utility',
+    desc:'Discard N random cards from hand, then draw N.',
+    fields:[{id:'count', label:'Count', type:'number', default:1, min:1, max:4}],
+    effectText:  function(v){ return '[Churn] '+v.count+'.'; },
+    tooltipText: function(v){ return 'Churn '+v.count+': discard '+v.count+' random, draw '+v.count+'.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      var n=+v.count;
+      var discarded=0;
+      if(ctx.isEnemy){
+        // Churn enemy hand
+        for(var i=0;i<n;i++){
+          if(!gs.enemyHand.length) break;
+          var ri=Math.floor(Math.random()*gs.enemyHand.length);
+          var disc=gs.enemyHand.splice(ri,1)[0];
+          gs.enemyDiscardPile.push(disc);
+          discarded++;
+        }
+        for(var d=0;d<discarded;d++){
+          var drawn=gs.enemyDrawPool.length?gs.enemyDrawPool.shift():null;
+          if(drawn) gs.enemyHand.push(drawn);
+        }
+      } else {
+        for(var i=0;i<n;i++){
+          if(!gs.hand.length) break;
+          var ri=Math.floor(Math.random()*gs.hand.length);
+          var disc=gs.hand.splice(ri,1)[0];
+          if(!disc.ghost){ gs.discardPile.push(disc.id); handleCardDiscard(disc.id); }
+          discarded++;
+        }
+        for(var d=0;d<discarded;d++) doDraw(null,false);
+        renderHand(); renderPiles();
+      }
+      addLog('[Churn] '+n+'.','draw');
+    }
+  },
+
+  // ── Shield from discard pile ──
+  shield_from_discard: {
+    label:'Shield from discard pile size', cat:'buff',
+    desc:'Gain Shield equal to discard pile size × multiplier.',
+    fields:[{id:'mult', label:'Multiplier', type:'number', default:2, min:1, max:8}],
+    effectText:  function(v){ return 'Gain [Shield] equal to discard pile × '+v.mult+'.'; },
+    tooltipText: function(v){ return 'Shield scales with how many cards you\'ve played.'; },
+    typeHint:'defense',
+    run: function(v,ctx){
+      var pile=ctx.isEnemy?gs.enemyDiscardPile:gs.discardPile;
+      var amt=(pile.length)*(+v.mult);
+      if(ctx.isEnemy){
+        if(amt>0){ gs.enemyShell+=amt; setTimeout(function(){ if(!gs) return; gs.enemyShell=Math.max(0,gs.enemyShell-amt); },4000); }
+      } else {
+        if(amt>0) _applyShield(amt,4000);
+      }
+      addLog(ctx.cardName+'! Shield +'+(amt||0)+' ('+pile.length+' in discard).','buff');
+    }
+  },
+
+  // ── Damage based on missing mana ──
+  dmg_missing_mana: {
+    label:'Damage from missing mana', cat:'damage',
+    desc:'Deal damage based on how much mana you are missing.',
+    fields:[
+      {id:'div', label:'Divisor',    type:'number', default:3, min:1, max:10},
+      {id:'min', label:'Min damage', type:'number', default:5, min:1, max:20}
+    ],
+    effectText:  function(v){ return 'Deal damage equal to missing mana ÷ '+v.div+' (min '+v.min+').'; },
+    tooltipText: function(v){ return 'More powerful when your mana has been drained.'; },
+    typeHint:'attack',
+    run: function(v,ctx){
+      var missing=ctx.isEnemy?(gs.enemyMaxMana-gs.enemyMana):(gs.maxMana-gs.mana);
+      var d=ctx.pdmg(Math.max(+v.min, Math.floor(missing/(+v.div))));
+      if(ctx.isEnemy) dealDamageToPlayer(d); else dealDamageToEnemy(d);
+      addLog(ctx.cardName+'! '+d+' dmg ('+missing+' missing mana).','dmg');
+    }
+  },
+
+  // ── Damage based on STR difference ──
+  dmg_str_diff: {
+    label:'Damage from STR difference', cat:'damage',
+    desc:'Deal damage based on opponent STR minus own STR.',
+    fields:[
+      {id:'mult', label:'Multiplier', type:'number', default:2, min:1, max:5},
+      {id:'min',  label:'Min damage', type:'number', default:4, min:1, max:20}
+    ],
+    effectText:  function(v){ return 'Deal (opponent STR − own STR) × '+v.mult+' damage (min '+v.min+').'; },
+    tooltipText: function(v){ return 'Hits harder against high-STR targets.'; },
+    typeHint:'attack',
+    run: function(v,ctx){
+      var ownStr=ctx.isEnemy?ctx.str:gs.stats.str;
+      var oppStr=ctx.isEnemy?gs.stats.str:(gs.enemyStats?gs.enemyStats.str:gs.stats.str);
+      var diff=Math.max(0, oppStr-ownStr);
+      var d=ctx.pdmg(Math.max(+v.min, diff*(+v.mult)));
+      if(ctx.isEnemy) dealDamageToPlayer(d); else dealDamageToEnemy(d);
+      addLog(ctx.cardName+'! '+d+' dmg (STR diff '+diff+').','dmg');
+    }
+  },
+
+  // ── Damage based on missing HP ──
+  dmg_missing_hp: {
+    label:'Damage from missing HP', cat:'damage',
+    desc:'Deal damage based on how much HP this creature is missing.',
+    fields:[
+      {id:'div', label:'Divisor',    type:'number', default:2, min:1, max:10},
+      {id:'min', label:'Min damage', type:'number', default:4, min:1, max:20}
+    ],
+    effectText:  function(v){ return 'Deal damage equal to missing HP ÷ '+v.div+' (min '+v.min+').'; },
+    tooltipText: function(v){ return 'More powerful when near death.'; },
+    typeHint:'attack',
+    run: function(v,ctx){
+      var missing=ctx.isEnemy?(gs.enemyMaxHp-gs.enemyHp):(gs.playerMaxHp-gs.playerHp);
+      var d=ctx.pdmg(Math.max(+v.min, Math.floor(missing/(+v.div))));
+      if(ctx.isEnemy) dealDamageToPlayer(d); else dealDamageToEnemy(d);
+      addLog(ctx.cardName+'! '+d+' dmg ('+missing+' missing HP).','dmg');
+    }
+  },
+
+  // ── Damage per active second of Slow on target ──
+  dmg_per_slow_seconds: {
+    label:'Damage per Slow seconds remaining', cat:'damage',
+    desc:'Deal damage based on Slow duration remaining on target.',
+    fields:[
+      {id:'base', label:'Dmg per second', type:'number', default:6, min:1, max:20},
+      {id:'min',  label:'Min damage',     type:'number', default:6, min:1, max:20}
+    ],
+    effectText:  function(v){ return 'Deal '+v.base+' damage per active second of [Slow] remaining (min '+v.min+').'; },
+    tooltipText: function(v){ return 'More powerful when Slow is freshly applied.'; },
+    typeHint:'attack',
+    run: function(v,ctx){
+      var tgt=ctx.isEnemy?'player':'enemy';
+      var slowStatus=gs.statusEffects[tgt].find(function(s){return s.stat==='slow_draw';});
+      var secs=slowStatus?slowStatus.remaining/1000:0;
+      var d=ctx.pdmg(Math.max(+v.min, Math.floor(secs*(+v.base))));
+      if(ctx.isEnemy) dealDamageToPlayer(d); else dealDamageToEnemy(d);
+      addLog(ctx.cardName+'! '+d+' dmg ('+secs.toFixed(1)+'s Slow remaining).','dmg');
+    }
+  },
+
+  // ── Drain enemy mana (direct steal, not temporary) ──
+  drain_enemy_mana: {
+    label:'Drain enemy mana', cat:'utility',
+    desc:'Directly remove X mana from the enemy.',
+    fields:[{id:'amt', label:'Mana drained', type:'number', default:15, min:5, max:60}],
+    effectText:  function(v){ return '[Drain] '+v.amt+' mana.'; },
+    tooltipText: function(v){ return 'Drain: removes '+v.amt+' mana from enemy directly.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      if(ctx.isEnemy){ gs.mana=Math.max(0,gs.mana-(+v.amt)); addLog(ctx.cardName+'! -'+v.amt+' mana.','mana'); }
+      else { gs.enemyMana=Math.max(0,(gs.enemyMana||0)-(+v.amt)); addLog(ctx.cardName+'! Enemy -'+v.amt+' mana.','mana'); }
+      updateAll();
+    }
+  },
+
+  // ── Heal self ──
+  heal_self: {
+    label:'Heal self', cat:'buff',
+    desc:'Restore X HP to this creature.',
+    fields:[{id:'amt', label:'HP healed', type:'number', default:10, min:1, max:50}],
+    effectText:  function(v){ return 'Heal '+v.amt+' HP.'; },
+    tooltipText: function(v){ return 'Restores '+v.amt+' HP.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      if(ctx.isEnemy){
+        gs.enemyHp=Math.min(gs.enemyMaxHp, gs.enemyHp+(+v.amt));
+        spawnFloatNum('enemy','+'+(+v.amt),false,'heal-num');
+        flashHpBar('enemy','hp-flash-green');
+      } else {
+        gs.playerHp=Math.min(gs.playerMaxHp, gs.playerHp+(+v.amt));
+      }
+      updateAll();
+      addLog(ctx.cardName+'! Healed '+v.amt+' HP.','buff');
+    }
+  },
+
+  // ── Suspend (pause timers) ──
+  suspend: {
+    label:'[Suspend] timers', cat:'utility',
+    desc:'Pause all active buff and debuff timers for X seconds.',
+    fields:[{id:'dur', label:'Duration (s)', type:'number', default:2, min:1, max:6}],
+    effectText:  function(v){ return '[Suspend] ('+v.dur+').'; },
+    tooltipText: function(v){ return 'Suspend: pause all buff/debuff timers for '+v.dur+'s.'; },
+    typeHint:'utility',
+    run: function(v,ctx){ _suspendTimers(+v.dur); addLog('[Suspend] ('+v.dur+'s).','buff'); }
+  },
+
+  // ── Draw speed once (reduce next draw delay) ──
+  draw_speed_once: {
+    label:'Reduce next draw delay', cat:'buff',
+    desc:'Reduce the next draw delay by a fixed amount in ms.',
+    fields:[{id:'amt', label:'Reduction (ms)', type:'number', default:1500, min:100, max:3000}],
+    effectText:  function(v){ return 'Reduce next draw delay by '+(v.amt/1000).toFixed(1)+'s.'; },
+    tooltipText: function(v){ return 'Accelerates the next card draw.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      gs._nextDrawBonus=(gs._nextDrawBonus||0)+(+v.amt);
+      addLog(ctx.cardName+'! Next draw '+(+v.amt/1000).toFixed(1)+'s faster.','buff');
+    }
+  },
+
+  haste: {
+    label:'Apply [Haste]', cat:'buff',
+    desc:'Increase draw speed by X% for a duration.',
+    fields:[
+      {id:'pct', label:'Speed %',    type:'number', default:20, min:5,  max:100},
+      {id:'dur', label:'Duration (s)',type:'number', default:3,  min:1,  max:15}
+    ],
+    effectText:  function(v){ return 'Gain [Haste] '+v.pct+'% for '+v.dur+'s.'; },
+    tooltipText: function(v){ return 'Haste: draw speed +'+v.pct+'% for '+v.dur+'s.'; },
+    typeHint:'buff',
+    run: function(v,ctx){
+      var pct=+v.pct/100, dur=(+v.dur)*1000;
+      if(ctx.isEnemy){
+        applyStatus('enemy','buff','Haste',pct,'atkspeed',dur,'Haste: +'+v.pct+'% draw speed for '+v.dur+'s.');
+      } else {
+        gs.drawSpeedBonus=(gs.drawSpeedBonus||1)*(1+pct);
+        gs.drawSpeedBonusTimer=Math.max(gs.drawSpeedBonusTimer||0, dur);
+        addTag('player','buff','Haste (+'+v.pct+'%)',null,null,'Haste: draw speed +'+v.pct+'% for '+v.dur+'s.');
+        setTimeout(function(){
+          if(!gs) return;
+          gs.drawSpeedBonus=Math.max(1.0, gs.drawSpeedBonus/(1+pct));
+          removeTagByLabel('player','Haste (+'+v.pct+'%)');
+        }, dur);
+      }
+      addLog(ctx.cardName+'! [Haste] +'+v.pct+'% for '+v.dur+'s.','buff');
+    }
+  },
+
+  // ── Per-debuff damage ──
+  dmg_per_debuff: {
+    label:'Damage per active debuff on target', cat:'damage',
+    desc:'Deal base damage plus N per active debuff on enemy.',
+    fields:[
+      {id:'base', label:'Base dmg',     type:'number', default:4, min:1, max:20},
+      {id:'min',  label:'Min damage',   type:'number', default:4, min:1, max:20}
+    ],
+    effectText:  function(v){ return 'Deal '+v.base+' damage per active debuff on target (min '+v.min+').'; },
+    tooltipText: function(v){ return 'More powerful when enemy is heavily debuffed.'; },
+    typeHint:'attack',
+    run: function(v,ctx){
+      var tgt=ctx.isEnemy?'player':'enemy';
+      var debuffs=gs.statusEffects[tgt].filter(function(s){return s.cls==='debuff';}).length;
+      var d=ctx.pdmg(Math.max(+v.min, debuffs*(+v.base)));
+      if(ctx.isEnemy) dealDamageToPlayer(d); else dealDamageToEnemy(d);
+      addLog(ctx.cardName+'! '+d+' dmg ('+debuffs+' debuffs).','dmg');
     }
   },
 
@@ -257,7 +957,8 @@ var EFFECT_TYPES = {
     tooltipText: function(v){ return 'Poison: stacking DoT. Deals damage every 2s, bypasses Shield.'; },
     typeHint:'debuff',
     run: function(v,ctx){
-      _applyPoison(+v.dpt,(+v.dur)*1000);
+      if(ctx.isEnemy) _applyPoisonToPlayer(+v.dpt,(+v.dur)*1000);
+      else _applyPoison(+v.dpt,(+v.dur)*1000);
       addLog(ctx.cardName+'! Poison +'+v.dpt+'/2s.','debuff');
     }
   },
@@ -421,11 +1122,19 @@ var EFFECT_TYPES = {
     typeHint:'defense',
     run: function(v,ctx){
       var amt=+v.amt, dur=(+v.dur)*1000, ev=+v.expiry_val;
-      _applyShield(amt, dur, function(){
-        if(v.onexpiry==='gain_mana'){ gs.mana=Math.min(gs.maxMana,gs.mana+ev); addLog('Shield expired — +'+ev+' mana.','mana'); }
-        else if(v.onexpiry==='deal_dmg'){ dealDamageToEnemy(ev); addLog('Shield expired — '+ev+' dmg burst!','dmg'); }
-      });
-      addLog(ctx.cardName+'! Shield +'+amt+' for '+v.dur+'s.','buff');
+      if(ctx.isEnemy){
+        // Enemy shielding itself
+        gs.enemyShell+=amt;
+        addTag('enemy','buff','Shield ('+amt+')',null,null,'Enemy shield: '+amt+'.');
+        setTimeout(function(){ if(!gs) return; gs.enemyShell=Math.max(0,gs.enemyShell-amt); }, dur);
+        addLog(ctx.cardName+'! Enemy Shield +'+amt+' for '+v.dur+'s.','buff');
+      } else {
+        _applyShield(amt, dur, function(){
+          if(v.onexpiry==='gain_mana'){ gs.mana=Math.min(gs.maxMana,gs.mana+ev); addLog('Shield expired — +'+ev+' mana.','mana'); }
+          else if(v.onexpiry==='deal_dmg'){ dealDamageToEnemy(ev); addLog('Shield expired — '+ev+' dmg burst!','dmg'); }
+        });
+        addLog(ctx.cardName+'! Shield +'+amt+' for '+v.dur+'s.','buff');
+      }
     }
   },
 
@@ -525,6 +1234,60 @@ var EFFECT_TYPES = {
       var n=+v.count;
       for(var i=0;i<n;i++) doDraw(null,false);
       addLog(ctx.cardName+'! Drew '+n+' card'+(n>1?'s':'')+'.','draw');
+    }
+  },
+
+  // ── Damage per card in hand ──
+  dmg_per_hand_card: {
+    label:'Damage per card in hand', cat:'damage',
+    desc:'Deal base damage multiplied by current hand size.',
+    fields:[
+      {id:'base', label:'Dmg per card', type:'number', default:15, min:1, max:50},
+      {id:'min',  label:'Minimum dmg',  type:'number', default:15, min:1, max:50}
+    ],
+    effectText:  function(v){ return 'Deal '+v.base+' damage per card in hand (min '+v.min+').'; },
+    tooltipText: function(v){ return 'More powerful with a full hand.'; },
+    typeHint:'attack',
+    run: function(v,ctx){
+      var hc=ctx.isEnemy?gs.enemyHand.length:gs.hand.length;
+      var d=ctx.pdmg(Math.max(+v.min, hc*(+v.base)));
+      if(ctx.isEnemy) dealDamageToPlayer(d); else dealDamageToEnemy(d);
+      addLog(ctx.cardName+'! '+d+' dmg ('+hc+' cards in hand).','dmg');
+    }
+  },
+
+  // ── Drain a percentage of own max mana ──
+  drain_self_pct: {
+    label:'Drain own mana (% of max)', cat:'utility',
+    desc:'Remove a percentage of this creature\'s own max mana.',
+    fields:[{id:'pct', label:'% of max mana', type:'number', default:80, min:10, max:100}],
+    effectText:  function(v){ return '[Drain] '+v.pct+'% of max mana.'; },
+    tooltipText: function(v){ return 'Drain: removes '+v.pct+'% of your max mana.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      var pool=ctx.isEnemy?gs.enemyMana:gs.mana;
+      var maxPool=ctx.isEnemy?gs.enemyMaxMana:gs.maxMana;
+      var cost=Math.round(maxPool*(+v.pct/100));
+      if(ctx.isEnemy) gs.enemyMana=Math.max(0,gs.enemyMana-cost);
+      else gs.mana=Math.max(0,gs.mana-cost);
+      updateAll();
+      addLog(ctx.cardName+'! -'+cost+' mana ('+v.pct+'% of max).','mana');
+    }
+  },
+
+  // ── Gain mana ──
+  mana_gain: {
+    label:'Gain mana', cat:'buff',
+    desc:'Immediately gain X mana.',
+    fields:[{id:'amt', label:'Mana gained', type:'number', default:50, min:5, max:200}],
+    effectText:  function(v){ return 'Gain '+v.amt+' mana.'; },
+    tooltipText: function(v){ return 'Gain '+v.amt+' mana immediately.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      if(ctx.isEnemy) gs.enemyMana=Math.min(gs.enemyMaxMana,(gs.enemyMana||0)+(+v.amt));
+      else gs.mana=Math.min(gs.maxMana,gs.mana+(+v.amt));
+      updateAll();
+      addLog(ctx.cardName+'! +'+v.amt+' mana.','mana');
     }
   },
 
@@ -946,6 +1709,30 @@ function executeEffects(effects, pdmgFn, cardId, isAuto, isGhost, markedCrit){
   });
 }
 
+// Enemy-side effect execution — damage targets player, buffs target enemy
+// Used by new-format creature cards dispatched through CARDS + EFFECT_TYPES
+function executeEnemyEffects(effects, ePdmgFn, cardName, enemy, debuffDurMult){
+  debuffDurMult=debuffDurMult||1;
+  var eStats=enemy||{};
+  var ctx={
+    pdmg: ePdmgFn,
+    str:  eStats.str||10,
+    agi:  eStats.agi||10,
+    wis:  eStats.wis||10,
+    isAuto:false, isGhost:false, markedCrit:false,
+    cardName: cardName||'Enemy',
+    isEnemy: true,              // flag so effects know to flip targets
+    debuffDurMult: debuffDurMult,
+  };
+  effects.forEach(function(eff){
+    var def=EFFECT_TYPES[eff.type];
+    if(!def){ addLog('Unknown enemy effect: '+eff.type,'sys'); return; }
+    // For enemy execution: damage effects target player, debuffs target player,
+    // buffs/shields target enemy. The EFFECT_TYPES.run functions check ctx.isEnemy.
+    def.run(eff, ctx);
+  });
+}
+
 // Fires when a card enters the discard pile without being played.
 // Called from doDraw (hand overflow auto-play), forceAutoplay,
 // discard_hand effect, and activateInnate (Starfall discards).
@@ -981,6 +1768,20 @@ function executeCard(id,isGhost,isAuto){
       var _tags=getCardTags(c);
       if(_tags.indexOf('damage')!==-1) _applyFrenzy(1);
     }
+    // Waterlogged — all cards gain Sorcery[15]: Apply [Slow] to enemy
+    if(_pi&&_pi.id==='waterlogged'){
+      if(gs.mana>=15){
+        gs.mana-=15;
+        applyStatus('enemy','debuff','Slow',600,'slow_draw',4000,'Slow: draw interval +600ms.');
+        addLog('Waterlogged — [Slow] applied.','debuff');
+        updateAll();
+      }
+    }
+    // Light Fingers — Drain 5 enemy mana on every card play
+    if(_pi&&_pi.id==='light_fingers'){
+      gs.enemyMana=Math.max(0,(gs.enemyMana||0)-5);
+      addLog('Light Fingers — enemy -5 mana.','mana');
+    }
     // Effigy — first card each battle refunds its mana cost
     if(gs._effigyFree){ gs._effigyFree=false; gs.mana=Math.min(gs.maxMana,gs.mana+(c&&c.manaCost||10)); addLog('Effigy: first card is free!','mana'); }
   }
@@ -996,11 +1797,13 @@ function executeCard(id,isGhost,isAuto){
     var d=base;
     getStatuses('player','dmg').forEach(function(x){if(x.val>0)d=Math.round(d*(1+x.val));});
     getStatuses('enemy','death_mark').forEach(function(){d=Math.round(d*1.5);});
-    if(markedCrit) d=Math.round(d*1.5);
+    if(markedCrit) d=Math.round(d*(gs._relicCritMult||1.5));
     if(gs._bulwarkReady&&getStatus('player','shielded')){ d=Math.round(d*1.5); gs._bulwarkReady=false; removeTagByLabel('player','Bulwark'); }
     if(gs._shrinePredator&&gs.enemyHp>gs.enemyMaxHp*0.75) d=Math.round(d*(1+gs._shrinePredator));
     if(gs._shrineExecutioner&&gs.enemyHp<gs.enemyMaxHp*0.25) d=Math.round(d*(1+gs._shrineExecutioner));
     if(gs._shrineOpenVolley&&gs._shrineOpenVolleyUsed<gs._shrineOpenVolley){ d=d*2; gs._shrineOpenVolleyUsed=(gs._shrineOpenVolleyUsed||0)+1; }
+    // Relic: cracked_lens — first card each run +50%
+    if(gs._relicFirstCardBonus&&!gs._relicFirstCardUsed){ d=Math.round(d*1.5); gs._relicFirstCardUsed=true; }
     return Math.max(1,d);
   }
 
@@ -1072,107 +1875,131 @@ function executeCard(id,isGhost,isAuto){
     },5000);
     addLog('Hex Shield! 12 shield — Curse on expiry.','buff');
   }
-  else if(id==='nova_burst'){
-    // hand-size scaling — needs gs.hand.length at runtime
-    var hc=gs.hand.length; var novaDmg=Math.max(15,15*hc);
-    dealDamageToEnemy(pdmg(novaDmg)); addLog('Nova Burst: '+hc+' cards \xd7 15 = '+novaDmg+' dmg.','dmg');
+  // ── STARCALLER DRUID ──
+  else if(id==='druid_nova_burst'){
+    var hc=gs.hand.length;
+    var novaDmg=pdmg(Math.max(12,12*hc));
+    dealDamageToEnemy(novaDmg);
+    addLog('Nova Burst: '+hc+' cards × 12 = '+novaDmg+' dmg.','dmg');
+    // Churn 3 handled by effects array
   }
-  else if(id==='focus'){
-    // drain% + draw combo; cost differs when auto-played
-    var cost=isAuto?Math.round(gs.maxMana*0.4):Math.round(gs.maxMana*0.8);
-    gs.mana=Math.max(0,gs.mana-cost); addLog('Focus: -'+cost+' mana, drawing 2 cards.','mana');
-    doDraw(null,false); doDraw(null,false);
+  else if(id==='druid_focus'){
+    var cost=Math.round(gs.maxMana*0.6);
+    gs.mana=Math.max(0,gs.mana-cost);
+    addLog('Focus: -'+cost+' mana, drawing 3 cards.','mana');
+    doDraw(null,false); doDraw(null,false); doDraw(null,false);
   }
-  else if(id==='stellar_shards'){
-    // discards other copies and adds one hit per discarded copy
-    var shardsInHand=[];
-    for(var si=gs.hand.length-1;si>=0;si--){
-      if(gs.hand[si].id==='stellar_shards'&&!gs.hand[si].ghost) shardsInHand.push(gs.hand.splice(si,1)[0]);
+  else if(id==='druid_stellar_shards'){
+    dealDamageToEnemy(pdmg(8));
+    doDraw(null,false);
+    addLog('Stellar Shards! 8 dmg + draw 1.','dmg');
+  }
+  else if(id==='druid_drifting_comet'){
+    dealDamageToEnemy(pdmg(18));
+    addLog('Drifting Comet! 18 dmg.','dmg');
+  }
+
+  // ── CURSED PALADIN ──
+  else if(id==='paladin_smite'){
+    dealDamageToEnemy(pdmg(8));
+    var burnDpt=Math.max(1,wis);
+    _applyBurn(burnDpt,9000);
+    addLog('Smite! 8 dmg + [Burn] ('+burnDpt+'/3s).','dmg');
+  }
+  else if(id==='paladin_consecrate'){
+    // Weaken handled by effects array; custom branch for Sorcery Burn
+    applyStatus('enemy','debuff','Weaken',-0.15,'dmg',6000,'Weaken: enemy dmg -15%.');
+    addLog('Consecrate! [Weaken] 6s.','debuff');
+    if(gs.mana>=20){
+      gs.mana-=20; updateAll();
+      var cBurnDpt=Math.max(1,wis);
+      _applyBurn(cBurnDpt,9000);
+      addLog('[Sorcery] Consecrate: [Burn] ('+cBurnDpt+'/3s).','mana');
     }
-    var extraHits=shardsInHand.length;
-    shardsInHand.forEach(function(sh){ gs.discardPile.push(sh.id); handleCardDiscard(sh.id); });
-    var totalHits=3+extraHits;
-    if(extraHits>0) addLog('Stellar Shards: discarded '+extraHits+' \u2014 '+totalHits+' hits!','innate');
-    for(var shi=0;shi<totalHits;shi++){
-      (function(delay){ setTimeout(function(){ if(!gs||!gs.running) return; dealDamageToEnemy(pdmg(7)); updateAll(); }, delay*300); })(shi);
+  }
+  else if(id==='paladin_aegis'){
+    var shieldAmt=Math.max(4,Math.floor(str/2));
+    _applyShield(shieldAmt,6000);
+    addLog('Aegis! Shield ('+shieldAmt+') 6s.','buff');
+    if(gs.mana>=25){
+      gs.mana-=25; updateAll();
+      applyStatus('enemy','debuff','Weaken',-0.15,'dmg',4000,'Weaken: enemy dmg -15%.');
+      addLog('[Sorcery] Aegis: [Weaken] 4s.','debuff');
     }
   }
-  else if(id==='retribution'){
-    // Condemned stacks — per-stack stateful tracking
-    var hasDebuff=gs.statusEffects.enemy.some(function(x){return x.cls==='debuff';});
-    var condemnedStacks=gs.statusEffects.enemy.filter(function(x){return x.stat==='condemned';}).length;
-    var condemnedMult=1+(condemnedStacks*0.15);
-    var baseDmg=hasDebuff?30:15;
-    dealDamageToEnemy(pdmg(Math.round(baseDmg*condemnedMult)));
-    if(hasDebuff) addLog('Retribution: '+Math.round(baseDmg*condemnedMult)+' dmg'+(condemnedStacks?' (\xd7'+condemnedStacks+' Condemned)':'')+'!','innate');
-    if(condemnedStacks<5){
-      var ns=condemnedStacks+1; var tl='Condemned \xd7'+ns;
-      var td='Condemned '+ns+'/5: Retribution deals +'+(15*ns)+'% more damage.';
-      gs.statusEffects.enemy.push({id:'condemned_'+ns,label:'Condemned',cls:'debuff',stat:'condemned',remaining:12000,maxRemaining:12000,dot:false,desc:td});
-      removeTagByLabel('enemy','Condemned \xd7'+condemnedStacks); if(condemnedStacks===0) removeTagByLabel('enemy','Condemned');
-      addTag('enemy','debuff',tl,0,'condemned',td); addLog('Condemned \xd7'+ns+'/5.','debuff'); triggerHolyFlame();
+  else if(id==='paladin_judgment'){
+    // Deal damage equal to Burn dpt × remaining ticks (min 8). Bypass Shield.
+    var burnStatus=gs.statusEffects.enemy.find(function(s){return s.id==='burn';});
+    var jDmg=8;
+    if(burnStatus&&burnStatus.dpt>0){
+      var ticksLeft=Math.ceil(burnStatus.remaining/burnStatus.tickMs);
+      jDmg=Math.max(8, burnStatus.dpt*ticksLeft);
+    }
+    // Bypass shield — deal directly to HP
+    gs.enemyHp=Math.max(0,gs.enemyHp-jDmg);
+    shakeIcon('enemy',false); flashHpBar('enemy','hp-flash-red');
+    spawnFloatNum('enemy','-'+jDmg,jDmg>=30);
+    addLog('Judgment! '+jDmg+' dmg (bypasses Shield).','dmg');
+    updateAll(); checkEnd();
+  }
+  else if(id==='paladin_hellfire'){
+    var hfDpt=Math.max(1,wis*2);
+    _applyBurn(hfDpt,9000);
+    gs.mana=Math.min(gs.maxMana,gs.mana+30);
+    addLog('Hellfire! [Burn] ('+hfDpt+'/3s) + 30 mana.','buff');
+    if(gs.mana>=30){
+      gs.mana-=30; updateAll();
+      applyStatus('enemy','debuff','Weaken',-0.15,'dmg',5000,'Weaken: enemy dmg -15%.');
+      addLog('[Sorcery] Hellfire: [Weaken] 5s.','debuff');
     }
   }
-  else if(id==='holy_shield'){
-    // Sets holyShieldActive flag used by dealDamageToPlayer
-    gs.holyShieldActive=true;
-    applyStatus('player','buff','Shielded',0,'',5000,'Holy Shield: 80% of dmg drains mana instead of HP for 5s.');
-    addLog('Aegis! Incoming damage drains mana for 5s.','buff');
-    setTimeout(function(){ if(gs){ gs.holyShieldActive=false; removeTagByLabel('player','Shielded'); } },5000);
-    triggerHolyFlame();
+  else if(id==='paladin_bulwark'){
+    var bwAmt=Math.max(8,str);
+    _applyShield(bwAmt,8000);
+    addLog('Bulwark! Shield ('+bwAmt+') 8s.','buff');
+    if(gs.mana>=35){
+      gs.mana-=35; updateAll();
+      gs._bulwarkReady=true;
+      addTag('player','buff','Bulwark',0,'','Bulwark: next hit deals +50% damage.');
+      addLog('[Sorcery] Bulwark: next hit +50%.','buff');
+    }
   }
-  else if(id==='bulwark'){
-    // Sets _bulwarkReady which is read inside pdmg() itself
-    applyStatus('player','buff','Shielded',0,'shielded',8000,'Shielded: incoming dmg drains mana instead of HP.');
-    gs._bulwarkReady=true; addLog('Bulwark! Shielded 8s \u2014 next hit +50%.','buff');
-    addTag('player','buff','Bulwark',0,'','Bulwark: next hit deals +50% damage.'); triggerHolyFlame();
-  }
-  else if(id==='judgment'){
-    // Counts active debuffs, conditionally stacks Condemned
-    var debuffCount=gs.statusEffects.enemy.filter(function(s){return s.cls==='debuff';}).length;
-    var jDmg=debuffCount>=3?40:20; dealDamageToEnemy(pdmg(jDmg));
-    if(debuffCount>=3){
-      var cond=gs.statusEffects.enemy.find(function(s){return s.id==='condemned';}); var cStacks=cond?Math.min(5,(cond.stacks||1)+1):1;
-      if(cond){ cond.stacks=cStacks; cond.remaining=12000; removeTagByLabel('enemy','Condemned'); }
-      else gs.statusEffects.enemy.push({id:'condemned',label:'Condemned \xd7'+cStacks,cls:'debuff',stat:'condemned',remaining:12000,maxRemaining:12000,stacks:cStacks,desc:'Condemned: Retribution +'+(cStacks*15)+'% extra damage.'});
-      addTag('enemy','debuff','Condemned \xd7'+cStacks,0,'condemned','Condemned: Retribution +'+(cStacks*15)+'% damage.');
-      addLog('JUDGMENT! '+jDmg+' dmg \u2014 Condemned \xd7'+cStacks+'!','innate');
-    } else { addLog('Judgment! '+jDmg+' dmg ('+debuffCount+'/3 debuffs \u2014 no Condemned).','dmg'); }
-  }
-  else if(id==='quick_slash'){
-    // Own crit chance decoupled from Shadow Mark
-    var qsDmg=pdmg(10+Math.floor(agi/5)*5); var qsCrit=markedCrit||Math.random()<0.15;
+
+  // ── FACELESS THIEF ──
+  else if(id==='thief_quick_slash'){
+    var qsDmg=pdmg(10+Math.floor(agi/4));
+    var qsCrit=markedCrit||Math.random()<0.15;
     if(qsCrit){ qsDmg=Math.round(qsDmg*2); spawnFloatNum('enemy','CRIT!',false,'crit-num'); addLog('Quick Slash CRIT'+(markedCrit?' (Shadow Mark)':'')+'! '+qsDmg+' dmg!','innate'); }
+    else addLog('Quick Slash! '+qsDmg+' dmg.','dmg');
     dealDamageToEnemy(qsDmg);
   }
-  else if(id==='backstab'){
-    // Debuff-check with dramatically different tiers (12 vs 45)
+  else if(id==='thief_backstab'){
     var bsHasD=gs.statusEffects.enemy.some(function(x){return x.cls==='debuff';});
-    var bsDmg=pdmg(bsHasD?45:12); dealDamageToEnemy(bsDmg);
-    if(markedCrit){ spawnFloatNum('enemy','CRIT!',false,'crit-num'); addLog('Backstab CRIT (Shadow Mark)! '+bsDmg+' dmg!','innate'); }
-    else if(!bsHasD) addLog('No debuff \u2014 Backstab weakened!','debuff');
+    var bsDmg=pdmg(bsHasD?45:12);
+    if(markedCrit) bsDmg=Math.round(bsDmg*1.5);
+    dealDamageToEnemy(bsDmg);
+    if(markedCrit) spawnFloatNum('enemy','CRIT!',false,'crit-num');
+    addLog('Backstab! '+bsDmg+' dmg'+(bsHasD?' (debuff bonus!)':' (no debuff)')+'.','dmg');
   }
-  else if(id==='shadow_step'){
-    gs.playerDodge=true; addTag('player','buff','Dodge',null,null,'Next incoming attack will be completely evaded.');
-    gs.mana=Math.min(gs.maxMana,gs.mana+50); addLog('Shadow Step! Dodge ready, +50 mana.','buff');
-  }
-  else if(id==='poison_dart'){
-    // Crit → full detonate combo with complex re-poison logic
-    var pdEntry=gs.statusEffects.enemy.find(function(s){return s.id==='poison';});
-    if(pdEntry){ pdEntry.dpt+=8; pdEntry.remaining=8000; pdEntry.maxRemaining=8000; removeTagByLabel('enemy',pdEntry.label); pdEntry.label='Poison ('+pdEntry.dpt+'/2s)'; addTag('enemy','debuff',pdEntry.label,0,'dot','Poison: '+pdEntry.dpt+' dmg/2s.'); addLog('Poison Dart! Poison now '+pdEntry.dpt+' dmg/2s.','debuff'); }
-    else{ gs.statusEffects.enemy.push({id:'poison',label:'Poison (8/2s)',cls:'debuff',stat:'dot',remaining:8000,maxRemaining:8000,dot:true,dpt:8,tickMs:2000,tickAcc:0,desc:'Poison: 8 dmg/2s.'}); addTag('enemy','debuff','Poison (8/2s)',0,'dot','Poison: 8 dmg/2s.'); addLog('Poison Dart! Enemy poisoned (8 dmg/2s).','debuff'); }
-    if(markedCrit||Math.random()<0.15){
-      var pdPop=gs.statusEffects.enemy.find(function(s){return s.id==='poison';}); var burstDmg=pdPop?pdPop.dpt:8;
-      if(pdPop){ gs.statusEffects.enemy.splice(gs.statusEffects.enemy.indexOf(pdPop),1); removeTagByLabel('enemy',pdPop.label); }
-      if(burstDmg>0){ gs.enemyHp=Math.max(0,gs.enemyHp-burstDmg); shakeIcon('enemy',false); flashHpBar('enemy','hp-flash-red'); spawnFloatNum('enemy','VENOM! -'+burstDmg,burstDmg>=30,'crit-num'); addLog('Poison Dart CRIT'+(markedCrit?' (Shadow Mark)':'')+'! Venom Burst \u2014 '+burstDmg+' instant damage!','innate'); updateAll(); checkEnd(); }
+  else if(id==='thief_shadow_step'){
+    gs.playerDodge=true;
+    addTag('player','buff','Dodge',null,null,'Next incoming attack will be completely evaded.');
+    gs.mana=Math.min(gs.maxMana,gs.mana+50);
+    addLog('Shadow Step! Dodge + 50 mana.','buff');
+    if(gs.mana>=20){
+      gs.mana-=20; updateAll();
+      applyStatus('enemy','debuff','Weaken',-0.15,'dmg',3000,'Weaken: enemy dmg -15%.');
+      addLog('[Sorcery] Shadow Step: [Weaken] 3s.','debuff');
     }
   }
   else if(id==='ghost_shadow_mark'){
-    // Applies poison AND sets the nextCardCrit flag — two coupled effects
-    _applyPoison(16,8000); gs.nextCardCrit=true;
-    applyStatus('player','buff','Shadow Mark',0,'shadow_mark',30000,'Next card is guaranteed to [Crit].'); addLog('\u2756 Shadow Mark! +16 Poison applied. Next card CRITS.','innate');
+    _applyPoison(12,8000);
+    gs.nextCardCrit=true;
+    applyStatus('player','buff','Shadow Mark',0,'shadow_mark',30000,'Shadow Mark: next card is a guaranteed Crit.');
+    addLog('✦ Shadow Mark! +12 Poison. Next card CRITS.','innate');
   }
-  else if(id==='ms_moonburst'){
+
+    else if(id==='ms_moonburst'){
     // Multi-hit with independent per-hit crit chance
     var moonHits=[3,3,3,3];
     moonHits.forEach(function(dmg,i){ setTimeout(function(){ if(!gs||!gs.running) return; var isCrit=Math.random()<0.20; var d=pdmg(isCrit?dmg*2:dmg); dealDamageToEnemy(d); if(isCrit) spawnFloatNum('enemy','CRIT!',false,'crit-num'); updateAll(); },i*200); });
@@ -1226,11 +2053,6 @@ function executeCard(id,isGhost,isAuto){
     gs.mana=Math.min(gs.maxMana,gs.mana+30); gs._myceliumBurst=true;
     addTag('player','buff','Mycelium Charge',0,'','Next Spreading Spores trigger: 10 Poison burst instead of DoT.'); addLog('Mycelium Net! +30 mana, next Spores trigger bursts.','buff');
   }
-  else if(id==='drifting_comet'){
-    // Different behaviour when auto-played vs played manually
-    if(isAuto){ stunEnemy(800); addLog('Drifting Comet stuns! (auto-played)','innate'); }
-    else dealDamageToEnemy(pdmg(16));
-  }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1280,16 +2102,21 @@ function activateInnate(){
   if(!ch.innateActive||gs.mana<ch.innateCost) return;
   gs.mana-=ch.innateCost; playInnateSfx();
   if(gs.champId==='druid'){
-    var hl=gs.hand.length; if(hl===0){ addLog('No cards in hand for Starfall!','innate'); gs.mana+=ch.innateCost; return; }
-    var dmg=hl*3; dealDamageToEnemy(dmg); addLog('\u2756 STARFALL! '+hl+' \xd7 3 = '+dmg+' dmg!','innate');
-    var half=Math.floor(hl/2);
-    for(var i=0;i<half;i++){
-      if(gs.hand.length===0) break;
-      var ri=Math.floor(Math.random()*gs.hand.length); var disc=gs.hand.splice(ri,1)[0]; var dc=CARDS[disc.id];
-      addLog('Discarded '+(dc?dc.name:disc.id)+'.','draw');
+    var hl=gs.hand.length;
+    if(hl===0){ addLog('No cards in hand for Starfall!','innate'); gs.mana+=ch.innateCost; return; }
+    // Churn entire hand: discard all, draw same count, deal 5 dmg per card churned
+    var churned=0;
+    for(var i=gs.hand.length-1;i>=0;i--){
+      var disc=gs.hand.splice(i,1)[0];
       if(!disc.ghost){ gs.discardPile.push(disc.id); handleCardDiscard(disc.id); }
+      churned++;
     }
-  } else if(gs.champId==='thief'){
+    var sfDmg=pdmg(churned*5);
+    dealDamageToEnemy(sfDmg);
+    addLog('✦ STARFALL! Churned '+churned+' cards — '+sfDmg+' dmg!','innate');
+    // Draw same number back
+    for(var d=0;d<churned;d++) doDraw(null,false);
+    renderHand(); renderPiles();
     doDraw('ghost_shadow_mark',false); addLog('\u2756 SHADOW MARK! A spectral card appears in hand.','innate');
   } else if(gs.champId==='gorby'){
     // Convert all attack cards in hand into Ethereal Gorby Attacks

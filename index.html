@@ -305,18 +305,29 @@
     </div>
   </div>
   <div class="de-body">
-    <div class="de-panel de-panel-left">
-      <div class="de-panel-label">DECK <span id="de-deck-size"></span></div>
-      <div class="de-deck-grid" id="de-deck-grid"></div>
-      <div class="de-size-wrap">
-        <div class="de-size-bar"><div class="de-size-fill" id="de-size-fill"></div></div>
-        <div class="de-size-label" id="de-size-label"></div>
+    <div class="de-cols">
+      <div class="de-panel de-panel-left">
+        <div class="de-panel-label">DECK <span id="de-deck-size"></span></div>
+        <div class="de-deck-grid" id="de-deck-grid"></div>
+        <div class="de-size-wrap">
+          <div class="de-size-bar"><div class="de-size-fill" id="de-size-fill"></div></div>
+          <div class="de-size-label" id="de-size-label"></div>
+        </div>
+      </div>
+      <div class="de-panel de-panel-right">
+        <div class="de-panel-label" id="de-avail-label">AVAILABLE CARDS</div>
+        <div class="de-avail-tabs" id="de-avail-tabs"></div>
+        <div class="de-avail-grid" id="de-avail-grid"></div>
       </div>
     </div>
-    <div class="de-panel de-panel-right">
-      <div class="de-panel-label" id="de-avail-label">AVAILABLE CARDS</div>
-      <div class="de-avail-tabs" id="de-avail-tabs"></div>
-      <div class="de-avail-grid" id="de-avail-grid"></div>
+    <!-- Info strip — full card render + keyword glossary -->
+    <div class="de-info-strip" id="de-info-strip">
+      <div class="de-info-card">
+        <div class="de-info-card-wrap" id="de-info-card-wrap"></div>
+      </div>
+      <div class="de-info-detail" id="de-info-detail">
+        <div class="de-info-empty">Select a card to see details</div>
+      </div>
     </div>
   </div>
   <div class="de-footer">
@@ -338,115 +349,56 @@
     </div>
     <div class="town-gold" id="town-gold">✦ 0</div>
   </div>
-  <div class="town-cards-strip" id="town-cards-strip"></div>
   <div id="town-summons-banner" style="display:none;flex-shrink:0;"></div>
   <div class="town-grid" id="town-grid"></div>
   <!-- Vault panel (popup) -->
   <div class="town-panel-bg" id="vault-panel-bg" onclick="closeVaultPanel()">
     <div class="vault-panel-main" onclick="event.stopPropagation()">
-
-      <!-- Header: title + gem slot -->
       <div class="vault-header">
         <div class="town-panel-icon">📦</div>
         <div style="flex:1;">
           <div class="town-panel-name">THE VAULT</div>
-          <div class="town-panel-sub" id="vault-cap-txt">Your inventory</div>
+          <div class="town-panel-sub">Materials, chests and keys from your runs</div>
         </div>
-        <div class="vault-slot-wrap">
-          <div class="tp-section-label" style="margin-bottom:3px;font-size:7px;text-align:center;">GEM SLOT</div>
-          <div class="building-slot" id="vault-slot"
-            ondragover="event.preventDefault();this.classList.add('drag-over')"
-            ondragleave="this.classList.remove('drag-over')"
-            ondrop="onBuildingDrop(event,'vault')"
-            onclick="onVaultSlotClick()"></div>
-          <div id="vault-slot-hint" style="font-size:7px;color:#5a4020;margin-top:2px;text-align:center;max-width:70px;"></div>
-        </div>
-        <button class="ach-close-btn" onclick="closeVaultPanel()">✕</button><button class="tut-help-btn" onclick="showBuildingTutorial('vault')" title="Help">?</button>
+        <button class="ach-close-btn" onclick="closeVaultPanel()">✕</button>
+        <button class="tut-help-btn" onclick="showBuildingTutorial('vault')" title="Help">?</button>
       </div>
-
-      <!-- Generator bar row — only shows when gem slotted -->
-      <div id="vault-gen-wrap" style="display:none;padding:6px 14px;background:rgba(6,3,1,.6);border-bottom:1px solid #1e1006;flex-shrink:0;">
-        <div style="display:flex;align-items:center;gap:8px;">
-          <span style="font-family:'Cinzel',serif;font-size:7px;color:#6a5020;letter-spacing:1px;white-space:nowrap;">GENERATING</span>
-          <div style="flex:1;height:6px;background:rgba(0,0,0,.5);border-radius:3px;overflow:hidden;">
-            <div id="vault-gen-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#3a2808,#c09030);border-radius:3px;transition:width .5s;"></div>
-          </div>
-          <span id="vault-gen-tier" style="font-size:7px;color:#5a4020;white-space:nowrap;"></span>
-        </div>
-      </div>
-
-      <!-- Vault XP level bar -->
       <div class="vault-level-row">
         <span class="vault-level-badge" id="vault-level-badge">VAULT Lv.1</span>
         <div class="vault-xp-wrap"><div class="vault-xp-bar" id="vault-xp-bar" style="width:0%"></div></div>
         <span class="vault-xp-txt" id="vault-xp-txt"></span>
       </div>
-
-      <!-- Body: full-width inventory grid -->
-      <div class="vault-body">
-        <div class="vault-grid-col">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px;gap:6px;">
-            <div class="tp-section-label" style="margin-bottom:0;white-space:nowrap;">INVENTORY</div>
-            <div style="display:flex;align-items:center;gap:4px;flex:1;justify-content:flex-end;">
-              <select id="vault-sort-bar" onchange="_vaultPage=0;refreshVaultPanel()" style="background:#0e0802;border:1px solid #3a2010;border-radius:4px;color:#8a6030;font-size:8px;padding:2px 6px;font-family:'Cinzel',serif;cursor:pointer;">
-                <option value="cat">By Type</option>
-                <option value="name">A–Z</option>
-                <option value="count">By Quantity</option>
-                <option value="type">By Category</option>
-              </select>
-              <button id="vault-pg-prev" onclick="vaultPageChange(-1)" style="background:none;border:1px solid #2a1808;border-radius:3px;color:#6a5020;font-size:10px;width:20px;height:20px;cursor:pointer;line-height:1;padding:0;">◀</button>
-              <span id="vault-pg-lbl" style="font-family:'Cinzel',serif;font-size:8px;color:#5a4020;white-space:nowrap;">1/1</span>
-              <button id="vault-pg-next" onclick="vaultPageChange(1)" style="background:none;border:1px solid #2a1808;border-radius:3px;color:#6a5020;font-size:10px;width:20px;height:20px;cursor:pointer;line-height:1;padding:0;">▶</button>
-            </div>
-          </div>
-          <div id="vault-inv-grid" class="vault-inv-grid"></div>
-          <div id="vault-gem-shards-row" class="vault-frags-row"></div>
-        </div>
-        <!-- Inspector drawer — slides in at bottom when item selected -->
-        <div class="vault-inspector-drawer" id="vault-inspector">
-          <div class="vi-row">
-            <div class="vi-icon" id="vi-icon">📦</div>
-            <div class="vi-main" id="vi-main"></div>
-            <button onclick="clearVaultInspector()" style="align-self:flex-start;background:none;border:none;color:#5a4020;font-size:14px;cursor:pointer;padding:0 0 0 8px;line-height:1;">✕</button>
-          </div>
-          <div class="vi-actions" id="vi-actions"></div>
-        </div>
-      </div>
-
-      <!-- Upgrades -->
-      <div class="vault-upgrades-section">
-        <div class="tp-section-label">UPGRADES</div>
-        <div class="vault-upg-grid" id="vault-upg-grid"></div>
-      </div>
-
-      <div id="vault-locked-msg" style="display:none;padding:20px;text-align:center;"></div>
+      <div class="town-locked-msg" id="vault-locked-msg" style="display:none;"></div>
+      <div id="vault-body-inner" style="flex:1;overflow-y:auto;"></div>
     </div>
   </div>
 
   <!-- Forge panel -->
   <div class="town-panel-bg" id="forge-panel-bg" onclick="closeBuildingPanel('forge')">
-    <div class="town-panel" onclick="event.stopPropagation()">
+    <div class="town-panel town-panel-forge" onclick="event.stopPropagation()">
       <div class="town-panel-header">
         <div class="town-panel-icon">🔨</div>
         <div style="flex:1;">
           <div class="town-panel-name">THE FORGE</div>
-          <div class="town-panel-sub">Upgrade cards through tiers: Base → Red → Green → Blue</div>
+          <div class="town-panel-sub">Craft relics from area materials · Assign a champion to speed up crafting</div>
         </div>
-        <button class="ach-close-btn" onclick="closeBuildingPanel('forge')">✕</button><button class="tut-help-btn" onclick="showBuildingTutorial('forge')" title="Help">?</button>
+        <button class="ach-close-btn" onclick="closeBuildingPanel('forge')">✕</button>
+        <button class="tut-help-btn" onclick="showBuildingTutorial('forge')" title="Help">?</button>
       </div>
       <div class="town-locked-msg" id="forge-locked-msg" style="display:none;"></div>
-      <div id="forge-inner">
-        <div class="town-panel-slot-row">
-          <div class="tp-section-label">GEM SLOT</div>
-          <div class="building-slot" id="forge-slot" onclick="onBuildingSlotClick('forge')"></div>
-          <div class="tp-slot-hint" id="forge-slot-hint">Slot a gem to boost the Forge</div>
+      <div id="forge-inner" style="display:flex;flex-direction:column;flex:1;overflow:hidden;min-height:0;">
+        <div class="forge-body" id="forge-body">
+          <div class="forge-recipe-list" id="forge-recipe-list"></div>
+          <div class="forge-inspector" id="forge-inspector">
+            <div class="forge-inspector-empty">Select a recipe to see details and craft.</div>
+          </div>
         </div>
-        <div class="tp-section-label">UPGRADE QUEUE</div>
-        <div id="forge-queue" class="forge-queue"></div>
-        <div class="tp-section-label" style="margin-top:10px;">MATERIALS</div>
-        <div class="forge-mat-row" id="forge-mats"></div>
-        <div class="tp-section-label" style="margin-top:10px;">UPGRADE A CARD</div>
-        <div class="forge-upgrade-targets" id="forge-targets"></div>
+        <div class="forge-queue-section" id="forge-queue-section">
+          <div class="forge-queue-label">CRAFTING QUEUE</div>
+          <div class="forge-queue" id="forge-queue-list">
+            <div class="forge-queue-empty">No items queued.</div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -464,16 +416,6 @@
       </div>
       <div class="town-locked-msg" id="shrine-locked-msg" style="display:none;"></div>
       <div id="shrine-inner">
-        <div class="town-panel-slot-row">
-          <div class="tp-section-label">GEM SLOT</div>
-          <div class="building-slot" id="shrine-slot" onclick="onBuildingSlotClick('shrine')"></div>
-          <div class="tp-slot-hint" id="shrine-slot-hint">Slot a gem to enhance blessings</div>
-        </div>
-        <div class="tp-section-label">ACTIVE BLESSING</div>
-        <div id="shrine-blessing-display" class="shrine-bless-display"></div>
-        <div class="tp-section-label" style="margin-top:10px;">CHOOSE A BLESSING</div>
-        <div id="shrine-blessing-list" class="shrine-bless-list"></div>
-      </div>
     </div>
   </div>
 
@@ -492,13 +434,7 @@
       <div id="bestiary-inner" style="display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;">
         <div class="bestiary-top-bar">
           <div class="town-panel-slot-row" style="margin:0;flex:1;">
-            <div class="tp-section-label">GEM SLOT</div>
-            <div class="building-slot" id="bestiary-slot"
-              ondragover="event.preventDefault();this.classList.add('drag-over')"
-              ondragleave="this.classList.remove('drag-over')"
-              ondrop="onBuildingDrop(event,'bestiary')"
-              onclick="onBuildingSlotClick('bestiary')"></div>
-            <div class="tp-slot-hint" id="bestiary-slot-hint">Slot a card to enable passive research</div>
+  
           </div>
           <div class="bestiary-tab-row">
             <button class="bestiary-tab active" id="btab-creatures" onclick="setBestiaryTab('creatures')"><img src="assets/icons/bestiary_creatures.png" class="bestiary-tab-icon" onerror="this.style.display='none'">🦎 CREATURES</button>
@@ -512,8 +448,7 @@
             <div class="bc-empty-detail">Select a creature<br>to view its record</div>
           </div>
         </div>
-        <div id="bestiary-locations-pane" class="bestiary-pane" style="display:none;max-height:62vh;">
-          <div class="bestiary-location-grid" id="bestiary-location-grid"></div>
+        <div id="bestiary-locations-pane" class="bestiary-pane" style="display:none;flex:1;min-height:0;overflow:hidden;">
         </div>
         <div id="bestiary-glossary-pane" class="bestiary-pane" style="display:none;max-height:62vh;">
           <div id="bestiary-glossary-grid"></div>
@@ -540,13 +475,6 @@
             <div style="font-family:'Cinzel',serif;font-size:10px;color:#d4a843;">🃏 <span id="sanctum-frag-count">0</span> Fragments</div>
             <div style="font-size:7px;color:#5a4020;margin-top:1px;">earned from chests &amp; quests</div>
           </div>
-          <div class="building-slot" id="sanctum-slot"
-            onclick="onBuildingSlotClick('sanctum')"
-            ondragover="event.preventDefault();this.classList.add('drag-over')"
-            ondragleave="this.classList.remove('drag-over')"
-            ondrop="onBuildingDrop(event,'sanctum')">
-            <span style="color:#3a2810;font-size:18px;">+</span>
-          </div>
         </div>
         <button class="ach-close-btn" onclick="closeBuildingPanel('sanctum')" style="margin-left:6px;">✕</button><button class="tut-help-btn" onclick="showBuildingTutorial('sanctum')" title="Help">?</button>
       </div>
@@ -560,9 +488,10 @@
         <!-- Right: tabs + content -->
         <div class="sanctum-content-col">
           <!-- Sub-tabs -->
-          <div style="display:flex;gap:4px;margin-bottom:10px;border-bottom:1px solid #1e1006;padding-bottom:8px;">
+          <div style="display:flex;gap:4px;margin-bottom:0;border-bottom:1px solid #1e1006;padding-bottom:0;padding-top:0;">
             <button class="sanctum-tab active" id="stab-overview"  onclick="setSanctumTab('overview')">👤 Overview</button>
             <button class="sanctum-tab"        id="stab-deck"      onclick="setSanctumTab('deck')">🃏 Deck</button>
+            <button class="sanctum-tab"        id="stab-relics"    onclick="setSanctumTab('relics')">💎 Relics</button>
             <button class="sanctum-tab"        id="stab-upgrades"  onclick="setSanctumTab('upgrades')">⬆ Upgrades</button>
             <button class="sanctum-tab"        id="stab-training"  onclick="setSanctumTab('training')">🏆 Training</button>
           </div>
@@ -572,6 +501,14 @@
           <div id="sanctum-deck-pane" style="display:none;overflow-y:auto;flex:1;flex-direction:column;">
             <div id="sanctum-deck-grid"></div>
           </div>
+          <div id="sanctum-relics-pane" class="sanctum-relics-pane" style="display:none;">
+            <div class="sr-top">
+              <div class="sr-stats" id="sr-stats-col"></div>
+              <div class="sr-hero" id="sr-hero-col"></div>
+              <div class="sr-effects" id="sr-effects-col"></div>
+            </div>
+            <div class="sr-inv" id="sr-inv-strip"></div>
+          </div>
           <div id="sanctum-upgrades-pane" style="display:none;overflow-y:auto;flex:1;">
             <div id="sanctum-upgrades-list"></div>
           </div>
@@ -580,6 +517,23 @@
           </div>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Expedition Hall panel -->
+  <div class="town-panel-bg" id="expedition_hall-panel-bg" onclick="closeBuildingPanel('expedition_hall')">
+    <div class="town-panel town-panel-wide" onclick="event.stopPropagation()">
+      <div class="town-panel-header">
+        <div class="town-panel-icon">🏕️</div>
+        <div style="flex:1;">
+          <div class="town-panel-name">EXPEDITION HALL</div>
+          <div class="town-panel-sub">Dispatch champions to gather materials while you fight</div>
+        </div>
+        <button class="ach-close-btn" onclick="closeBuildingPanel('expedition_hall')">✕</button>
+        <button class="tut-help-btn" onclick="showBuildingTutorial('expedition_hall')" title="Help">?</button>
+      </div>
+      <div class="town-locked-msg" id="expedition_hall-locked-msg" style="display:none;"></div>
+      <div id="expedition_hall-inner" style="padding:12px 14px;overflow-y:auto;max-height:calc(85vh - 80px);"></div>
     </div>
   </div>
 
@@ -597,19 +551,6 @@
       </div>
       <div class="town-locked-msg" id="market-locked-msg" style="display:none;"></div>
       <div id="market-inner" style="overflow-y:auto;max-height:72vh;padding:10px 14px;">
-        <div class="town-panel-slot-row">
-          <div class="tp-section-label">GEM SLOT</div>
-          <div class="building-slot" id="market-slot"
-            ondragover="event.preventDefault();this.classList.add('drag-over')"
-            ondragleave="this.classList.remove('drag-over')"
-            ondrop="onBuildingDrop(event,'market')"
-            onclick="onBuildingSlotClick('market')"></div>
-          <div class="tp-slot-hint" id="market-slot-hint">Slot a card to activate</div>
-        </div>
-        <!-- STOCK section -->
-        <div class="market-section-hdr">
-          <span class="tp-section-label">STOCK</span>
-          <div class="market-mini-refresh-wrap"><div class="market-mini-bar" id="market-stock-bar" style="width:0%"></div></div>
           <span class="market-mini-eta" id="market-stock-eta">—</span>
         </div>
         <div class="market-offers-grid" id="market-stock-grid"></div>
@@ -799,11 +740,6 @@
     </div>
     <div class="town-locked-msg" id="shard_well-locked-msg" style="display:none;"></div>
     <div id="shard_well-inner">
-      <div class="town-panel-slot-row">
-        <div class="tp-section-label">GEM SLOT</div>
-        <div class="building-slot" id="shard_well-slot" onclick="onBuildingSlotClick('shard_well')"></div>
-        <div class="tp-slot-hint" id="shard_well-slot-hint">Slot a gem to increase shard generation rate</div>
-      </div>
       <div id="shard-well-display" style="padding:10px 0;"></div>
     </div>
   </div>
@@ -937,6 +873,10 @@
   <!-- ── Data: champions & areas ── -->
   <script src="data/champions.js"></script>
   <script src="data/areas.js"></script>
+  <script src="data/relics.js"></script>
+  <script src="data/expedition.js"></script>
+  <script src="data/quests.js"></script>
+  <script src="data/vault.js"></script>
 
   <!-- ── Data: one file per creature ── -->
   <script src="data/creatures/abysscrawler.js"></script>
