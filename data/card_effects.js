@@ -32,18 +32,18 @@
 // Stack-or-create Poison (2s tick, bypasses Shield)
 function _applyPoison(dpt, durMs){
   var bonusDpt=(gs&&gs._relicPoisonDptBonus)||0; dpt+=bonusDpt;
-  var tickMs=Math.round(2000*((gs&&gs._relicPoisonTickMult)||1));
-  var lbl='Poison ('+dpt+'/'+(tickMs/1000)+'s)';
+  var tickMs=Math.round(1000*((gs&&gs._relicPoisonTickMult)||1));
+  var lbl='Poison ('+dpt+'/s)';
   var e=gs.statusEffects.enemy.find(function(s){return s.id==='poison';});
   if(e){
     e.dpt+=dpt; e.tickMs=tickMs; e.remaining=Math.max(e.remaining,durMs||8000); e.maxRemaining=durMs||8000;
-    removeTagByLabel('enemy',e.label); e.label='Poison ('+e.dpt+'/'+(tickMs/1000)+'s)';
-    addTag('enemy','debuff',e.label,0,'dot','Poison: '+e.dpt+' dmg/'+(tickMs/1000)+'s. Bypasses Shield.');
+    removeTagByLabel('enemy',e.label); e.label='Poison ('+e.dpt+'/s)';
+    addTag('enemy','debuff',e.label,0,'dot','Poison: '+e.dpt+' dmg/s. Bypasses Shield.');
   } else {
     gs.statusEffects.enemy.push({id:'poison',label:lbl,cls:'debuff',stat:'dot',
       remaining:durMs||8000,maxRemaining:durMs||8000,dot:true,dpt:dpt,tickMs:tickMs,tickAcc:0,
-      desc:'Poison: '+dpt+' dmg/'+(tickMs/1000)+'s. Bypasses Shield.'});
-    addTag('enemy','debuff',lbl,0,'dot','Poison: '+dpt+' dmg/'+(tickMs/1000)+'s. Bypasses Shield.');
+      desc:'Poison: '+dpt+' dmg/s. Bypasses Shield.'});
+    addTag('enemy','debuff',lbl,0,'dot','Poison: '+dpt+' dmg/s. Bypasses Shield.');
   }
 }
 
@@ -55,13 +55,13 @@ function _applyPoisonToPlayer(dpt, durMs){
   if(e){
     e.dpt+=dpt; e.remaining=Math.max(e.remaining,durMs||8000); e.maxRemaining=durMs||8000;
     removeTagByLabel('player',e.label);
-    e.label='Poison ('+e.dpt+'/2s)';
-    addTag('player','debuff',e.label,0,'dot','Poison: '+e.dpt+' dmg/2s. Bypasses Shield.');
+    e.label='Poison ('+e.dpt+'/s)';
+    addTag('player','debuff',e.label,0,'dot','Poison: '+e.dpt+' dmg/s. Bypasses Shield.');
   } else {
-    gs.statusEffects.player.push({id:'poison',label:'Poison ('+dpt+'/2s)',cls:'debuff',stat:'dot',
-      remaining:durMs||8000,maxRemaining:durMs||8000,dot:true,dpt:dpt,tickMs:2000,tickAcc:0,
-      desc:'Poison: '+dpt+' dmg/2s. Bypasses Shield.'});
-    addTag('player','debuff','Poison ('+dpt+'/2s)',0,'dot','Poison: '+dpt+' dmg/2s. Bypasses Shield.');
+    gs.statusEffects.player.push({id:'poison',label:'Poison ('+dpt+'/s)',cls:'debuff',stat:'dot',
+      remaining:durMs||8000,maxRemaining:durMs||8000,dot:true,dpt:dpt,tickMs:1000,tickAcc:0,
+      desc:'Poison: '+dpt+' dmg/s. Bypasses Shield.'});
+    addTag('player','debuff','Poison ('+dpt+'/s)',0,'dot','Poison: '+dpt+' dmg/s. Bypasses Shield.');
   }
 }
 
@@ -73,23 +73,39 @@ function _applyBurn(dpt, durMs){
   var e=gs.statusEffects.enemy.find(function(s){return s.id==='burn';});
   if(e){ e.remaining=dur; e.maxRemaining=dur; }
   else {
-    gs.statusEffects.enemy.push({id:'burn',label:'Burn ('+dpt+'/3s)',cls:'debuff',stat:'dot',
-      remaining:dur,maxRemaining:dur,dot:true,dpt:dpt,tickMs:3000,tickAcc:0,
-      desc:'Burn: '+dpt+' dmg/3s. Bypasses Shield. Does not stack — reapplication refreshes duration.'});
-    addTag('enemy','debuff','Burn ('+dpt+'/3s)',0,'dot','Burn: '+dpt+' dmg/3s. Bypasses Shield.');
+    gs.statusEffects.enemy.push({id:'burn',label:'Burn ('+dpt+'/s)',cls:'debuff',stat:'dot',
+      remaining:dur,maxRemaining:dur,dot:true,dpt:dpt,tickMs:1000,tickAcc:0,
+      desc:'Burn: '+dpt+' dmg/s. Bypasses Shield. Does not stack — reapplication refreshes duration.'});
+    addTag('enemy','debuff','Burn ('+dpt+'/s)',0,'dot','Burn: '+dpt+' dmg/s. Bypasses Shield.');
   }
 }
 
 // Timed shield with optional on-expiry callback
 function _applyShield(amt, durMs, onExpiry){
   gs.playerShield+=amt;
-  addTag('player','shield','Shield ('+amt+')',null,null,'Absorbs '+amt+' direct damage. DoTs bypass this.');
-  setTimeout(function(){
-    if(!gs) return;
-    gs.playerShield=Math.max(0,gs.playerShield-amt);
+  // Add to status effects so the tag timer system can track it
+  var existing=gs.statusEffects.player.find(function(s){return s.id==='shield';});
+  if(existing){
+    existing.remaining=Math.max(existing.remaining, durMs);
+    existing.maxRemaining=Math.max(existing.maxRemaining, durMs);
+    existing.label='Shield ('+gs.playerShield+')';
+    // Update tag label
+    var el=document.getElementById('p-tags');
+    if(el){ var old=el.querySelector('[data-label]'); /* re-add below */ }
     removeTagsByClass('player','shield');
-    if(onExpiry) onExpiry();
-  }, durMs);
+  } else {
+    gs.statusEffects.player.push({
+      id:'shield', label:'Shield ('+gs.playerShield+')', cls:'shield', stat:'shield',
+      remaining:durMs, maxRemaining:durMs,
+      desc:'Absorbs '+gs.playerShield+' direct damage. DoTs bypass. Manabound: purged if mana hits 0.',
+      _onExpiry:onExpiry
+    });
+  }
+  addTag('player','shield','Shield ('+gs.playerShield+')',null,'shield','Absorbs '+gs.playerShield+' direct damage. DoTs bypass. Manabound: purged if mana hits 0.');
+  // Expiry handled by tickStatuses — remove the setTimeout approach
+  // Store onExpiry callback on the status for tickStatuses to call
+  var s=gs.statusEffects.player.find(function(s){return s.id==='shield';});
+  if(s) s._onExpiry=onExpiry;
 }
 
 // ── Apply Poison to self (player) ──
@@ -99,14 +115,14 @@ function _applyPoisonSelf(dpt, durMs, stacks){
   if(e){
     e.dpt+=dpt*stacks; e.remaining=Math.max(e.remaining,durMs||8000); e.maxRemaining=durMs||8000;
     removeTagByLabel('player',e.label);
-    e.label='Poison ('+e.dpt+'/2s)';
-    addTag('player','debuff',e.label,0,'dot','Self-Poison: '+e.dpt+' dmg/2s.');
+    e.label='Poison ('+e.dpt+'/s)';
+    addTag('player','debuff',e.label,0,'dot','Self-Poison: '+e.dpt+' dmg/s.');
   } else {
     var totalDpt=dpt*stacks;
-    gs.statusEffects.player.push({id:'poison_self',label:'Poison ('+totalDpt+'/2s)',cls:'debuff',
+    gs.statusEffects.player.push({id:'poison_self',label:'Poison ('+totalDpt+'/s)',cls:'debuff',
       stat:'dot',remaining:durMs||8000,maxRemaining:durMs||8000,dot:true,dpt:totalDpt,
-      tickMs:2000,tickAcc:0,desc:'Self-Poison: '+totalDpt+' dmg/2s.',selfPoison:true});
-    addTag('player','debuff','Poison ('+totalDpt+'/2s)',0,'dot','Self-Poison: '+totalDpt+' dmg/2s.');
+      tickMs:1000,tickAcc:0,desc:'Self-Poison: '+totalDpt+' dmg/s.',selfPoison:true});
+    addTag('player','debuff','Poison ('+totalDpt+'/s)',0,'dot','Self-Poison: '+totalDpt+' dmg/s.');
   }
 }
 
@@ -118,13 +134,13 @@ function _applyPoisonSelfEnemy(dpt, durMs, stacks){
   if(e){
     e.dpt+=totalDpt; e.remaining=Math.max(e.remaining,durMs||8000); e.maxRemaining=durMs||8000;
     removeTagByLabel('enemy',e.label);
-    e.label='Self-Poison ('+e.dpt+'/2s)';
-    addTag('enemy','debuff',e.label,0,'dot','Self-Poison: '+e.dpt+' dmg/2s.');
+    e.label='Self-Poison ('+e.dpt+'/s)';
+    addTag('enemy','debuff',e.label,0,'dot','Self-Poison: '+e.dpt+' dmg/s.');
   } else {
-    gs.statusEffects.enemy.push({id:'poison_self_enemy',label:'Self-Poison ('+totalDpt+'/2s)',cls:'debuff',
+    gs.statusEffects.enemy.push({id:'poison_self_enemy',label:'Self-Poison ('+totalDpt+'/s)',cls:'debuff',
       stat:'dot',remaining:durMs||8000,maxRemaining:durMs||8000,dot:true,dpt:totalDpt,
-      tickMs:2000,tickAcc:0,desc:'Self-Poison: '+totalDpt+' dmg/2s.'});
-    addTag('enemy','debuff','Self-Poison ('+totalDpt+'/2s)',0,'dot','Self-Poison: '+totalDpt+' dmg/2s.');
+      tickMs:1000,tickAcc:0,desc:'Self-Poison: '+totalDpt+' dmg/s.'});
+    addTag('enemy','debuff','Self-Poison ('+totalDpt+'/s)',0,'dot','Self-Poison: '+totalDpt+' dmg/s.');
   }
 }
 
@@ -152,8 +168,8 @@ function _consumeSelfPoison(n){
     removeTagByLabel('player',e.label);
   } else {
     removeTagByLabel('player',e.label);
-    e.label='Poison ('+e.dpt+'/2s)';
-    addTag('player','debuff',e.label,0,'dot','Self-Poison: '+e.dpt+' dmg/2s.');
+    e.label='Poison ('+e.dpt+'/s)';
+    addTag('player','debuff',e.label,0,'dot','Self-Poison: '+e.dpt+' dmg/s.');
   }
   return true;
 }
@@ -373,6 +389,28 @@ var EFFECT_TYPES = {
     run: function(v,ctx){
       var isCrit=ctx.markedCrit||Math.random()<(+v.pct/100);
       var d=ctx.pdmg(+v.base);
+      if(isCrit){ d=Math.round(d*2); spawnFloatNum('enemy','CRIT!',false,'crit-num'); }
+      dealDamageToEnemy(d);
+      addLog(ctx.cardName+'! '+d+' dmg'+(isCrit?' CRIT!':'')+'.','dmg');
+    }
+  },
+
+  // Damage with crit chance conditional on enemy having Burn active.
+  // Used by Smite: [Burn] on enemy: [Crit]: 75%.
+  dmg_if_burning: {
+    label:'Damage (Crit if enemy Burning)', cat:'damage',
+    desc:'Deal damage. If enemy has [Burn]: crit chance applies.',
+    fields:[
+      {id:'base',    label:'Damage',       type:'number', default:8,  min:1, max:200},
+      {id:'critPct', label:'Crit % if Burning', type:'number', default:75, min:1, max:100}
+    ],
+    effectText:  function(v){ return 'Deal '+v.base+' damage.\n[Burn] on enemy: [Crit]: '+v.critPct+'%.'; },
+    tooltipText: function(v){ return '[Crit] fires only when the enemy has Burn active.'; },
+    typeHint:'attack',
+    run: function(v,ctx){
+      var enemyBurning = gs.statusEffects.enemy.some(function(s){ return s.id==='burn'; });
+      var isCrit = ctx.markedCrit || (enemyBurning && Math.random() < (+v.critPct/100));
+      var d = ctx.pdmg(+v.base);
       if(isCrit){ d=Math.round(d*2); spawnFloatNum('enemy','CRIT!',false,'crit-num'); }
       dealDamageToEnemy(d);
       addLog(ctx.cardName+'! '+d+' dmg'+(isCrit?' CRIT!':'')+'.','dmg');
@@ -701,13 +739,49 @@ var EFFECT_TYPES = {
           if(!gs.hand.length) break;
           var ri=Math.floor(Math.random()*gs.hand.length);
           var disc=gs.hand.splice(ri,1)[0];
-          if(!disc.ghost){ gs.discardPile.push(disc.id); handleCardDiscard(disc.id); }
+          if(!disc.ghost){ gs.discardPile.push(disc.id); handleCardDiscard(disc.id); spawnCardFloat(disc.id, 'discard'); }
           discarded++;
         }
         for(var d=0;d<discarded;d++) doDraw(null,false);
         renderHand(); renderPiles();
       }
       addLog('[Churn] '+n+'.','draw');
+    }
+  },
+
+  // ── Conjured — create a temporary copy of this card in the discard pile ──
+  conjure_copy: {
+    label:'[Conjured] copy', cat:'utility',
+    desc:'Create a copy of this card in the discard pile. Copies are temporary — removed at end of battle.',
+    fields:[],
+    effectText:  function(v){ return '[Conjured] a copy into discard.'; },
+    tooltipText: function(v){ return 'Conjured cards circulate normally but are removed at end of battle.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      var copyId = ctx.cardId || 'druid_star_shard';
+      gs.discardPile.push(copyId);
+      gs.conjuredCount = (gs.conjuredCount||0) + 1;
+      addLog('[Conjured] ' + (CARDS[copyId]?CARDS[copyId].name:copyId) + ' added to discard.', 'draw');
+      renderPiles();
+    }
+  },
+
+  // ── Purge Conjured — remove ALL conjured copies from everywhere (Echo trigger) ──
+  purge_conjured: {
+    label:'Purge [Conjured]', cat:'utility',
+    desc:'Remove all Conjured copies from hand, deck, and discard.',
+    fields:[],
+    effectText:  function(v){ return 'Remove all [Conjured] copies from everywhere.'; },
+    tooltipText: function(v){ return 'Echo: on discard, purges all temporary copies.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      if(!gs.conjuredCount || gs.conjuredCount <= 0) return;
+      var purged = purgeAllConjured();
+      if(purged > 0){
+        addLog('[Echo] Purged ' + purged + ' [Conjured] copies.','draw');
+        spawnEchoFloat(ctx.cardId || 'druid_star_shard');
+        renderHand(); renderPiles();
+      }
     }
   },
 
@@ -959,7 +1033,7 @@ var EFFECT_TYPES = {
     run: function(v,ctx){
       if(ctx.isEnemy) _applyPoisonToPlayer(+v.dpt,(+v.dur)*1000);
       else _applyPoison(+v.dpt,(+v.dur)*1000);
-      addLog(ctx.cardName+'! Poison +'+v.dpt+'/2s.','debuff');
+      addLog(ctx.cardName+'! Poison +'+v.dpt+'/s.','debuff');
     }
   },
 
@@ -978,7 +1052,7 @@ var EFFECT_TYPES = {
     run: function(v,ctx){
       var dpt=+v.base+Math.floor((ctx[v.stat]||0)/+v.div);
       _applyPoison(dpt,(+v.dur)*1000);
-      addLog(ctx.cardName+'! Poison +'+dpt+'/2s.','debuff');
+      addLog(ctx.cardName+'! Poison +'+dpt+'/s.','debuff');
     }
   },
 
@@ -994,7 +1068,7 @@ var EFFECT_TYPES = {
     typeHint:'debuff',
     run: function(v,ctx){
       _applyBurn(+v.dpt,(+v.dur)*1000);
-      addLog(ctx.cardName+'! Burn +'+v.dpt+'/3s.','debuff');
+      addLog(ctx.cardName+'! Burn +'+v.dpt+'/s.','debuff');
     }
   },
 
@@ -1013,7 +1087,7 @@ var EFFECT_TYPES = {
     run: function(v,ctx){
       var dpt=+v.base+Math.floor((ctx[v.stat]||0)/+v.div);
       _applyBurn(dpt,(+v.dur)*1000);
-      addLog(ctx.cardName+'! Burn +'+dpt+'/3s.','debuff');
+      addLog(ctx.cardName+'! Burn +'+dpt+'/s.','debuff');
     }
   },
 
@@ -1024,7 +1098,7 @@ var EFFECT_TYPES = {
       {id:'reapply', label:'Reapply after?', type:'select', default:'no', options:['no','yes']},
       {id:'rdpt',    label:'Reapply dpt',    type:'number', default:4, min:1, max:20}
     ],
-    effectText:  function(v){ return 'Detonate all [Poison] as instant damage.'+(v.reapply==='yes'?' Reapply ('+v.rdpt+'/2s).':''); },
+    effectText:  function(v){ return 'Detonate all [Poison] as instant damage.'+(v.reapply==='yes'?' Reapply ('+v.rdpt+'/s).':''); },
     tooltipText: function(v){ return '[Poison] detonation bypasses [Shield].'; },
     typeHint:'attack',
     run: function(v,ctx){
@@ -1051,7 +1125,7 @@ var EFFECT_TYPES = {
       {id:'reapply', label:'Reapply after?', type:'select', default:'yes', options:['no','yes']},
       {id:'rdpt',    label:'Reapply dpt',    type:'number', default:4, min:1, max:20}
     ],
-    effectText:  function(v){ return 'Detonate all [Burn] as instant damage.'+(v.reapply==='yes'?' Reapply ('+v.rdpt+'/3s).':''); },
+    effectText:  function(v){ return 'Detonate all [Burn] as instant damage.'+(v.reapply==='yes'?' Reapply ('+v.rdpt+'/s).':''); },
     tooltipText: function(v){ return '[Burn] detonation bypasses [Shield].'; },
     typeHint:'attack',
     run: function(v,ctx){
@@ -1325,7 +1399,7 @@ var EFFECT_TYPES = {
         var ri=Math.floor(Math.random()*gs.hand.length);
         var disc=gs.hand.splice(ri,1)[0];
         var dc=CARDS[disc.id];
-        if(!disc.ghost){ gs.discardPile.push(disc.id); handleCardDiscard(disc.id); }
+        if(!disc.ghost){ gs.discardPile.push(disc.id); handleCardDiscard(disc.id); spawnCardFloat(disc.id, 'discard'); }
         addLog('Discarded '+(dc?dc.name:disc.id)+'.','draw');
       }
       renderHand(); renderPiles();
@@ -1635,20 +1709,20 @@ function _applyFrenzy(stacks){
   var e = gs.statusEffects.player.find(function(s){ return s.id === 'frenzy'; });
   if(e){
     e.stacks = (e.stacks||1) + stacks;
-    // Refresh duration for the new total stack count
-    var dur = Math.round(2000 * Math.pow(0.9, e.stacks - 1));
+    // Duration: 3s base, each stack reduces max by 10% (×0.9 per stack)
+    var dur = Math.round(3000 * Math.pow(0.9, e.stacks - 1));
     e.remaining = dur; e.maxRemaining = dur;
     _updateFrenzyBonus(e.stacks);
     _updateFrenzyTag(e.stacks);
   } else {
-    var initDur = Math.round(2000 * Math.pow(0.9, stacks - 1));
+    var initDur = Math.round(3000 * Math.pow(0.9, stacks - 1));
     gs.statusEffects.player.push({
       id:'frenzy', label:'Frenzy \xd7'+stacks, cls:'buff', stat:'frenzy',
       stacks:stacks, remaining:initDur, maxRemaining:initDur, dot:false,
-      desc:'Frenzy: stacking draw speed buff. Collapses when timer expires or mana runs out.'
+      desc:'Frenzy: +10% draw speed per stack. Duration shortens per stack. Manabound. Drains 3 mana/s.'
     });
     addTag('player','buff','Frenzy \xd7'+stacks, stacks, 'frenzy',
-      'Frenzy: +10% draw speed per stack. Collapses on expiry or at 0 mana. 3 mana/s drain.');
+      'Frenzy: +10% draw speed per stack. Duration shortens per stack. Manabound. Drains 3 mana/s.');
     _updateFrenzyBonus(stacks);
   }
   if(SETTINGS.logd!=='brief') addLog('Frenzy \xd7'+(e?e.stacks:stacks)+'!','buff');
@@ -1700,6 +1774,7 @@ function executeEffects(effects, pdmgFn, cardId, isAuto, isGhost, markedCrit){
   var ctx={
     pdmg:pdmgFn, str:s.str, agi:s.agi, wis:s.wis,
     isAuto:isAuto, isGhost:isGhost, markedCrit:markedCrit,
+    cardId:cardId,
     cardName:(CARDS[cardId]&&CARDS[cardId].name)||cardId
   };
   effects.forEach(function(e){
@@ -1739,6 +1814,8 @@ function executeEnemyEffects(effects, ePdmgFn, cardName, enemy, debuffDurMult){
 function handleCardDiscard(cardId){
   var c=CARDS[cardId];
   if(!c||!c.onDiscard||!c.onDiscard.length) return;
+  // Echo visual — burst at discard pile
+  spawnEchoFloat(cardId);
   // Minimal pdmg for on-discard context — no Shadow Mark, no Bulwark bonuses
   function discardPdmg(base){ return Math.max(1,base); }
   executeEffects(c.onDiscard, discardPdmg, cardId, false, false, false);
@@ -1761,7 +1838,7 @@ function executeCard(id,isGhost,isAuto){
     var _pi=CREATURES[gs.champId]&&CREATURES[gs.champId].innate;
     if(_pi&&_pi.id==='spreading_spores'){
       gs._spreadingSporesCount=(gs._spreadingSporesCount||0)+1;
-      if(gs._spreadingSporesCount%3===0){ applyDoT('enemy','spread_poison',4,2000,6000,'Spreading Spores: 4/2s.'); addLog('Spreading Spores! Poison.','buff'); }
+      if(gs._spreadingSporesCount%3===0){ applyDoT('enemy','spread_poison',4,1000,6000,'Spreading Spores: 4/s.'); addLog('Spreading Spores! Poison.','buff'); }
     }
     // Frenzied — gain 1 Frenzy when playing an attack card (damage tag)
     if(_pi&&_pi.id==='frenzied'){
@@ -1786,9 +1863,11 @@ function executeCard(id,isGhost,isAuto){
     if(gs._effigyFree){ gs._effigyFree=false; gs.mana=Math.min(gs.maxMana,gs.mana+(c&&c.manaCost||10)); addLog('Effigy: first card is free!','mana'); }
   }
 
-  // Shadow Mark — consume nextCardCrit for non-ghost real cards
+  // Shadow Mark — consume critBonus from hand item OR legacy nextCardCrit
   var markedCrit=false;
-  if(!isGhost&&gs.nextCardCrit&&id!=='ghost_shadow_mark'){
+  if(!isGhost && gs._critBonus > 0){
+    markedCrit = true;
+  } else if(!isGhost && gs.nextCardCrit && id!=='ghost_shadow_mark'){
     markedCrit=true; gs.nextCardCrit=false; removeTagByLabel('player','Shadow Mark');
   }
 
@@ -1904,7 +1983,7 @@ function executeCard(id,isGhost,isAuto){
     dealDamageToEnemy(pdmg(8));
     var burnDpt=Math.max(1,wis);
     _applyBurn(burnDpt,9000);
-    addLog('Smite! 8 dmg + [Burn] ('+burnDpt+'/3s).','dmg');
+    addLog('Smite! 8 dmg + [Burn] ('+burnDpt+'/s).','dmg');
   }
   else if(id==='paladin_consecrate'){
     // Weaken handled by effects array; custom branch for Sorcery Burn
@@ -1914,7 +1993,7 @@ function executeCard(id,isGhost,isAuto){
       gs.mana-=20; updateAll();
       var cBurnDpt=Math.max(1,wis);
       _applyBurn(cBurnDpt,9000);
-      addLog('[Sorcery] Consecrate: [Burn] ('+cBurnDpt+'/3s).','mana');
+      addLog('[Sorcery] Consecrate: [Burn] ('+cBurnDpt+'/s).','mana');
     }
   }
   else if(id==='paladin_aegis'){
@@ -1946,7 +2025,7 @@ function executeCard(id,isGhost,isAuto){
     var hfDpt=Math.max(1,wis*2);
     _applyBurn(hfDpt,9000);
     gs.mana=Math.min(gs.maxMana,gs.mana+30);
-    addLog('Hellfire! [Burn] ('+hfDpt+'/3s) + 30 mana.','buff');
+    addLog('Hellfire! [Burn] ('+hfDpt+'/s) + 30 mana.','buff');
     if(gs.mana>=30){
       gs.mana-=30; updateAll();
       applyStatus('enemy','debuff','Weaken',-0.15,'dmg',5000,'Weaken: enemy dmg -15%.');
@@ -1993,10 +2072,10 @@ function executeCard(id,isGhost,isAuto){
     }
   }
   else if(id==='ghost_shadow_mark'){
-    _applyPoison(12,8000);
+    _applyPoison(6,8000);
     gs.nextCardCrit=true;
     applyStatus('player','buff','Shadow Mark',0,'shadow_mark',30000,'Shadow Mark: next card is a guaranteed Crit.');
-    addLog('✦ Shadow Mark! +12 Poison. Next card CRITS.','innate');
+    addLog('✦ Shadow Mark! +6 Poison. Next card CRITS.','innate');
   }
 
     else if(id==='ms_moonburst'){
@@ -2083,11 +2162,11 @@ function triggerHolyFlame(){
   if(existing){
     removeTagByLabel('enemy',existing.label); existing.dpt+=burnDmg; existing.remaining=12000; existing.maxRemaining=12000;
     var stacks=Math.round(existing.dpt/Math.max(1,gs.stats.wis)); var newLabel='Holy Burn \xd7'+stacks;
-    existing.label=newLabel; addTag('enemy','debuff',newLabel,0,'dot','Holy Flame: '+existing.dpt+' dmg/3s ('+stacks+' stacks)'); addLog('Holy Flame: Burn \xd7'+stacks+' ('+existing.dpt+' dmg/3s).','innate');
+    existing.label=newLabel; addTag('enemy','debuff',newLabel,0,'dot','Holy Flame: '+existing.dpt+' dmg/s ('+stacks+' stacks)'); addLog('Holy Flame: Burn \xd7'+stacks+' ('+existing.dpt+' dmg/s).','innate');
   } else {
-    var label1='Holy Burn \xd71'; var desc1='Holy Flame: '+burnDmg+' dmg/3s (1 stack)';
-    gs.statusEffects.enemy.push({id:'holy_burn',label:label1,cls:'debuff',stat:'dot',remaining:12000,maxRemaining:12000,dot:true,dpt:burnDmg,tickMs:3000,tickAcc:0,desc:desc1});
-    addTag('enemy','debuff',label1,0,'dot',desc1); addLog('Holy Flame: Burn \xd71 ('+burnDmg+' dmg/3s).','innate');
+    var label1='Holy Burn \xd71'; var desc1='Holy Flame: '+burnDmg+' dmg/s (1 stack)';
+    gs.statusEffects.enemy.push({id:'holy_burn',label:label1,cls:'debuff',stat:'dot',remaining:12000,maxRemaining:12000,dot:true,dpt:burnDmg,tickMs:1000,tickAcc:0,desc:desc1});
+    addTag('enemy','debuff',label1,0,'dot',desc1); addLog('Holy Flame: Burn \xd71 ('+burnDmg+' dmg/s).','innate');
   }
 }
 
@@ -2101,6 +2180,9 @@ function activateInnate(){
   var ch=getCreaturePlayable(gs.champId);
   if(!ch.innateActive||gs.mana<ch.innateCost) return;
   gs.mana-=ch.innateCost; playInnateSfx();
+  // Flash the innate card
+  var innateEl=document.getElementById('innate-card');
+  if(innateEl){ innateEl.classList.remove('innate-flash'); void innateEl.offsetWidth; innateEl.classList.add('innate-flash'); }
   if(gs.champId==='druid'){
     var hl=gs.hand.length;
     if(hl===0){ addLog('No cards in hand for Starfall!','innate'); gs.mana+=ch.innateCost; return; }
@@ -2108,7 +2190,7 @@ function activateInnate(){
     var churned=0;
     for(var i=gs.hand.length-1;i>=0;i--){
       var disc=gs.hand.splice(i,1)[0];
-      if(!disc.ghost){ gs.discardPile.push(disc.id); handleCardDiscard(disc.id); }
+      if(!disc.ghost){ gs.discardPile.push(disc.id); handleCardDiscard(disc.id); spawnCardFloat(disc.id, 'discard'); }
       churned++;
     }
     var sfDmg=pdmg(churned*5);
@@ -2117,7 +2199,6 @@ function activateInnate(){
     // Draw same number back
     for(var d=0;d<churned;d++) doDraw(null,false);
     renderHand(); renderPiles();
-    doDraw('ghost_shadow_mark',false); addLog('\u2756 SHADOW MARK! A spectral card appears in hand.','innate');
   } else if(gs.champId==='gorby'){
     // Convert all attack cards in hand into Ethereal Gorby Attacks
     // Formula: resolvedDamage × effectCount (multi-hit uses total damage)
@@ -2168,6 +2249,20 @@ function activateInnate(){
     } else {
       addLog('\u2756 GORBY converts '+converted+' card'+(converted>1?'s':'')+'!','innate');
     }
+  } else if(gs.champId==='thief'){
+    // Shadow Mark: Apply 6 Poison + mark ALL attack cards with +[Crit]: 100%
+    // First attack card played consumes the mark and clears all others
+    _applyPoison(6, 8000);
+    gs.shadowMarkActive = true;
+    // Mark all current attack cards in hand
+    for(var ti = 0; ti < gs.hand.length; ti++){
+      var tCard = CARDS[gs.hand[ti].id];
+      if(tCard && tCard.type === 'attack' && !gs.hand[ti].ghost){
+        gs.hand[ti].critBonus = 100;
+      }
+    }
+    applyStatus('player', 'buff', 'Shadow Mark', 0, 'shadow_mark', 30000, 'Shadow Mark: next attack card played crits.');
+    addLog('✦ Shadow Mark! +6 Poison. All attack cards gain +[Crit]: 100%.', 'innate');
   }
   updateAll(); renderHand(); renderPiles(); checkEnd();
 }

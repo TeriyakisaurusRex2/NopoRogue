@@ -22,13 +22,8 @@ CREATURES.druid = {
     cooldown: 8000,
   },
 
-  deck: [
-    'druid_void_bolt',
-    'druid_void_bolt',
-    'druid_void_bolt',
-    'druid_star_shard',
-    'druid_star_shard',
-    'druid_nova_burst',
-    'druid_nova_burst',
-  ],
+  // Deck is generated from STR. The 5 identity cards below are distributed
+  // evenly (20% each) at STR 10. Extra slots from higher STR are filled in
+  // deckOrder priority: unique cards first (in listed order), then universals.
+  deckOrder: ['druid_void_bolt', 'druid_star_shard', 'druid_nova_burst'],
 };

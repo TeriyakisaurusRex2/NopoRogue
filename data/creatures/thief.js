@@ -16,18 +16,14 @@ CREATURES.thief = {
   innate: {
     id:       'shadow_mark',
     name:     'Shadow Mark',
-    desc:     'Apply 12 [Poison]. Next attack card: +[Crit]: 100%.',
+    desc:     'Apply 6 [Poison]. Next attack card: +[Crit]: 100%.',
     active:   true,
     cost:     35,
     cooldown: 2000,
   },
 
-  deck: [
-    'thief_quick_slash',
-    'thief_quick_slash',
-    'thief_quick_slash',
-    'thief_poison_dart',
-    'thief_poison_dart',
-    'thief_shadow_step',
-  ],
+  // Deck is generated from STR. The 5 identity cards below are distributed
+  // evenly (20% each) at STR 10. Extra slots from higher STR are filled in
+  // deckOrder priority: unique cards first (in listed order), then universals.
+  deckOrder: ['thief_quick_slash', 'thief_poison_dart', 'thief_shadow_step'],
 };

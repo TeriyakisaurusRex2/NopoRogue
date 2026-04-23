@@ -140,6 +140,19 @@ function showImportMsg(msg,color){
 function deleteSaveStep1(){
   document.getElementById('s-delete-confirm').style.display='block';
   document.getElementById('s-delete-btn').style.display='none';
+  document.getElementById('s-delete-confirm').innerHTML=
+    '<div style="color:#ff6060;font-size:11px;letter-spacing:1px;margin-bottom:8px;">'
+    +'⚠ Delete this save? All progress will be permanently lost.</div>'
+    +'<button onclick="deleteSaveStep2()" style="background:#8b2020;color:#fff;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;margin-right:8px;font-size:11px;">YES, DELETE FOREVER</button>'
+    +'<button onclick="deleteSaveCancel()" style="background:#333;color:#aaa;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:11px;">Cancel</button>';
+}
+function deleteSaveStep2(){
+  // Second confirmation — this is permanent
+  document.getElementById('s-delete-confirm').innerHTML=
+    '<div style="color:#ff4040;font-size:11px;letter-spacing:1px;margin-bottom:8px;">'
+    +'⚠ Are you absolutely sure? This cannot be undone.</div>'
+    +'<button onclick="deleteSaveConfirm()" style="background:#cc0000;color:#fff;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;margin-right:8px;font-size:11px;">DELETE PERMANENTLY</button>'
+    +'<button onclick="deleteSaveCancel()" style="background:#333;color:#aaa;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:11px;">Cancel</button>';
 }
 function deleteSaveCancel(){
   var dc=document.getElementById('s-delete-confirm');
@@ -148,9 +161,13 @@ function deleteSaveCancel(){
   if(db) db.style.display='inline-block';
 }
 function deleteSaveConfirm(){
+  // Delete current account save data
+  // TODO: When multi-account is implemented, this deletes only the active
+  // account's save key (noporo_save_{username}) and removes it from the
+  // user list. For now, single save key.
   try{ localStorage.removeItem(PERSIST_KEY); }catch(e){}
-  try{ localStorage.removeItem('cetd_settings'); }catch(e){}
-  // Show feedback directly in the confirm panel since import-msg may not be visible
+  // Settings are global (not per-account) — keep them
+  // Show feedback
   var dc=document.getElementById('s-delete-confirm');
   if(dc) dc.innerHTML='<div style="color:#60c060;font-size:11px;letter-spacing:1px;">✦ Save deleted. Reloading...</div>';
   setTimeout(function(){ window.location.reload(); },1000);
@@ -624,7 +641,7 @@ function buildArea(def,level){
       baseHp:hp,
       dmgMult:dmgMult,  // applied to all card.value in executeEnemyCard
       atkInterval:calcDrawInterval(agi),
-      gold:b.gold, xp:Math.round(8+level*10),
+      xp:Math.round(8+level*10),
       innate:b.innate,
       deck:b.deck,
       openingMove:b.openingMove,
@@ -683,6 +700,35 @@ function calcManaRegen(wis){ return wis*1.5; }
 var HAND_SIZE=7;
 
 // ═══════════════════════════════════════════════════════
+// DECK BUILDER — generates a creature's deck from STR + deckOrder
+// ═══════════════════════════════════════════════════════
+// Rules:
+//   — All 5 identity cards (3 unique + Strike + Brace) get an even share
+//     of STR total: floor(STR / 5) copies each
+//   — Remainder (STR % 5) distributed one extra copy each, in priority:
+//     deckOrder first (in listed order), then Strike, then Brace
+//   — No filler at base STR. Filler only on level-up when STR exceeds deck.
+// ═══════════════════════════════════════════════════════
+function buildCreatureDeck(creature, strOverride){
+  if(!creature) return ['strike','strike','brace','brace'];
+  var str = (strOverride !== undefined) ? strOverride : (creature.baseStats && creature.baseStats.str) || 10;
+  var order = creature.deckOrder || [];
+
+  // All 5 identity cards in priority order: unique first, then universals
+  var allCards = order.concat(['strike', 'brace']);
+  var base = Math.floor(str / allCards.length);
+  var remainder = str % allCards.length;
+
+  var deck = [];
+  allCards.forEach(function(id, idx){
+    var copies = base + (idx < remainder ? 1 : 0);
+    for(var i = 0; i < copies; i++) deck.push(id);
+  });
+
+  return deck;
+}
+
+// ═══════════════════════════════════════════════════════
 // GAME STATE
 // ═══════════════════════════════════════════════════════
 var selectedChampId=null, selectedArea=null, gs=null;
@@ -705,12 +751,17 @@ function getCreaturePlayable(id){
   if(!c.innateDesc&&c.innate)  c.innateDesc=c.innate.desc;
   if(c.innateActive===undefined&&c.innate) c.innateActive=!!c.innate.active;
   if(c.innateCost===undefined&&c.innate)   c.innateCost=c.innate.cost||0;
-  // startDeck: use creature's own deck, or CREATURE_DECKS for legacy enemies
-  if(!c.startDeck){
+  // startDeck: deckOrder always wins if present (generates from STR).
+  // Otherwise fall back to legacy deck / CREATURE_DECKS.
+  if(c.deckOrder){
+    c.startDeck = buildCreatureDeck(c);
+  } else if(!c.startDeck){
     if(CREATURE_DECKS&&CREATURE_DECKS[id]){
       c.startDeck=CREATURE_DECKS[id].cards.slice();
+    } else if(c.deck){
+      c.startDeck=c.deck.slice();
     } else {
-      c.startDeck=c.deck?c.deck.slice():['strike','strike','brace'];
+      c.startDeck=['strike','strike','brace'];
     }
   }
   return c;
@@ -719,18 +770,28 @@ function getCreaturePlayable(id){
 function buildStartDeck(champId){
   var c=getCreaturePlayable(champId);
   var mods=getSanctumMods(champId);
+  var cp=getChampPersist(champId);
+  var currentStr = cp.stats.str;
+  var baseStr = (c && c.baseStats && c.baseStats.str) || currentStr;
+  var cap = calcDeckCap(currentStr);
 
   // If the deck editor has saved an override, use it directly
   if(mods.deckOverride && mods.deckOverride.length > 0){
     var base = mods.deckOverride.slice();
-    // Pad to current STR cap with filler if needed
-    var cp=getChampPersist(champId);
-    var cap=calcDeckCap(cp.stats.str);
-    while(base.length<cap) base.push('filler');
+    // Pad with filler only if current STR cap exceeds deck size (post level-up)
+    while(base.length < cap) base.push('filler');
     return base;
   }
 
-  var base=c&&c.startDeck ? c.startDeck.slice() : (c&&c.deck ? c.deck.slice() : ['strike','strike','brace']);
+  // Generate base deck from creature's base STR (not current STR).
+  // This gives the designed baseline deck for this creature.
+  var base;
+  if(c && c.deckOrder){
+    base = buildCreatureDeck(c, baseStr);
+  } else {
+    base = c&&c.startDeck ? c.startDeck.slice() : (c&&c.deck ? c.deck.slice() : ['strike','strike','brace']);
+  }
+
   // Apply removals
   (mods.removed||[]).forEach(function(r){
     for(var i=0;i<(r.copies||1);i++){
@@ -747,10 +808,12 @@ function buildStartDeck(champId){
   (mods.extras||[]).forEach(function(e){
     for(var i=0;i<(e.copies||1);i++) base.push(e.cardId);
   });
-  // Pad with filler cards up to current STR-based deck cap
-  var cp=getChampPersist(champId);
-  var cap=calcDeckCap(cp.stats.str);
-  while(base.length<cap) base.push('filler');
+
+  // Filler rule: only pad with filler if STR has grown beyond the base deck size.
+  // At level 1, base deck fills baseStr slots exactly — no filler.
+  // After level-ups, the STR cap grows and empty slots become Dead Weight
+  // prompting the player to unlock new cards in the Sanctum.
+  while(base.length < cap) base.push('filler');
   return base;
 }
 
@@ -815,7 +878,7 @@ function makeGS(champId,area){
     lastPlayerCard:null,
     _brittleShellFired:false, _waxMeltAcc:0, _waxTimerAcc:0, waxDamageDealt:0,
     holyShieldActive:false,
-    nextCardCrit:false,
+    nextCardCrit:false, shadowMarkActive:false, conjuredCount:0,
     killedEnemyIds:[],
     _frenziedAcc:0, _frenziedStacks:0,
     _skitterAcc:0,
@@ -953,7 +1016,7 @@ function rebuildChampGrid(){
       d.innerHTML=deadHtml+expHtml
         +'<div class="champ-icon">'+creatureImgHTML(id, ch.icon, '96px')+'</div>'
         +'<div class="champ-name">'+ch.name+'</div>'
-        +'<div class="champ-role">'+ch.role+'</div>'
+        
         +'<div class="champ-level-row">'
           +'<span class="champ-level-badge">Lv.'+cp.level+'</span>'
           +'<div class="champ-xp-wrap"><div class="champ-xp-bar" style="width:'+xpPct+'%"></div></div>'
@@ -1604,7 +1667,7 @@ function openChampPanel(){
   // Portrait
   setCreatureImg(document.getElementById('csp-portrait'), selectedChampId, ch.icon, '56px');
   document.getElementById('csp-name').textContent=ch.name;
-  document.getElementById('csp-role').textContent=ch.role||'';
+  // role display removed
   document.getElementById('csp-level').textContent=cp.level;
   document.getElementById('csp-str').textContent=Math.round(cp.stats.str);
   document.getElementById('csp-agi').textContent=Math.round(cp.stats.agi);
@@ -1821,9 +1884,6 @@ function setEnemyUI(idx){
   setCreatureImg(document.getElementById('e-icon'), e.id, e.icon, '320px');
   document.getElementById('e-hp-bar').style.width='100%';
   document.getElementById('e-hp-txt').textContent=e.baseHp+'/'+e.baseHp;
-  document.getElementById('e-str').textContent=e.str;
-  document.getElementById('e-agi').textContent=e.agi;
-  document.getElementById('e-wis').textContent=e.wis;
   document.getElementById('e-tags').innerHTML='';
   if(e.innate) addInnateTag('enemy',e.innate);
   trackSeen(e.id);
@@ -1972,9 +2032,61 @@ function startBattle(){
 function startLoops(){ stopLoops(); tickTimer=setInterval(gameTick,100); scheduleEnemyAction(); }
 function stopLoops(){ clearInterval(tickTimer); tickTimer=null; clearTimeout(enemyTimer); enemyTimer=null; clearInterval(_enemyDrawBarTimer); _enemyDrawBarTimer=null; }
 
+// Manabound purge — when a creature's mana hits 0, all manabound
+// statuses are immediately removed. Current manabound: Shield, Dodge, Frenzy.
+function checkManabound(target, mana, effects){
+  if(mana > 0) return;
+  var purged = false;
+  // Shield purge
+  if(target === 'player' && gs.playerShield > 0){
+    gs.playerShield = 0;
+    // Remove shield status effect and call its onExpiry
+    for(var i = effects.length-1; i >= 0; i--){
+      if(effects[i].id === 'shield'){
+        if(typeof effects[i]._onExpiry === 'function') effects[i]._onExpiry();
+        effects.splice(i, 1);
+      }
+    }
+    removeTagsByClass('player', 'shield');
+    addLog('⚡ Shield purged (manabound — mana depleted).', 'sys');
+    purged = true;
+  }
+  if(target === 'enemy' && (gs.enemyShell||0) > 0){
+    gs.enemyShell = 0;
+    for(var i = effects.length-1; i >= 0; i--){
+      if(effects[i].id === 'shield') effects.splice(i, 1);
+    }
+    removeTagsByClass('enemy', 'shield');
+    purged = true;
+  }
+  // Dodge purge
+  if(target === 'player' && gs.playerDodge){
+    gs.playerDodge = false;
+    removeTagByLabel('player', 'Dodge');
+    addLog('⚡ Dodge purged (manabound — mana depleted).', 'sys');
+    purged = true;
+  }
+  // Frenzy purge
+  for(var i = effects.length-1; i >= 0; i--){
+    if(effects[i].id === 'frenzy'){
+      var fLabel = effects[i].label || 'Frenzy';
+      effects.splice(i, 1);
+      removeTagByLabel(target, fLabel);
+      if(target === 'player'){
+        gs.drawSpeedBonus = 1.0;
+        addLog('⚡ Frenzy collapsed (manabound — mana depleted).', 'sys');
+      }
+      purged = true;
+    }
+  }
+}
+
 function gameTick(){
   if(paused||!gs||!gs.running) return;
   tickStatuses(100); tickDoTs(100); tickEnemyInnates(100);
+  // Manabound purge — if mana hits 0, remove all manabound effects
+  checkManabound('player', gs.mana, gs.statusEffects.player);
+  checkManabound('enemy', gs.enemyMana, gs.statusEffects.enemy);
   // Battle timer (used by Goblin War Cry rally check)
   gs._battleTimeMs=(gs._battleTimeMs||0)+100;
   // Bloat Shield — apply Poison to enemy while shield is active
@@ -2537,20 +2649,185 @@ function spawnHealNum(target, text){
   spawnFloatNum(target, '+'+text, false, 'heal-num');
 }
 
-function dealDamageToPlayer(dmg){
-  // Paladin Holy Shield — active: 80% of hit routes to mana while shield is up
-  if(gs.champId==='paladin'&&gs.holyShieldActive&&gs.mana>0&&dmg>0){
-    var routeAmt=Math.floor(dmg*0.8);
-    var drained=Math.min(gs.mana,routeAmt);
-    gs.mana-=drained; dmg=dmg-drained; // remaining 20% (or more if mana ran out) hits HP
-    if(drained>0){
-      spawnFloatNum('player','🛡 '+drained,false,'block-num');
-      flashHpBar('player','hp-flash-blue');
-      addLog('Holy Shield routes '+drained+' dmg to mana! ('+Math.round(dmg)+' bleeds through)','buff');
-      updateAll();
-      if(gs.mana<=0){ gs.holyShieldActive=false; removeTagByLabel('player','Shielded'); addLog('Holy Shield exhausted — mana drained!','debuff'); }
+// Determine where a card's effect targets: 'enemy', 'player', or 'both'
+function getCardTarget(cardId){
+  var c = CARDS[cardId];
+  if(!c) return 'enemy';
+  var hitsEnemy = false, hitsSelf = false;
+  // Check card type
+  if(c.type === 'attack') hitsEnemy = true;
+  if(c.type === 'defense') hitsSelf = true;
+  // Check effects array for more detail
+  if(c.effects){
+    c.effects.forEach(function(e){
+      var t = e.type || '';
+      if(t.indexOf('dmg')!==-1 || t.indexOf('poison')!==-1 || t.indexOf('burn')!==-1 ||
+         t.indexOf('slow')!==-1 || t.indexOf('weaken')!==-1 || t.indexOf('cursed')!==-1 ||
+         t.indexOf('marked')!==-1 || t.indexOf('stun')!==-1) hitsEnemy = true;
+      if(t.indexOf('shield')!==-1 || t.indexOf('heal')!==-1 || t.indexOf('dodge')!==-1 ||
+         t.indexOf('mana')!==-1 || t.indexOf('draw')!==-1 || t.indexOf('frenzy')!==-1 ||
+         t.indexOf('haste')!==-1) hitsSelf = true;
+    });
+  }
+  if(hitsEnemy && hitsSelf) return 'both';
+  if(hitsSelf) return 'player';
+  if(hitsEnemy) return 'enemy';
+  return 'neutral';
+}
+
+// Spawn a card ghost that flies from hand to target
+// type: 'play' or 'discard'
+function spawnCardFloat(cardId, type){
+  var c = CARDS[cardId];
+  if(!c) return;
+  var container = document.getElementById('hand-cards');
+  if(!container) return;
+  var startRect = container.getBoundingClientRect();
+  var startX = startRect.left + startRect.width/2;
+  var startY = startRect.top + startRect.height/2;
+
+  if(type === 'discard'){
+    // Discard: fly to discard pile
+    var discEl = document.getElementById('disc-cnt');
+    if(discEl){
+      var discRect = discEl.getBoundingClientRect();
+      _spawnGhost(c.icon, startX, startY, discRect.left + discRect.width/2, discRect.top + discRect.height/2, 'discard');
+    }
+    return;
+  }
+
+  // Play: determine target and fly there
+  var target = getCardTarget(cardId);
+  var enemyEl = document.getElementById('e-icon');
+  var playerEl = document.getElementById('p-icon');
+  var enemyRect = enemyEl ? enemyEl.getBoundingClientRect() : null;
+  var playerRect = playerEl ? playerEl.getBoundingClientRect() : null;
+
+  if(target === 'both' && enemyRect && playerRect){
+    // Shatter into two fragments
+    var ghost = _createGhostEl(c.icon, startX, startY);
+    ghost.classList.add('ghost-shatter');
+    document.body.appendChild(ghost);
+    // After brief hold, spawn two fragments
+    setTimeout(function(){
+      if(ghost.parentNode) ghost.parentNode.removeChild(ghost);
+      _spawnGhost(c.icon, startX, startY, enemyRect.left + enemyRect.width/2, enemyRect.top + enemyRect.height/2, 'attack');
+      _spawnGhost(c.icon, startX, startY, playerRect.left + playerRect.width/2, playerRect.top + playerRect.height/2, 'buff');
+    }, 120);
+  } else if(target === 'player' && playerRect){
+    _spawnGhost(c.icon, startX, startY, playerRect.left + playerRect.width/2, playerRect.top + playerRect.height/2, 'buff');
+  } else if(target === 'neutral'){
+    // Neutral card (Dead Weight etc.) — fizzle in place
+    var ghost = _createGhostEl(c.icon, startX, startY);
+    ghost.classList.add('card-ghost-neutral');
+    document.body.appendChild(ghost);
+    setTimeout(function(){ if(ghost.parentNode) ghost.parentNode.removeChild(ghost); }, 500);
+  } else if(enemyRect){
+    _spawnGhost(c.icon, startX, startY, enemyRect.left + enemyRect.width/2, enemyRect.top + enemyRect.height/2, 'attack');
+  }
+}
+
+function _createGhostEl(icon, x, y){
+  var el = document.createElement('div');
+  el.className = 'card-ghost';
+  el.textContent = icon;
+  el.style.left = x + 'px';
+  el.style.top = y + 'px';
+  return el;
+}
+
+function _spawnGhost(icon, fromX, fromY, toX, toY, cls){
+  var el = _createGhostEl(icon, fromX, fromY);
+  el.classList.add('card-ghost-' + cls);
+  el.style.setProperty('--dx', (toX - fromX) + 'px');
+  el.style.setProperty('--dy', (toY - fromY) + 'px');
+  document.body.appendChild(el);
+  setTimeout(function(){ if(el.parentNode) el.parentNode.removeChild(el); }, 450);
+}
+// Echo trigger visual — a ripple effect at the discard pile when Echo fires
+function spawnEchoFloat(cardId){
+  var c = CARDS[cardId];
+  if(!c) return;
+  var discEl = document.getElementById('disc-cnt');
+  if(!discEl) return;
+  var rect = discEl.getBoundingClientRect();
+  var el = document.createElement('div');
+  el.className = 'echo-burst';
+  el.textContent = c.icon;
+  el.style.left = (rect.left + rect.width/2) + 'px';
+  el.style.top = (rect.top + rect.height/2) + 'px';
+  document.body.appendChild(el);
+  setTimeout(function(){ if(el.parentNode) el.parentNode.removeChild(el); }, 600);
+}
+
+// Remove all Conjured copies from hand, deck (drawPool), and discard.
+// gs.conjuredCount tracks total conjured copies in existence.
+// We remove copies by scanning all zones for the conjured card ID and
+// removing up to conjuredCount instances (originals are safe because
+// the base deck count is subtracted).
+function purgeAllConjured(){
+  if(!gs || !gs.conjuredCount || gs.conjuredCount <= 0) return 0;
+  var toRemove = gs.conjuredCount;
+  var purged = 0;
+
+  // Remove from hand (hand items have _conjured flag)
+  for(var i = gs.hand.length - 1; i >= 0 && toRemove > 0; i--){
+    if(gs.hand[i]._conjured){
+      spawnCardFloat(gs.hand[i].id, 'discard');
+      gs.hand.splice(i, 1);
+      toRemove--; purged++;
     }
   }
+
+  // Remove from discard pile (scan backwards, remove newest first)
+  for(var i = gs.discardPile.length - 1; i >= 0 && toRemove > 0; i--){
+    if(gs.discardPile[i] === 'druid_star_shard'){
+      gs.discardPile.splice(i, 1);
+      toRemove--; purged++;
+    }
+  }
+
+  // Remove from draw pool
+  for(var i = gs.drawPool.length - 1; i >= 0 && toRemove > 0; i--){
+    if(gs.drawPool[i] === 'druid_star_shard'){
+      gs.drawPool.splice(i, 1);
+      toRemove--; purged++;
+    }
+  }
+
+  gs.conjuredCount = 0;
+  return purged;
+}
+
+
+// Spawn a draw animation — a card-shaped element flies from origin to hand
+// origin: 'deck' (from deck pile) or 'innate' (from innate card)
+function spawnDrawAnim(cardId, origin){
+  var c = CARDS[cardId];
+  if(!c) return;
+  var srcId = origin === 'innate' ? 'innate-card' : 'deck-cnt';
+  var src = document.getElementById(srcId);
+  var dest = document.getElementById('hand-cards');
+  if(!src || !dest) return;
+  var srcRect = src.getBoundingClientRect();
+  var destRect = dest.getBoundingClientRect();
+  var el = document.createElement('div');
+  el.className = 'draw-anim';
+  el.textContent = c.icon;
+  // Start at source position
+  var startX = srcRect.left + srcRect.width/2;
+  var startY = srcRect.top + srcRect.height/2;
+  var endX = destRect.left + destRect.width/2;
+  var endY = destRect.top + destRect.height/2;
+  el.style.left = startX + 'px';
+  el.style.top = startY + 'px';
+  el.style.setProperty('--dx', (endX - startX) + 'px');
+  el.style.setProperty('--dy', (endY - startY) + 'px');
+  document.body.appendChild(el);
+  setTimeout(function(){ if(el.parentNode) el.parentNode.removeChild(el); }, 350);
+}
+
+function dealDamageToPlayer(dmg){
   // Dodge — full evade
   if(gs.playerDodge){
     gs.playerDodge=false;
@@ -2561,6 +2838,7 @@ function dealDamageToPlayer(dmg){
     return;
   }
   // Shield absorption
+  var hadShield = gs.playerShield > 0;
   if(gs.playerShield>0){
     var b=Math.min(gs.playerShield,dmg); gs.playerShield-=b; dmg-=b;
     if(b>0){
@@ -2570,7 +2848,32 @@ function dealDamageToPlayer(dmg){
     }
     if(gs.playerShield<=0){
       gs.playerShield=0; removeTagsByClass('player','shield');
+      // Remove shield status effect
+      for(var si=gs.statusEffects.player.length-1;si>=0;si--){
+        if(gs.statusEffects.player[si].id==='shield'){
+          if(typeof gs.statusEffects.player[si]._onExpiry==='function') gs.statusEffects.player[si]._onExpiry();
+          gs.statusEffects.player.splice(si,1);
+        }
+      }
       if(gs.playerShieldMana>0){ gs.mana=Math.min(gs.maxMana,gs.mana+gs.playerShieldMana); addLog('Shield converted to +'+gs.playerShieldMana+' mana.','mana'); gs.playerShieldMana=0; }
+    }
+  }
+  // Cursed Retribution — Paladin innate: apply Burn to enemy on any hit while shield was active
+  if(hadShield){
+    var crInnate=CREATURES[gs.champId]&&CREATURES[gs.champId].innate;
+    if(crInnate&&crInnate.id==='cursed_retribution'){
+      var crWis=gs.stats.wis||14;
+      var crBurn=gs.statusEffects.enemy.find(function(s){return s.id==='burn';});
+      if(crBurn){
+        crBurn.remaining=9000; crBurn.maxRemaining=9000; // refresh duration
+      } else {
+        gs.statusEffects.enemy.push({id:'burn',label:'Burn ('+crWis+'/s)',cls:'debuff',stat:'dot',
+          remaining:9000,maxRemaining:9000,dot:true,dpt:crWis,tickMs:1000,tickAcc:0,
+          desc:'Cursed Retribution: '+crWis+' dmg/s. Bypasses Shield.'});
+        addTag('enemy','debuff','Burn ('+crWis+'/s)',0,'dot','Cursed Retribution: '+crWis+' dmg/s.');
+      }
+      spawnFloatNum('enemy','🔥 CURSED',false,'crit-num');
+      addLog('⚡ Cursed Retribution! Burn applied ('+crWis+'/s).','innate');
     }
   }
   dmg=Math.max(0,dmg);
@@ -2982,26 +3285,64 @@ function doDraw(overrideId,silent){
   var drawnId,isGhost=false;
   if(overrideId){ drawnId=overrideId; isGhost=true; }
   else{ var ix=Math.floor(Math.random()*gs.drawPool.length); drawnId=gs.drawPool.splice(ix,1)[0]; }
-  gs.hand.push({id:drawnId,ghost:isGhost});
+  var newItem={id:drawnId,ghost:isGhost};
+  // Mark conjured copies when drawn — if conjuredCount > 0 and this card
+  // matches a conjured card ID, this drawn copy is conjured
+  if(!isGhost && gs.conjuredCount > 0 && drawnId === 'druid_star_shard'){
+    newItem._conjured = true;
+  }
+  // Shadow Mark active: any attack card drawn also gets +[Crit]: 100%
+  if(gs.shadowMarkActive && !isGhost){
+    var drawnCard=CARDS[drawnId];
+    if(drawnCard && drawnCard.type==='attack'){
+      newItem.critBonus=100;
+    }
+  }
+  // Legacy fallback: nextCardCrit for non-shadowMark paths
+  if(gs.nextCardCrit && !isGhost){
+    var drawnCard2=CARDS[drawnId];
+    if(drawnCard2 && drawnCard2.type==='attack'){
+      newItem.critBonus=100;
+      gs.nextCardCrit=false;
+    }
+  }
+  newItem._newDraw=true;
+  // Brief draw lock — card can't be played for 200ms (visual travel time)
+  newItem._drawLock=Date.now()+200;
+  gs.hand.push(newItem);
   if(!silent&&SETTINGS.logd!=='brief'){ var c=CARDS[drawnId]; addLog('Drew '+(c?c.name:drawnId)+(isGhost?' [Ghost]':'')+'.','draw'); }
-  if(!silent&&!isGhost) playCardDrawSfx();
-  renderHand(drawnId); renderPiles();
+  if(!silent&&!isGhost){
+    playCardDrawSfx();
+    spawnDrawAnim(drawnId, isGhost?'innate':'deck');
+  }
+  renderHand(); renderPiles();
 }
 
 function playCard(idx){
   if(!gs||!gs.running||paused) return;
   if(idx<0||idx>=gs.hand.length) return;
-  // Focus mana gate
   var item=gs.hand[idx];
+  // Draw lock — card just arrived, can't play yet
+  if(item._drawLock && Date.now() < item._drawLock) return;
+  // Focus mana gate
   if(item.id==='druid_focus'&&!item.ghost){
     var threshold=Math.round(gs.maxMana*0.8);
     if(gs.mana<threshold){ addLog('Not enough mana to cast Focus manually (need '+threshold+').','mana'); return; }
   }
   gs.hand.splice(idx,1);
+  spawnCardFloat(item.id, 'play');
   var c=CARDS[item.id];
   addLog('You play '+(c?c.name:item.id)+'!','sys');
   playCardSfx();
+  // Pass critBonus from Shadow Mark injection
+  if(item.critBonus){
+    gs._critBonus = item.critBonus;
+    gs.shadowMarkActive = false;
+    gs.hand.forEach(function(h){ delete h.critBonus; });
+    removeTagByLabel('player','Shadow Mark');
+  }
   executeCard(item.id,item.ghost,false);
+  gs._critBonus = 0;
   if(!item.ghost) gs.discardPile.push(item.id);
   pendingConfirmIdx=-1;
   checkEnd(); renderHand(); renderPiles(); updateAll();
@@ -3039,19 +3380,36 @@ function updateTagTimers(){
   ['player','enemy'].forEach(function(target){
     var containerId=target==='player'?'p-tags':'e-tags';
     var el=document.getElementById(containerId); if(!el) return;
-    gs.statusEffects[target].forEach(function(s){
-      if(s.stat==='stun'||s.id==='starburn') return; // handled separately
-      if(!s.maxRemaining||s.remaining>=999000) return; // permanent
+    var effects=gs.statusEffects[target]||[];
+    // Update bar width (--t) for all timed statuses
+    effects.forEach(function(s){
+      if(s.stat==='stun'||s.id==='starburn') return;
+      if(!s.maxRemaining||s.remaining>=999000) return;
       var pct=Math.max(0,Math.min(100,(s.remaining/s.maxRemaining)*100));
       var tag=el.querySelector('[data-label="'+s.label+'"]');
       if(tag) tag.style.setProperty('--t',pct.toFixed(1));
     });
-    // Starburn special case — always full bar (stacks, not time-draining display)
-    var sb=gs.statusEffects[target].find(function(s){return s.id==='starburn';});
+    // Starburn special case
+    var sb=effects.find(function(s){return s.id==='starburn';});
     if(sb){
       var tag=el.querySelector('[data-label="Starburn"]');
       if(tag){ var pct=Math.max(0,Math.min(100,(sb.remaining/6000)*100)); tag.style.setProperty('--t',pct.toFixed(1)); }
     }
+    // Update text timers on all tags
+    el.querySelectorAll('.tag').forEach(function(tag){
+      var label=tag.dataset.label;
+      var timerEl=tag.querySelector('.tag-timer');
+      if(!timerEl) return;
+      var status=null;
+      for(var i=0;i<effects.length;i++){
+        if(effects[i].label===label){ status=effects[i]; break; }
+      }
+      if(status && status.remaining > 0 && status.remaining < 999000){
+        timerEl.textContent=' '+Math.ceil(status.remaining/1000)+'s';
+      } else {
+        timerEl.textContent='';
+      }
+    });
   });
 }
 
@@ -3064,6 +3422,13 @@ function tickStatuses(ms){
       if(list[i].remaining<=0){
         var lbl=list[i].label;
         var stat=list[i].stat;
+        var onExpiry=list[i]._onExpiry;
+        // Shield expiry — clear shield value
+        if(list[i].id==='shield'){
+          if(t==='player'){ gs.playerShield=0; }
+          else { gs.enemyShell=0; }
+          if(typeof onExpiry==='function') onExpiry();
+        }
         list.splice(i,1);
         removeTagByLabel(t,lbl);
         // Scout's Rally expiry — goblin transforms
@@ -3121,10 +3486,10 @@ function addTag(target,cls,label,val,stat,desc){
   var el=document.getElementById(target==='player'?'p-tags':'e-tags'); if(!el) return;
   if(el.querySelector('[data-label="'+label+'"]')) return;
   var t=document.createElement('span');
-  t.className='tag '+cls; t.dataset.label=label;
+  t.className='tag '+cls; t.dataset.label=label; t.dataset.target=target;
   // Try to show a status icon, fall back to just text
   var iconHtml=stat?statusImgHTML(stat,'14px'):'';
-  t.innerHTML=iconHtml+label;
+  t.innerHTML=iconHtml+'<span class="tag-name">'+label+'</span><span class="tag-timer"></span>';
   t.style.setProperty('--t','100');
   t.addEventListener('mouseenter',function(e){ showTip(target,label,e,desc); });
   t.addEventListener('mousemove',moveTip);
@@ -3270,8 +3635,6 @@ function endWaxOasisFight(){
 
 function doVictory(){
   var e=gs.enemies[gs.enemyIdx];
-  var gold=Math.floor(Math.random()*(e.gold[1]-e.gold[0]))+e.gold[0];
-  gs.goldEarned+=gold;
   var rawXp=Math.round(8+gs.area.level*10);
   var xpMult=calcXpMult(gs.level,gs.area.level);
   if(gs._shrineXpBonus) xpMult*=gs._shrineXpBonus;
@@ -3279,18 +3642,21 @@ function doVictory(){
   gs.xp+=xp;
   trackKill(e.id);
   var xpMsg=xpMult<1?' ('+Math.round(xpMult*100)+'% XP)':'';
-  addLog('✦ Victory! +'+xp+' XP'+xpMsg+', +'+gold+' gold.','sys');
+  addLog('✦ Victory! +'+xp+' XP'+xpMsg+'.','sys');
   checkLevelUp();
   saveChampionState();
   var isLast=(gs.enemyIdx+1>=gs.enemies.length);
-  if(isLast){ playWinSfx(); } else { playVictorySfx(); }
+  if(isLast){
+    // Area clear — gold reward based on area level
+    var areaGold=Math.floor(15+gs.area.level*8+Math.random()*gs.area.level*4);
+    gs.goldEarned+=areaGold;
+    addLog('+'+areaGold+' gold (area clear).','sys');
+    playWinSfx();
+  } else { playVictorySfx(); }
 
   if(!isLast){
-    // ── Mid-battle: gold toast, auto-chain ──
-    var midGold=Math.round(3+gs.area.level*2);
-    gs.goldEarned+=midGold;
+    // ── Mid-battle: no gold, just chain to next enemy ──
     updateTopBar();
-    addLog('+'+midGold+' gold.','sys');
     // Show mid-battle popup
     var toastEl=document.getElementById('gold-toast');
     var amtEl=document.getElementById('gold-toast-amount');
@@ -3301,7 +3667,7 @@ function doVictory(){
     var lblEl=document.getElementById('gold-toast-lbl');
     var nextE=gs.enemies[gs.enemyIdx+1];
     if(toastEl){
-      if(amtEl) amtEl.textContent='+'+midGold+' ✦';
+      if(amtEl) amtEl.textContent='';
       if(nextEl) nextEl.textContent=nextE?nextE.name:'';
       if(nextIconEl) nextIconEl.textContent=nextE?nextE.icon:'⚔️';
       if(nextHpEl) nextHpEl.textContent=nextE?nextE.baseHp+' HP':'';
@@ -3644,6 +4010,8 @@ function nextEnemy(autoChain){
 
 function goToAreaSelectAfterRun(){
   stopLoops(); hideOverlays();
+  // Clean up conjured cards (end of battle)
+  if(gs && gs.conjuredCount > 0) purgeAllConjured();
   var lootGained=[];
   if(gs){
     saveChampionState();
@@ -3887,51 +4255,57 @@ function resolveCardEffect(line, gameState, statsOverride){
   var s = gameState ? gameState.stats : (statsOverride || null);
   function sv(val){ return '<span class="stat-val">'+val+'</span>'; }
 
-  return line
-    // WIS×N, STR×N, AGI×N
-    .replace(/\b(WIS|STR|AGI)\s*[×x\*]\s*(\d+(?:\.\d+)?)/gi, function(m, stat, n){
+  var resolved = line
+    .replace(/\b(WIS|STR|AGI)\s*[\u00d7x\*]\s*(\d+(?:\.\d+)?)/gi, function(m, stat, n){
       if(!s) return sv(m);
       var base = s[stat.toLowerCase()]||0;
       return sv(Math.round(base * parseFloat(n)));
     })
-    // WIS÷N, STR÷N, AGI÷N
-    .replace(/\b(WIS|STR|AGI)\s*[÷\/]\s*(\d+)/gi, function(m, stat, n){
+    .replace(/\b(WIS|STR|AGI)\s*[\u00f7\/]\s*(\d+)/gi, function(m, stat, n){
       if(!s) return sv(m);
       var base = s[stat.toLowerCase()]||0;
       return sv(Math.floor(base / parseFloat(n)));
     })
-    // Bare stat name (e.g. "+ WIS damage", "Deal 12 + WIS")
     .replace(/\b\+\s*(WIS|STR|AGI)\b/gi, function(m, stat){
       if(!s) return sv(m);
       return '+ '+sv(s[stat.toLowerCase()]||0);
     })
-    // "missing mana ÷ N" / "missing mana / N"
-    .replace(/missing mana\s*[÷\/]\s*(\d+)/gi, function(m, n){
+    .replace(/missing mana\s*[\u00f7\/]\s*(\d+)/gi, function(m, n){
       if(!gameState) return sv(m);
       var missing = (gameState.maxMana||0) - (gameState.mana||0);
       return sv(Math.floor(missing / parseInt(n)));
     })
-    // "missing HP ÷ N" / "missing HP / N"
-    .replace(/missing HP\s*[÷\/]\s*(\d+)/gi, function(m, n){
+    .replace(/missing HP\s*[\u00f7\/]\s*(\d+)/gi, function(m, n){
       if(!gameState) return sv(m);
       var missing = (gameState.playerMaxHp||0) - (gameState.playerHp||0);
       return sv(Math.floor(missing / parseInt(n)));
     })
-    // "discard pile × N" / "discard pile * N"
-    .replace(/discard pile\s*[×x\*]\s*(\d+)/gi, function(m, n){
+    .replace(/discard pile\s*[\u00d7x\*]\s*(\d+)/gi, function(m, n){
       if(!gameState) return sv(m);
       return sv((gameState.discardPile||[]).length * parseInt(n));
     })
-    // "cards in hand × N" / "cards in hand * N"
-    .replace(/cards in hand\s*[×x\*]\s*(\d+)/gi, function(m, n){
+    .replace(/cards in hand\s*[\u00d7x\*]\s*(\d+)/gi, function(m, n){
       if(!gameState) return sv(m);
       return sv((gameState.hand||[]).length * parseInt(n));
     })
-    // Any remaining bare stat names that haven't been caught
+    // "Deal X damage per card in hand (min Y)"
+    .replace(/Deal\s+(\d+)\s+damage per card in hand\s*\(min\s*(\d+)\)/gi, function(m, perCard, min){
+      if(!gameState) return m;
+      var handSize = (gameState.hand||[]).length;
+      var total = Math.max(parseInt(min), handSize * parseInt(perCard));
+      return 'Deal '+sv(total)+' damage';
+    })
     .replace(/\b(WIS|STR|AGI)\b/g, function(m, stat){
       if(!s) return sv(m);
       return sv(s[stat.toLowerCase()]||0);
     });
+
+  // Collapse "Deal X + Y damage" into "Deal Z damage" (resolved total in blue)
+  resolved = resolved.replace(/Deal\s+(?:<span class="stat-val">)?(\d+)(?:<\/span>)?\s*\+\s*(?:<span class="stat-val">)?(\d+)(?:<\/span>)?\s*damage/gi, function(m, a, b){
+    return 'Deal '+sv(parseInt(a)+parseInt(b))+' damage';
+  });
+
+  return resolved;
 }
 // ────────────────────────────────────────────────────────────────────
 
@@ -3939,9 +4313,9 @@ function buildCardHTML(id,isGhost){
   var c=CARDS[id];
   if(!c) c={name:id,icon:'?',type:'attack',unique:false,effect:'?',champ:null,statId:null,manaCost:0};
   var statCls=c.statId?'card-stat-'+c.statId:'card-stat-none';
-  var rawLine=(c.effect||'').split('\n')[0]||'';
-  var resolved=resolveCardEffect(rawLine, typeof gs!=='undefined'&&gs?gs:null, null);
-  var mechanic=renderKeywords(resolved);
+  var rawLines=(c.effect||'').split('\n');
+  var resolvedLines=rawLines.map(function(line){ return resolveCardEffect(line, typeof gs!=='undefined'&&gs?gs:null, null); });
+  var mechanic=renderKeywords(resolvedLines.join('<br>'));
   var manaCost=c.manaCost!=null?c.manaCost:0;
   var fzStyle=cardEffectFontSize(c.effect);
   var tags=getCardTags(c);
@@ -3966,7 +4340,7 @@ function buildCardHTML(id,isGhost){
 // ═══════════════════════════════════════════════════════
 function maybeRenderHand(){ var k=gs.hand.map(function(h){return h.id+(h.ghost?'g':'');}).join(','); if(k!==lastHandStr) renderHand(); }
 
-function renderHand(newId){
+function renderHand(){
   lastHandStr=gs.hand.map(function(h){return h.id+(h.ghost?'g':'');}).join(',');
   var container=document.getElementById('hand-cards');
   container.innerHTML='';
@@ -3977,7 +4351,9 @@ function renderHand(newId){
     var d=document.createElement('div');
     var statCls=cd&&cd.statId?'card-stat-'+cd.statId:'card-stat-none';
     var isSel=SETTINGS.confirm&&pendingConfirmIdx===i;
-    d.className='card '+statCls+(isGhost?' ghost':'')+(item.id===newId?' new-card':'')+(isSel?' selected-card':'');
+    var isNew=item._newDraw||false; if(isNew) delete item._newDraw;
+    var isConjured=item._conjured||false;
+    d.className='card '+statCls+(isGhost?' ghost':'')+(isNew?' new-card':'')+(isSel?' selected-card':'')+(isConjured?' conjured-card':'');
     d.setAttribute('data-idx',i);
 
     // Fan transform — rotate and drop from centre, scaled for 158x220 cards
@@ -3988,8 +4364,12 @@ function renderHand(newId){
     d.style.cssText='transform:rotate('+rot+'deg) translateY('+drop+'px);transform-origin:bottom center;z-index:'+i+';position:relative;'+(i>0?'margin-left:-38px;':'');
 
     var cEffect=cd?(cd.effect||''):'';
-    var rawLine=(cEffect.split('\n')[0])||'';
-    var mechanic=renderKeywords(resolveCardEffect(rawLine, gs, null));
+    var rawLines=cEffect.split('\n');
+    var resolvedLines=rawLines.map(function(line){ return resolveCardEffect(line, gs, null); });
+    if(item.critBonus){
+      resolvedLines.push('<span style="color:#60c060;">+[Crit]: '+item.critBonus+'%</span>');
+    }
+    var mechanic=renderKeywords(resolvedLines.join('<br>'));
     var fzStyle=cardEffectFontSize(cEffect);
     var manaCost=cd&&cd.manaCost!=null?cd.manaCost:0;
     var rTags=getCardTags(cd||{});
@@ -4036,12 +4416,48 @@ function renderPiles(){
   var dc=gs.drawPool.length;
   document.getElementById('deck-cnt').textContent=dc;
   var disc=gs.discardPile.length;
-  document.getElementById('disc-cnt').textContent=disc;
+  var discEl=document.getElementById('disc-cnt');
+  var oldDisc=parseInt(discEl.textContent)||0;
+  discEl.textContent=disc;
+  // Bump animation when discard count increases
+  if(disc>oldDisc){
+    var pileEl=discEl.closest('.pile')||discEl.parentElement;
+    if(pileEl){ pileEl.classList.remove('pile-bump'); void pileEl.offsetWidth; pileEl.classList.add('pile-bump'); }
+  }
   // Show top discard card icon on the pile if available
   var topId=disc>0?gs.discardPile[gs.discardPile.length-1]:null;
   var topC=topId?CARDS[topId]:null;
   var discHint=document.getElementById('disc-hint-icon');
   if(discHint) discHint.textContent=topC?topC.icon:'';
+}
+
+// Shield overlay bar — renders as blue bar overlapping HP bar from the right.
+// Shows shield as a layered "extra HP" bar, like fighting game multi-bars.
+// Timer and shield amount shown centered in the blue section.
+function updateShieldBar(prefix, shieldAmt, currentHp, maxHp){
+  var bar = document.getElementById(prefix+'-shield-bar');
+  var timer = document.getElementById(prefix+'-shield-timer');
+  if(!bar) return;
+  if(!shieldAmt || shieldAmt <= 0){
+    bar.style.display = 'none';
+    return;
+  }
+  bar.style.display = '';
+  // Shield width proportional to maxHp — overlaps from the right
+  var shieldPct = Math.min(100, (shieldAmt / maxHp) * 100);
+  bar.style.width = shieldPct + '%';
+  // Find shield timer from status effects
+  var effects = prefix === 'p' ? (gs.statusEffects ? gs.statusEffects.player : []) : (gs.statusEffects ? gs.statusEffects.enemy : []);
+  var remaining = 0;
+  for(var i = 0; i < effects.length; i++){
+    if(effects[i].id === 'shield' || effects[i].cls === 'shield' || effects[i].stat === 'shield'){
+      remaining = effects[i].remaining || 0; break;
+    }
+  }
+  if(timer){
+    var secs = remaining > 0 ? Math.ceil(remaining / 1000) + 's' : '';
+    timer.textContent = shieldAmt + (secs ? ' · ' + secs : '');
+  }
 }
 
 function updateAll(){
@@ -4053,6 +4469,10 @@ function updateAll(){
   document.getElementById('e-hp-bar').style.width=ePct+'%';
   document.getElementById('p-hp-txt').textContent=gs.playerHp+'/'+gs.playerMaxHp;
   document.getElementById('e-hp-txt').textContent=gs.enemyHp+'/'+gs.enemyMaxHp;
+  // Shield overlay bars — renders as blue extension past HP
+  updateShieldBar('p', gs.playerShield, gs.playerHp, gs.playerMaxHp);
+  updateShieldBar('e', gs.enemyShell||0, gs.enemyHp, gs.enemyMaxHp);
+  updateTagTimers();
   document.getElementById('mana-bar2').style.width=mPct+'%';
   document.getElementById('mana-val').textContent=gs.mana+'/'+gs.maxMana;
   // Enemy mana bar
@@ -5537,7 +5957,7 @@ function buildSanctumOverviewPane(){
       +'<div style="font-size:52px;line-height:1;">'+ch.icon+'</div>'
       +'<div style="flex:1;min-width:0;">'
         +'<div style="font-family:Cinzel,serif;font-size:14px;color:#d4a843;letter-spacing:1px;">'+ch.name+'</div>'
-        +'<div style="font-size:9px;color:'+roleCol+';letter-spacing:2px;margin:2px 0;">'+ch.role+'</div>'
+        
         +'<div style="font-size:9px;color:#7a6030;margin-top:4px;line-height:1.4;">'+ch.innateDesc+'</div>'
       +'</div>'
     +'</div>'

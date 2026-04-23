@@ -22,13 +22,9 @@ CREATURES.paladin = {
     cooldown: 0,
   },
 
-  deck: [
-    'paladin_smite',
-    'paladin_smite',
-    'paladin_smite',
-    'paladin_aegis',
-    'paladin_aegis',
-    'paladin_consecrate',
-    'paladin_consecrate',
-  ],
+  // Deck is generated from STR. The 5 identity cards below are distributed
+  // evenly (20% each) at STR 10. Extra slots from higher STR are filled in
+  // deckOrder priority: unique cards first (in listed order), then universals.
+  // deckOrder defines the priority tiebreaker for odd extra slots.
+  deckOrder: ['paladin_smite', 'paladin_aegis', 'paladin_consecrate'],
 };

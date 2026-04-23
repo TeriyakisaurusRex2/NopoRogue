@@ -10,23 +10,19 @@ CREATURES.rat = {
   role:     'Tempo / Frenzy',
   bossOnly: false,
 
-  baseStats: { str:12, agi:14, wis:5 },
+  baseStats: { str:12, agi:14, wis:10 },
   growth:    { str:1,  agi:2,  wis:1 },
 
   innate: {
     id:       'frenzied',
     name:     'Frenzied',
-    desc:     'Every 4s in combat, gain [Frenzy] (1 stack). The longer the fight, the faster you become.',
+    desc:     'Passive: all attack cards gain +1 [Frenzy] stack.',
     active:   false,
     cost:     0,
     cooldown: 0,
   },
 
-  deck: [
-    'rat_gnaw',
-    'rat_gnaw',
-    'rat_gnaw',
-    'rat_dart',
-    'rat_dart',
-  ],
+  // Deck generated from STR + deckOrder (12 cards at base)
+  // 12 ÷ 5 = 2 each + 2 remainder → Gnaw 3, Slash 3, Dart 2, Strike 2, Brace 2
+  deckOrder: ['rat_gnaw', 'rat_slash', 'rat_dart'],
 };

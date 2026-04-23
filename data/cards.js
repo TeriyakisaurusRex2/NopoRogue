@@ -8,8 +8,8 @@
 
 var KEYWORDS = {
   // ── Damage over time ──
-  Burn:      {cls:'burn',      def:'Deals X dmg every 3s. Non-stacking — reapplication refreshes duration only. Bypasses Shield.'},
-  Poison:    {cls:'poison',    def:'Deals X dmg every 2s for a set duration. Stacks — each application adds damage and refreshes timer. Bypasses Shield.'},
+  Burn:      {cls:'burn',      def:'Deals X dmg every second. Non-stacking — reapplication refreshes duration only. Bypasses Shield.'},
+  Poison:    {cls:'poison',    def:'Deals X dmg every second. Stacks — each application adds damage and refreshes timer. Bypasses Shield.'},
 
   // ── Debuffs ──
   Weaken:    {cls:'cursed',    def:'Target deals 15% less damage for the duration.'},
@@ -22,12 +22,11 @@ var KEYWORDS = {
   Condemned: {cls:'cursed',    def:'Each stack increases Retribution damage by +15% (max 5 stacks, 12s).'},
 
   // ── Buffs ──
-  Shield:    {cls:'shielded',  def:'A temporary HP buffer. Absorbs direct damage before HP is touched. DoTs (Poison, Burn) bypass it entirely. Depletes or expires after its duration.'},
-  Shielded:  {cls:'shielded',  def:'Incoming damage drains mana instead of HP while active. When mana runs out the effect ends.'},
-  Dodge:     {cls:'dodge',     def:'The next incoming attack is completely evaded.'},
+  Shield:    {cls:'shielded',  def:'Temporary HP buffer. Absorbs direct damage before HP. DoTs bypass it. Manabound: purged if mana hits 0.'},
+  Dodge:     {cls:'dodge',     def:'The next incoming attack is completely evaded. Manabound: purged if mana hits 0.'},
   Haste:     {cls:'haste',     def:'Draw speed increased by X% for the duration.'},
-  Frenzy:    {cls:'hastened',  def:'Stacking draw-speed buff. Each stack = +10% draw speed. Duration shortens as stacks grow. Collapses when timer expires or mana hits 0. Drains 3 mana/s while active.'},
-  Thorns:    {cls:'burn',      def:'While active, each hit dealt to this creature reflects X damage back to the attacker. Non-stacking — reapplication refreshes duration only.'},
+  Frenzy:    {cls:'hastened',  def:'Stacking draw-speed buff. Each stack = +10% draw speed. Duration starts at 3s, shortens by 10% per stack. Collapses entirely when timer expires. Manabound. Drains 3 mana/s.'},
+  Thorns:    {cls:'burn',      def:'While active, each hit reflects X damage back to the attacker.'},
 
   // ── New status mechanics ──
   Volatile:  {cls:'burn',      def:'Stacking. Timer resets on each new stack. At 5+ stacks: detonates for 2× base damage. Below 5 stacks when timer expires: fizzles for 1× base damage. [Stabilize] raises threshold to 10 stacks (10+ = 4× damage).'},
@@ -46,8 +45,10 @@ var KEYWORDS = {
 
   // ── Misc ──
   Crit:      {cls:'hastened',  def:'A strike that deals double damage. Triggered by chance or special conditions.'},
-  Echo:      {cls:'echo',      def:'If this card is discarded by any effect — innate, overflow, or another card — its Echo effect still triggers at the listed potency.'},
+  Echo:      {cls:'echo',      def:'If this card is discarded by any effect — innate, overflow, or another card — its Echo effect triggers.'},
+  Manabound: {cls:'drain',     def:'This effect is purged immediately if the creature\'s mana hits 0. Applies to Shield, Dodge, and Frenzy.'},
   Ethereal:  {cls:'echo',      def:'This card vanishes when played or discarded — it does not return to your deck. Created temporarily by special abilities.'},
+  Conjured:  {cls:'echo',      def:'This card was created during combat. It circulates normally through your deck — not removed on play or discard. Removed from the game at end of battle. [Echo] on a Conjured card removes all Conjured copies from everywhere.'},
 };
 
 // Replace [BracketWord] tokens in effect strings with styled keyword spans.
@@ -96,8 +97,8 @@ document.addEventListener('mouseout',function(e){
 var CARDS = {
   // ── Universal basics ──
   strike:      {id:'strike',      name:'Strike',        icon:'⚔️', type:'attack',  unique:false, champ:null,    statId:null,  effect:'Deal 18 damage.'},
-  brace:       {id:'brace',       name:'Brace',         icon:'🛡', type:'defense', unique:false, champ:null,    statId:null,  effect:'Gain [Shield] (20) for 5s.\n[Shield] absorbs direct damage before HP. DoTs bypass it. [Manabound]: purged if mana hits 0.', effects:[{type:'shield',amt:20,dur:5}]},
-  filler:      {id:'filler',      name:'Dead Weight',   icon:'💀', type:'utility', unique:false, champ:null,    statId:'wis', effect:'Sorcery [all mana]: Draw 1 card.\nFills empty deck slots. Swap this out when you can.'},
+  brace:       {id:'brace',       name:'Brace',         icon:'🛡', type:'defense', unique:false, champ:null,    statId:null,  effect:'Gain 20 [Shield] for 5s.', effects:[{type:'shield',amt:20,dur:5}]},
+  filler:      {id:'filler',      name:'Dead Weight',   icon:'💀', type:'utility', unique:false, champ:null,    statId:null, effect:'[Sorcery] [All]: Draw 1 card.'},
 
 
   // ── Starcaller Druid ──
@@ -108,8 +109,9 @@ var CARDS = {
 
   druid_star_shard: {id:'druid_star_shard', name:'Star Shard', icon:'✨', type:'attack', unique:true, champ:'druid', statId:'wis',
     effect:'Deal 4 damage. [Conjured] a copy into discard.\n[Echo]: Remove all [Conjured] copies from everywhere.',
-    effects:[{type:'dmg',base:4},{type:'conjure_copy',target:'discard'}],
-    onDiscard:[{type:'remove_conjured_copies'}]},
+    effects:[{type:'dmg',base:4},{type:'conjure_copy'}],
+    onDiscard:[{type:'purge_conjured'}]},
+    // [Echo] purge trigger on discard. Currently just deals 4 damage.
 
   druid_nova_burst: {id:'druid_nova_burst', name:'Nova Burst', icon:'💥', type:'attack', unique:true, champ:'druid', statId:'wis',
     effect:'Deal 12 damage per card in hand (min 12).\n[Churn] 3.',
@@ -121,27 +123,27 @@ var CARDS = {
 
   // ── Cursed Paladin ──
   paladin_smite: {id:'paladin_smite', name:'Smite', icon:'🔥', type:'attack', unique:true, champ:'paladin', statId:'wis',
-    effect:'Deal 8 damage. Apply [Burn] (WIS dmg/3s) for 9s.\n[Burn] on enemy: [Crit]: 75%.',
-    effects:[{type:'dmg',base:8},{type:'burn_stat',base:0,stat:'wis',div:1,dur:9},{type:'crit_conditional',condition:'burn_on_enemy',pct:75}]},
+    effect:'Deal 8 damage. Apply WIS [Burn] for 9s.\n[Burn] on enemy: [Crit]: 75%.',
+    effects:[{type:'dmg_if_burning',base:8,critPct:75},{type:'burn_stat',base:0,stat:'wis',div:1,dur:9}]},
 
   paladin_consecrate: {id:'paladin_consecrate', name:'Consecrate', icon:'🕊️', type:'utility', unique:true, champ:'paladin', statId:'wis',
-    effect:'Apply [Weaken] for 6s.\n[Sorcery] [20]: Apply [Burn] (WIS dmg/3s) for 9s.',
+    effect:'Apply [Weaken] for 6s.\n[Sorcery] [20]: Apply WIS [Burn] for 9s.',
     effects:[{type:'weaken',dur:6},{type:'sorcery',cost:20,effect:{type:'burn_stat',base:0,stat:'wis',div:1,dur:9}}]},
 
   paladin_aegis: {id:'paladin_aegis', name:'Aegis', icon:'🛡️', type:'defense', unique:true, champ:'paladin', statId:'str',
-    effect:'Gain [Shield] (STR ÷ 2) for 6s.\n[Sorcery] [25]: Apply [Weaken] for 4s.',
-    effects:[{type:'shield_stat',stat:'str',div:2,dur:6},{type:'sorcery',cost:25,effect:{type:'weaken',dur:4}}]},
+    effect:'Gain STR [Shield] for 6s.\n[Sorcery] [25]: Apply [Weaken] for 4s.',
+    effects:[{type:'shield_stat',mult:1,dur:6},{type:'sorcery',cost:25,effect:{type:'weaken',dur:4}}]},
 
   // paladin unlock cards — removed pending redesign (see Roadmap: unlock card pass)
 
   // ── Faceless Thief ──
   thief_quick_slash: {id:'thief_quick_slash', name:'Quick Slash', icon:'⚡', type:'attack', unique:true, champ:'thief', statId:'agi',
     effect:'Deal 10 + AGI ÷ 4 damage.\n[Crit]: 15%.',
-    effects:[{type:'dmg_stat',base:10,stat:'agi',div:4},{type:'crit',pct:15}]},
+    effects:[{type:'dmg_crit',base:10,pct:15},{type:'dmg_stat',base:0,stat:'agi',div:4}]},
 
   thief_poison_dart: {id:'thief_poison_dart', name:'Poison Dart', icon:'🎯', type:'attack', unique:true, champ:'thief', statId:'wis',
-    effect:'Deal 5 damage. Apply 8 [Poison].\n[Sorcery] [20]: Apply 8 additional [Poison].',
-    effects:[{type:'dmg',base:5},{type:'poison',dpt:8,dur:8},{type:'sorcery',cost:20,effect:{type:'poison',dpt:8,dur:8}}]},
+    effect:'Deal 5 damage. Apply 4 [Poison].\n[Sorcery] [20]: Apply 4 additional [Poison].',
+    effects:[{type:'dmg',base:5},{type:'poison',dpt:4,dur:8},{type:'sorcery',cost:20,effect:{type:'poison',dpt:4,dur:8}}]},
 
   thief_shadow_step: {id:'thief_shadow_step', name:'Shadow Step', icon:'👣', type:'utility', unique:true, champ:'thief', statId:'agi',
     effect:'Apply [Weaken] for 6s.',
@@ -156,15 +158,18 @@ var CARDS = {
 
   // Shadow Mark ghost card — generated by innate, not in any deck
   ghost_shadow_mark: {id:'ghost_shadow_mark', name:'Shadow Mark', icon:'🌑', type:'utility', unique:false, champ:'thief', statId:'agi',
-    effect:'Apply 12 [Poison].\nNext attack card: +[Crit]: 100%.'},
+    effect:'Apply 6 [Poison].\nNext attack card: +[Crit]: 100%.'},
 
   // ── Giant Rat ──
-  rat_gnaw:   {id:'rat_gnaw',   name:'Gnaw',   icon:'🐀', type:'attack',  champ:'rat',      statId:'agi',
-    effect:'Deal 6 damage. Gain 1 [Frenzy] stack.',
-    effects:[{type:'dmg',base:6},{type:'frenzy',stacks:1}]},
-  rat_dart:   {id:'rat_dart',   name:'Dart',   icon:'💨', type:'utility', champ:'rat',      statId:'agi',
-    effect:'Gain [Haste] 20% for 3s. Gain 1 [Frenzy] stack.',
-    effects:[{type:'haste',pct:20,dur:3},{type:'frenzy',stacks:1}]},
+  rat_gnaw:   {id:'rat_gnaw',   name:'Gnaw',   icon:'🐀', type:'attack',  unique:true, champ:'rat', statId:'agi',
+    effect:'Deal 12 damage. Apply 1 [Poison].',
+    effects:[{type:'dmg',base:12},{type:'poison',dpt:1,dur:8}]},
+  rat_slash:  {id:'rat_slash',  name:'Slash',  icon:'⚡', type:'attack',  unique:true, champ:'rat', statId:'agi',
+    effect:'Deal 13 + AGI ÷ 4 damage.\n[Crit]: 15%.',
+    effects:[{type:'dmg_crit',base:13,pct:15},{type:'dmg_stat',base:0,stat:'agi',div:4}]},
+  rat_dart:   {id:'rat_dart',   name:'Dart',   icon:'💨', type:'utility', unique:true, champ:'rat', statId:'agi',
+    effect:'Gain [Haste] 20% for 3s.',
+    effects:[{type:'haste',pct:20,dur:3}]},
 
   // ── Goblin Scavenger ──
   goblin_filth_toss:    {id:'goblin_filth_toss',    name:'Filth Toss',      icon:'💀', type:'attack',  champ:'goblin', statId:'wis',
@@ -364,11 +369,7 @@ var CARDS = {
   // ── Sewers ──
   // Giant Rat (frenzied)
   // ── Rat — Frenzy archetype ──
-  gr_gnaw:         {id:'gr_gnaw',         name:'Gnaw',           icon:'🐀', type:'attack',  unique:true, champ:'rat', statId:'agi', effect:'Deal 3+AGI/4 damage. Apply 1 Frenzy for 2s.\n[Frenzy]: stacking draw speed buff. Duration shortens with each stack.'},
-  gr_dart:         {id:'gr_dart',         name:'Dart',           icon:'⚡', type:'utility', unique:true, champ:'rat', statId:'agi', effect:'Gain 15 mana. Apply 1 Frenzy for 2s.\n[Frenzy]: stacking draw speed buff. Duration shortens with each stack.', effects:[{type:'mana',amt:15}]},
-  gr_scurry:       {id:'gr_scurry',       name:'Scurry',         icon:'💨', type:'attack',  unique:true, champ:'rat', statId:'agi', effect:'Deal 2× Frenzy stacks damage (min 4).\n[Frenzy]: the higher your stacks, the harder this hits.'},
-  gr_frenzy_surge: {id:'gr_frenzy_surge', name:'Frenzy Surge',   icon:'🔴', type:'utility', unique:true, champ:'rat', statId:'agi', effect:'Gain mana equal to Frenzy stacks × 2 (min 5).\n[Frenzy]: converts your speed into fuel.'},
-  gr_frenzy_burst: {id:'gr_frenzy_burst', name:'Frenzy Burst',   icon:'💥', type:'utility', unique:true, champ:'rat', statId:'agi', effect:'Double your current Frenzy stacks.\n[Frenzy]: the bomb. Use when Frenzy is high.'},
+  // gr_ rat cards removed — consolidated into rat_gnaw, rat_slash, rat_dart
 
   // Mud Crab (hardened)
   mc2_claw:      {id:'mc2_claw',      name:'Claw Snap',     icon:'🦀', type:'attack',  unique:true, champ:'mudcrab',     statId:'str', effect:'Deal 5+STR/4 damage. If [Shield] is active: deal double.', effects:[{type:'dmg_if_debuff',base:5,high:10}]},
@@ -748,7 +749,7 @@ var CREATURE_DECKS = {
   // ── Sewers ── (STR = total cards, even split)
   // Giant Rat STR 12 = 12: strike×2, brace×2, gnaw×3, dart×3, frenzy_bite×2
   // Giant Rat STR 10 = 10: strike×2, brace×2, gnaw×3, dart×2, scurry×1 | unlocks: frenzy_surge, frenzy_burst
-  rat:         {cards:['strike','strike','brace','brace','gr_gnaw','gr_gnaw','gr_gnaw','gr_dart','gr_dart','gr_scurry'], alts:[]},
+  // rat: now uses deckOrder in creature file — remove from CREATURE_DECKS
   // Gorby STR 14 = 14: strike×2, brace×2, wallop×4, gut×3, gb_brace×3 | unlocks: frenzy_claw, rampage
   gorby:       {cards:['strike','strike','brace','brace','gb_wallop','gb_wallop','gb_wallop','gb_wallop','gb_gut','gb_gut','gb_gut','gb_brace','gb_brace','gb_brace'], alts:[]},
   // Mud Crab STR 12 = 12: strike×2, brace×2, claw×3, shell×3, pinch×2

@@ -178,7 +178,7 @@
         <div class="combatant" id="combatant-player">
           <div class="cname" id="p-name">Champion</div>
           <div class="combatant-inner">
-            <div class="big-hp-wrap" style="flex:1;"><div class="big-hp-inner p" id="p-hp-bar" style="width:100%"></div></div>
+            <div class="big-hp-wrap" style="flex:1;"><div class="big-hp-inner p" id="p-hp-bar" style="width:100%"></div><div class="shield-bar" id="p-shield-bar" style="width:0%;left:0%;display:none;"><span class="shield-timer" id="p-shield-timer"></span></div></div>
             <div class="hp-txt-big" id="p-hp-txt">20/20</div>
           </div>
           <!-- Mana bar -->
@@ -201,7 +201,7 @@
         <div class="combatant" id="combatant-enemy">
           <div class="cname" id="e-name">Enemy</div>
           <div class="combatant-inner">
-            <div class="big-hp-wrap" style="flex:1;"><div class="big-hp-inner e" id="e-hp-bar" style="width:100%"></div></div>
+            <div class="big-hp-wrap" style="flex:1;"><div class="big-hp-inner e" id="e-hp-bar" style="width:100%"></div><div class="shield-bar" id="e-shield-bar" style="width:0%;left:0%;display:none;"><span class="shield-timer" id="e-shield-timer"></span></div></div>
             <div class="hp-txt-big" id="e-hp-txt">8/8</div>
           </div>
           <!-- Enemy draw bar -->
@@ -215,12 +215,6 @@
             <span class="cbar-lbl mana">MANA</span>
             <div class="cbar-track"><div class="cbar-fill mana" id="e-mana-bar" style="width:0%;background:linear-gradient(90deg,#1a3a7a,#4060c0);"></div></div>
             <span class="cbar-val" id="e-mana-val">0/0</span>
-          </div>
-          <!-- Enemy stats -->
-          <div id="e-stats-row" style="display:flex;gap:10px;justify-content:center;padding-top:2px;">
-            <div style="text-align:center;"><div class="v str" id="e-str" style="font-size:14px;">—</div><div style="font-size:7px;color:#7a6030;">STR</div></div>
-            <div style="text-align:center;"><div class="v agi" id="e-agi" style="font-size:14px;">—</div><div style="font-size:7px;color:#7a6030;">AGI</div></div>
-            <div style="text-align:center;"><div class="v wis" id="e-wis" style="font-size:14px;">—</div><div style="font-size:7px;color:#7a6030;">WIS</div></div>
           </div>
           <div class="status-tags" id="e-tags"></div>
           <div class="cicon-wrap"><span class="cicon" id="e-icon">👺</span></div>

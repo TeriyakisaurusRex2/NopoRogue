@@ -202,7 +202,7 @@ body:has(#game-screen.active) #root{max-width:100%;}
 .combat-centre{flex:1;min-width:0;display:flex;flex-direction:column;padding:4px 10px 2px;margin-left:32px;}
 /* Combatant panels */
 .combat-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:4px;}
-.combatant{background:rgba(4,2,0,.55);border:1px solid rgba(80,40,10,.6);border-radius:10px;padding:7px 10px 0;display:flex;flex-direction:column;gap:3px;position:relative;overflow:hidden;background-size:200% 100%;background-repeat:no-repeat;background-position:left center;image-rendering:pixelated;image-rendering:-moz-crisp-edges;}
+.combatant{background:rgba(4,2,0,.55);border:1px solid rgba(80,40,10,.6);border-radius:10px;padding:7px 10px 0;display:flex;flex-direction:column;gap:3px;position:relative;overflow:hidden;background-size:200% 100%;background-repeat:no-repeat;background-position:left center;image-rendering:pixelated;image-rendering:-moz-crisp-edges;min-height:220px;}
 .combatant::before{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.65) 0%,rgba(0,0,0,.3) 30%,rgba(0,0,0,.0) 55%,rgba(0,0,0,.0) 75%,rgba(0,0,0,.25) 100%);pointer-events:none;z-index:0;border-radius:10px;}
 .combatant > *{position:relative;z-index:1;}
 /* Mana / draw bars inline in combatant panels */
@@ -256,8 +256,38 @@ body:has(#game-screen.active) #root{max-width:100%;}
 .card.selected-card{border-color:#d4a843;border-width:2px;}
 .card *{pointer-events:none;}
 .ghost-badge{position:absolute;top:2px;right:2px;font-size:8px;color:#a060d0;pointer-events:none;}
-.card.new-card{animation:dealIn .22s ease-out;}
-@keyframes dealIn{from{opacity:0;transform:translateY(12px);}to{opacity:1;transform:translateY(0);}}
+.card.new-card{animation:cardDraw .3s ease-out;}
+.card.conjured-card{border-color:rgba(60,160,160,.5);background:linear-gradient(170deg,#081815,#041210);box-shadow:0 0 8px rgba(60,160,160,.15);}
+.card.conjured-card:hover{border-color:rgba(100,200,200,.7);}
+@keyframes cardDraw{from{opacity:0;transform:translateY(40px) scale(0.8);}to{opacity:1;transform:translateY(0) scale(1);}}
+.card.card-play{animation:cardPlay .25s ease-in forwards;pointer-events:none;}
+@keyframes cardPlay{0%{opacity:1;transform:translateY(0) scale(1);}100%{opacity:0;transform:translateY(-60px) scale(0.7);}}
+.card.card-discard{animation:cardDiscard .3s ease-in forwards;pointer-events:none;}
+@keyframes cardDiscard{0%{opacity:1;transform:translateY(0) scale(1) rotate(0deg);}100%{opacity:0;transform:translateY(30px) scale(0.6) rotate(8deg);}}
+.innate-card.innate-flash{animation:innateFlash .4s ease-out;}
+@keyframes innateFlash{0%{transform:scale(1);box-shadow:0 0 16px rgba(140,60,255,.4);}30%{transform:scale(1.08);box-shadow:0 0 40px rgba(180,100,255,.9),0 0 80px rgba(140,60,255,.5);}100%{transform:scale(1);box-shadow:0 0 16px rgba(140,60,255,.4);}}
+.pile-bump{animation:pileBump .25s ease-out;}
+@keyframes pileBump{0%{transform:scale(1);}40%{transform:scale(1.15);}100%{transform:scale(1);}}
+/* Card ghost — mini card that flies to target on play/discard */
+.card-ghost{position:fixed;font-size:24px;width:36px;height:44px;display:flex;align-items:center;justify-content:center;background:rgba(20,12,4,.7);border:1px solid rgba(180,140,60,.5);border-radius:4px;pointer-events:none;z-index:1000;transform:translate(-50%,-50%);}
+.card-ghost-attack{animation:ghostFly .35s ease-in forwards;}
+.card-ghost-buff{animation:ghostFly .35s ease-in forwards;}
+.card-ghost-discard{animation:ghostFly .3s ease-in forwards;opacity:0.6;}
+.card-ghost-attack{border-color:rgba(200,60,60,.6);box-shadow:0 0 8px rgba(200,60,60,.3);}
+.card-ghost-buff{border-color:rgba(60,160,60,.6);box-shadow:0 0 8px rgba(60,160,60,.3);}
+.card-ghost-discard{border-color:rgba(120,100,60,.4);box-shadow:none;}
+.ghost-shatter{animation:ghostShatter .12s ease-out forwards;}
+@keyframes ghostFly{0%{opacity:1;transform:translate(-50%,-50%) scale(1);}100%{opacity:0;transform:translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(0.4);}}
+@keyframes ghostShatter{0%{opacity:1;transform:translate(-50%,-50%) scale(1);}100%{opacity:0.5;transform:translate(-50%,-50%) scale(1.15);}}
+/* Neutral card — fizzle/dissolve in place (Dead Weight etc.) */
+.card-ghost-neutral{border-color:rgba(100,80,50,.4);box-shadow:none;opacity:0.5;animation:ghostFizzle .5s ease-out forwards;}
+@keyframes ghostFizzle{0%{opacity:0.6;transform:translate(-50%,-50%) scale(1);}50%{opacity:0.3;transform:translate(-50%,-50%) scale(1.1) rotate(3deg);}100%{opacity:0;transform:translate(-50%,-50%) scale(0.5) rotate(8deg);}}
+/* Echo burst — ripple at discard pile when Echo triggers */
+.echo-burst{position:fixed;font-size:28px;pointer-events:none;z-index:1000;transform:translate(-50%,-50%);animation:echoBurst .55s ease-out forwards;}
+@keyframes echoBurst{0%{opacity:1;transform:translate(-50%,-50%) scale(0.8);text-shadow:0 0 4px rgba(100,180,255,.4);}40%{opacity:1;transform:translate(-50%,-50%) scale(1.4);text-shadow:0 0 20px rgba(100,180,255,.8),0 0 40px rgba(80,140,220,.4);}100%{opacity:0;transform:translate(-50%,-50%) scale(1.8);text-shadow:0 0 0 transparent;}}
+/* Draw animation — card icon flies from deck/innate to hand */
+.draw-anim{position:fixed;font-size:22px;pointer-events:none;z-index:1000;animation:drawFly .3s ease-out forwards;}
+@keyframes drawFly{0%{opacity:1;transform:translate(0,0) scale(0.6);}80%{opacity:1;}100%{opacity:0;transform:translate(var(--dx),var(--dy)) scale(1.1);}}
 .empty-slot{width:158px;height:220px;border:1px dashed #2a1808;border-radius:9px;opacity:.12;flex-shrink:0;}
 
 /* ── CARD STAT IDENTITY BORDER ── */
@@ -283,8 +313,9 @@ body:has(#game-screen.active) #root{max-width:100%;}
 #kw-tooltip{position:fixed;z-index:9999;background:#120a02;border:1px solid #c09030;border-radius:5px;padding:6px 10px;max-width:180px;font-size:10px;color:#d4a843;pointer-events:none;opacity:0;transition:opacity .15s;line-height:1.5;}
 #kw-tooltip.show{opacity:1;}
 /* ── STATUS TAGS (buffs / debuffs) ── */
-.status-tags{display:flex;flex-wrap:wrap;gap:3px;margin-top:2px;min-height:16px;}
+.status-tags{display:flex;flex-wrap:wrap;gap:3px;margin-top:2px;min-height:22px;max-height:44px;overflow:hidden;align-content:flex-start;}
 .tag{font-size:10px;padding:3px 7px 5px;border-radius:4px;font-family:'Cinzel',serif;cursor:default;position:relative;overflow:hidden;white-space:nowrap;}
+.tag-timer{font-size:8px;opacity:0.7;margin-left:1px;}
 .tag::after{content:'';position:absolute;bottom:0;left:0;height:2px;width:calc(var(--t,100) * 1%);border-radius:0 0 3px 3px;transition:width .1s linear;}
 .tag.innate::after,.tag.ghost::after{display:none;}
 .tag.buff{background:rgba(40,90,40,.4);border:1px solid #2a6a2a;color:#6ab86a;}
@@ -307,16 +338,19 @@ body:has(#game-screen.active) #root{max-width:100%;}
 .cname{font-family:'Cinzel',serif;font-size:14px;color:#d4a843;letter-spacing:.8px;margin-bottom:8px;text-align:center;}
 .combatant-inner{display:flex;align-items:flex-start;gap:8px;margin-bottom:5px;}
 .cicon-hp-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;}
-.cicon{line-height:1;display:block;text-align:center;transition:transform .1s;margin-top:auto;}
+.cicon{line-height:1;display:block;text-align:center;transition:transform .1s;}
+.cicon-wrap{margin-top:auto;flex-shrink:0;}
 .flip-x{transform:scaleX(-1);}
 .flip-x.icon-shake{animation:shakeIconFlipped .4s ease-out;}
 @keyframes shakeIconFlipped{0%,100%{transform:scaleX(-1) translateX(0);}25%{transform:scaleX(-1) translateX(6px);}75%{transform:scaleX(-1) translateX(-6px);}}
 .creature-img-wrap img{display:block;}
 .creature-img-wrap span{display:none;}
-.big-hp-wrap{width:100%;background:rgba(0,0,0,.6);border:1px solid #1a1005;border-radius:4px;overflow:hidden;}
+.big-hp-wrap{width:100%;background:rgba(0,0,0,.6);border:1px solid #1a1005;border-radius:4px;overflow:hidden;position:relative;}
 .big-hp-inner{height:20px;border-radius:4px;transition:width .3s;}
 .big-hp-inner.p{background:linear-gradient(90deg,#2a7a2a,#50b050);}
 .big-hp-inner.e{background:linear-gradient(90deg,#7a1a1a,#b02020);}
+.shield-bar{position:absolute;top:0;right:0;height:100%;border-radius:4px;background:linear-gradient(90deg,rgba(40,90,170,0.6),rgba(64,128,210,0.8));transition:width .3s;pointer-events:none;z-index:1;display:flex;align-items:center;justify-content:center;}
+.shield-bar .shield-timer{font-size:9px;color:#fff;font-family:'Cinzel',serif;text-shadow:0 0 4px rgba(0,0,0,.9);white-space:nowrap;}
 .hp-txt-big{font-family:'Cinzel',serif;font-size:14px;color:#a07040;text-align:center;margin-top:4px;}
 
 /* ── COMBAT HIT ANIMATIONS ── */
