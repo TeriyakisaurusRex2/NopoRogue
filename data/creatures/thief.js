@@ -1,14 +1,33 @@
 // ════════════════════════════════════════════════════
-// CREATURE: THIEF
-// Drop thief.png into assets/creatures/ for a custom sprite.
+// CREATURE: FACELESS THIEF
 // ════════════════════════════════════════════════════
 
-CREATURES.thief = {id:'thief',name:'FACELESS THIEF',icon:'🎭',baseStats:{str:20,agi:20,wis:20},growth:{str:1,agi:3,wis:1},baseDmg:5,dmgGrowth:0.6,gold:[5,10],
-    playable:true, cardRewards:['quick_slash','death_mark'],
-    innate:{id:'shadow_mark',name:'Shadow Mark',desc:'Applies 16 Poison and makes the next card a guaranteed Crit (1.5× damage).'},
-    openingMove:'thief_slash',
-    deck:[
-      {id:'thief_slash',  copies:3, name:'Quick Slash', effect:'dmg', value:4, msg:'slashes with blinding speed!'},
-      {id:'thief_dart',   copies:2, name:'Poison Dart', effect:'dmg_and_dot', value:2,dotDmg:3,dotTick:2000,dotDur:8000,status:'poison', msg:'fires a poison dart!'},
-      {id:'thief_mark',   copies:2, name:'Death Mark',  effect:'dmg_and_debuff', value:3,status:'death_mark',debuffVal:0.5,debuffDur:6000, msg:'marks for death!'},
-    ]};
+CREATURES.thief = {
+  id:       'thief',
+  name:     'FACELESS THIEF',
+  icon:     '🎭',
+  lore:     'No name. No history. The face they wear belongs to someone else. They are very good at their work, which is the only thing they know for certain about themselves. The clues to who they were are scattered across the city — in graves, in ledgers, in the faces of people who look at them and go pale.',
+  role:     'Poison Setup / Crit Burst',
+  bossOnly: false,
+
+  baseStats: { str:10, agi:18, wis:12 },
+  growth:    { str:1,  agi:2,  wis:1  },
+
+  innate: {
+    id:       'shadow_mark',
+    name:     'Shadow Mark',
+    desc:     'Apply 12 [Poison]. Next attack card: +[Crit]: 100%.',
+    active:   true,
+    cost:     35,
+    cooldown: 2000,
+  },
+
+  deck: [
+    'thief_quick_slash',
+    'thief_quick_slash',
+    'thief_quick_slash',
+    'thief_poison_dart',
+    'thief_poison_dart',
+    'thief_shadow_step',
+  ],
+};

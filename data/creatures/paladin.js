@@ -14,9 +14,9 @@ CREATURES.paladin = {
   growth:    { str:2,  agi:1,  wis:1  },
 
   innate: {
-    id:       'cursed_conviction',
-    name:     'Cursed Conviction',
-    desc:     'Passive: while [Burn] is active on the enemy, this creature regenerates mana 50% faster.',
+    id:       'cursed_retribution',
+    name:     'Cursed Retribution',
+    desc:     'Passive: when taking damage while [Shield] is active (including fully absorbed hits), apply [Burn] (WIS dmg/3s) to the enemy.',
     active:   false,
     cost:     0,
     cooldown: 0,

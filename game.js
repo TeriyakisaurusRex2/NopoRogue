@@ -490,45 +490,7 @@ var UNLOCK_CONDITIONS={
 
 // Starter playable creatures (defined inline with CREATURES below)
 // Their startDeck is their hand at run start; deck is their enemy action deck
-// Champions loaded from data/champions.js
-var CREATURES_PLAYABLE = {};
-
-var RARITY_COLORS = {common:'#c0a060',uncommon:'#70b040',rare:'#4080e0',legendary:'#d4a843'};
-var RARITY_LABELS = {common:'COMMON',uncommon:'UNCOMMON',rare:'RARE',legendary:'LEGENDARY'};
-var SOUL_SHARDS_PER_PULL = 100;
-
-// Rarity overrides — starters and bosses
-var RARITY_OVERRIDES = {
-  druid:'rare', paladin:'rare', thief:'rare',
-  dragon:'legendary', lich:'legendary', harbourmaster:'legendary',
-  wyrm:'rare', knight:'rare', witch:'rare', golem:'rare',
-  troll:'uncommon', orc:'uncommon', skeleton:'uncommon', snake:'uncommon',
-  wisp:'uncommon', harpy:'uncommon', bandit:'uncommon',
-};
-
-// Ascension tiers (gem names) — each tier gives +3 base stats AND +0.5 growth
-var ASCENSION_TIERS = [
-  {tier:'ruby',      cost:5,  baseBonus:3, growthBonus:0.5},
-  {tier:'emerald',   cost:10, baseBonus:3, growthBonus:0.5},
-  {tier:'sapphire',  cost:20, baseBonus:3, growthBonus:0.5},
-  {tier:'turquoise', cost:40, baseBonus:3, growthBonus:0.5},
-  {tier:'amethyst',  cost:80, baseBonus:3, growthBonus:0.5},
-];
-
-function getCreatureRarity(e){
-  if(!e) return 'common';
-  if(RARITY_OVERRIDES[e.id]) return RARITY_OVERRIDES[e.id]; // starters/bosses
-  var power=(e.baseStats.str+e.baseStats.agi+e.baseStats.wis)
-    +(e.growth.str+e.growth.agi+e.growth.wis)*10;
-  if(power>=110) return 'legendary';
-  if(power>=80)  return 'rare';
-  if(power>=62)  return 'uncommon';
-  return 'common';
-}
-
-// Legacy compatibility — now just ensures playable fields are merged
-function ensureEnemyChampion(id){ getCreaturePlayable(id); }
-function buildEnemyChampionDeck(id){ return getCreaturePlayable(id)&&getCreaturePlayable(id).startDeck||CREATURES_PLAYABLE.thief.startDeck.slice(); }
+// Champion decks read directly from CREATURES[id].deck
 
 function buildGachaPool(){
   // All creatures in pool — exclude special unplayable boss encounters
@@ -735,33 +697,22 @@ function getSanctumMods(champId){
 }
 
 // ── Get playable fields for a creature ──
-// Merges CREATURES_PLAYABLE overrides (for starters) with base CREATURES data.
-// For enemy-derived creatures: auto-generates playable fields on first access.
+// Reads directly from CREATURES[id] — no separate champions.js needed.
 function getCreaturePlayable(id){
   var c=CREATURES[id]; if(!c) return null;
-  if(c._playableMerged) return c;
-  // Merge in starter overrides if they exist
-  var over=CREATURES_PLAYABLE[id];
-  if(over) Object.assign(c, over);
-  // Auto-generate playable fields for enemy creatures
-  if(!c.playable){ c.playable=false; }
-  if(!c.role){ var r=getCreatureRarity(c); c.role={common:'FIGHTER',uncommon:'WARRIOR',rare:'CHAMPION',legendary:'LEGEND'}[r]||'FIGHTER'; }
-  if(!c.desc && c.innate) c.desc=c.innate.desc||'';
-  if(!c.statPips) c.statPips={str:Math.max(1,Math.round(c.growth.str*2)),agi:Math.max(1,Math.round(c.growth.agi*2)),wis:Math.max(1,Math.round(c.growth.wis*2))};
+  // Derive innate display fields directly from creature definition
   if(!c.innateName&&c.innate) c.innateName=c.innate.name;
-  if(!c.innateDesc&&c.innate) c.innateDesc=c.innate.desc;
-  if(c.innateActive===undefined) c.innateActive=false;
-  if(c.innateCost===undefined) c.innateCost=0;
-  // startDeck: use CREATURES_PLAYABLE.startDeck, CREATURE_DECKS, or fall back to thief deck
+  if(!c.innateDesc&&c.innate)  c.innateDesc=c.innate.desc;
+  if(c.innateActive===undefined&&c.innate) c.innateActive=!!c.innate.active;
+  if(c.innateCost===undefined&&c.innate)   c.innateCost=c.innate.cost||0;
+  // startDeck: use creature's own deck, or CREATURE_DECKS for legacy enemies
   if(!c.startDeck){
     if(CREATURE_DECKS&&CREATURE_DECKS[id]){
       c.startDeck=CREATURE_DECKS[id].cards.slice();
-      c.sanctumAlts=CREATURE_DECKS[id].alts||[];
     } else {
-      c.startDeck=(CREATURES_PLAYABLE.thief.startDeck).slice();
+      c.startDeck=c.deck?c.deck.slice():['strike','strike','brace'];
     }
   }
-  c._playableMerged=true;
   return c;
 }
 
@@ -779,7 +730,7 @@ function buildStartDeck(champId){
     return base;
   }
 
-  var base=c&&c.startDeck ? c.startDeck.slice() : CREATURES_PLAYABLE.thief.startDeck.slice();
+  var base=c&&c.startDeck ? c.startDeck.slice() : (c&&c.deck ? c.deck.slice() : ['strike','strike','brace']);
   // Apply removals
   (mods.removed||[]).forEach(function(r){
     for(var i=0;i<(r.copies||1);i++){

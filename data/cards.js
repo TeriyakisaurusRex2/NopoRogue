@@ -96,7 +96,7 @@ document.addEventListener('mouseout',function(e){
 var CARDS = {
   // ── Universal basics ──
   strike:      {id:'strike',      name:'Strike',        icon:'⚔️', type:'attack',  unique:false, champ:null,    statId:null,  effect:'Deal 18 damage.'},
-  brace:       {id:'brace',       name:'Brace',         icon:'🛡', type:'defense', unique:false, champ:null,    statId:null,  effect:'Apply [Shield] (20) for 5s. On expiry: gain 40 mana.\n[Shield] absorbs direct damage before HP. DoTs bypass it.', effects:[{type:'shield',amt:20,dur:5,onexpiry:'gain_mana',expiry_val:40}]},
+  brace:       {id:'brace',       name:'Brace',         icon:'🛡', type:'defense', unique:false, champ:null,    statId:null,  effect:'Gain [Shield] (20) for 5s.\n[Shield] absorbs direct damage before HP. DoTs bypass it. [Manabound]: purged if mana hits 0.', effects:[{type:'shield',amt:20,dur:5}]},
   filler:      {id:'filler',      name:'Dead Weight',   icon:'💀', type:'utility', unique:false, champ:null,    statId:'wis', effect:'Sorcery [all mana]: Draw 1 card.\nFills empty deck slots. Swap this out when you can.'},
 
 
@@ -106,85 +106,57 @@ var CARDS = {
     effects:[{type:'dmg_stat',base:10,stat:'wis',div:1}],
     onDiscard:[{type:'draw_cards',count:1}]},
 
-  druid_nebula_ward: {id:'druid_nebula_ward', name:'Nebula Ward', icon:'🌌', type:'defense', unique:true, champ:'druid', statId:'str',
-    effect:'Gain [Shield] (20) for 5s.\nOn expiry: Gain 80 mana.',
-    effects:[{type:'shield',amt:20,dur:5,onexpiry:'gain_mana',expiry_val:80}]},
+  druid_star_shard: {id:'druid_star_shard', name:'Star Shard', icon:'✨', type:'attack', unique:true, champ:'druid', statId:'wis',
+    effect:'Deal 4 damage. [Conjured] a copy into discard.\n[Echo]: Remove all [Conjured] copies from everywhere.',
+    effects:[{type:'dmg',base:4},{type:'conjure_copy',target:'discard'}],
+    onDiscard:[{type:'remove_conjured_copies'}]},
 
   druid_nova_burst: {id:'druid_nova_burst', name:'Nova Burst', icon:'💥', type:'attack', unique:true, champ:'druid', statId:'wis',
     effect:'Deal 12 damage per card in hand (min 12).\n[Churn] 3.',
     effects:[{type:'dmg_per_hand_card',base:12,min:12},{type:'churn',count:3}]},
 
-  druid_focus: {id:'druid_focus', name:'Focus', icon:'🔮', type:'utility', unique:true, champ:'druid', statId:'wis',
-    effect:'[Drain] 60% of max mana. Draw 3 cards.',
-    effects:[{type:'drain_self_pct',pct:60},{type:'draw_cards',count:3}],
-    unlock:{champion:'druid',level:5,gold:50}},
-
-  druid_stellar_shards: {id:'druid_stellar_shards', name:'Stellar Shards', icon:'✨', type:'attack', unique:true, champ:'druid', statId:'wis',
-    effect:'Deal 8 damage. Draw 1 card.\n[Sorcery] [30]: Deal 8 additional damage.',
-    effects:[{type:'dmg',base:8},{type:'draw_cards',count:1},{type:'sorcery',cost:30,effect:{type:'dmg',base:8}}],
-    unlock:{champion:'druid',level:5,gold:50}},
-
-  druid_drifting_comet: {id:'druid_drifting_comet', name:'Drifting Comet', icon:'💫', type:'attack', unique:true, champ:'druid', statId:'agi',
-    effect:'Deal 18 damage.\n[Sorcery] [40]: [Suspend] (2).',
-    effects:[{type:'dmg',base:18},{type:'sorcery',cost:40,effect:{type:'suspend',dur:2}}],
-    unlock:{champion:'druid',level:5,gold:50}},
+  // druid unlock cards — removed pending redesign (see Creature_Design_Reference.txt)
+  // Concepts to revisit: Focus (mana-to-draw cycling), Stellar Shards (damage+draw Sorcery),
+  // Drifting Comet (heavy damage + control — [Suspend] needs defining first)
 
   // ── Cursed Paladin ──
   paladin_smite: {id:'paladin_smite', name:'Smite', icon:'🔥', type:'attack', unique:true, champ:'paladin', statId:'wis',
-    effect:'Deal 8 damage. Apply [Burn] (WIS dmg/3s) for 9s.'},
+    effect:'Deal 8 damage. Apply [Burn] (WIS dmg/3s) for 9s.\n[Burn] on enemy: [Crit]: 75%.',
+    effects:[{type:'dmg',base:8},{type:'burn_stat',base:0,stat:'wis',div:1,dur:9},{type:'crit_conditional',condition:'burn_on_enemy',pct:75}]},
 
   paladin_consecrate: {id:'paladin_consecrate', name:'Consecrate', icon:'🕊️', type:'utility', unique:true, champ:'paladin', statId:'wis',
     effect:'Apply [Weaken] for 6s.\n[Sorcery] [20]: Apply [Burn] (WIS dmg/3s) for 9s.',
     effects:[{type:'weaken',dur:6},{type:'sorcery',cost:20,effect:{type:'burn_stat',base:0,stat:'wis',div:1,dur:9}}]},
 
   paladin_aegis: {id:'paladin_aegis', name:'Aegis', icon:'🛡️', type:'defense', unique:true, champ:'paladin', statId:'str',
-    effect:'Gain [Shield] (STR ÷ 2) for 6s.\n[Sorcery] [25]: Also apply [Weaken] for 4s.',
+    effect:'Gain [Shield] (STR ÷ 2) for 6s.\n[Sorcery] [25]: Apply [Weaken] for 4s.',
     effects:[{type:'shield_stat',stat:'str',div:2,dur:6},{type:'sorcery',cost:25,effect:{type:'weaken',dur:4}}]},
 
-  paladin_judgment: {id:'paladin_judgment', name:'Judgment', icon:'⚡', type:'attack', unique:true, champ:'paladin', statId:'wis',
-    effect:'Deal damage equal to current [Burn] damage remaining (min 8). Bypass [Shield].',
-    unlock:{champion:'paladin',level:5,gold:50}},
-
-  paladin_hellfire: {id:'paladin_hellfire', name:'Hellfire', icon:'🔥', type:'attack', unique:true, champ:'paladin', statId:'wis',
-    effect:'Apply [Burn] (WIS × 2 dmg/3s) for 9s. Gain 30 mana.\n[Sorcery] [30]: Apply [Weaken] for 5s.'},
-
-  paladin_bulwark: {id:'paladin_bulwark', name:'Bulwark', icon:'🏰', type:'defense', unique:true, champ:'paladin', statId:'str',
-    effect:'Gain [Shield] (STR) for 8s.\n[Sorcery] [35]: While active, your next damaging card deals +50% damage.'},
+  // paladin unlock cards — removed pending redesign (see Roadmap: unlock card pass)
 
   // ── Faceless Thief ──
   thief_quick_slash: {id:'thief_quick_slash', name:'Quick Slash', icon:'⚡', type:'attack', unique:true, champ:'thief', statId:'agi',
-    effect:'Deal 10 + AGI ÷ 4 damage. 15% chance to [Crit]: deal double damage.',
-    effects:[{type:'dmg_crit',base:10,pct:15},{type:'dmg_stat',base:0,stat:'agi',div:4}]},
+    effect:'Deal 10 + AGI ÷ 4 damage.\n[Crit]: 15%.',
+    effects:[{type:'dmg_stat',base:10,stat:'agi',div:4},{type:'crit',pct:15}]},
 
   thief_poison_dart: {id:'thief_poison_dart', name:'Poison Dart', icon:'🎯', type:'attack', unique:true, champ:'thief', statId:'wis',
     effect:'Deal 5 damage. Apply 8 [Poison].\n[Sorcery] [20]: Apply 8 additional [Poison].',
     effects:[{type:'dmg',base:5},{type:'poison',dpt:8,dur:8},{type:'sorcery',cost:20,effect:{type:'poison',dpt:8,dur:8}}]},
 
-  thief_smoke_bomb: {id:'thief_smoke_bomb', name:'Smoke Bomb', icon:'💨', type:'utility', unique:true, champ:'thief', statId:'agi',
-    effect:'Apply [Slow] for 5s.\n[Sorcery] [15]: Also apply [Weaken] for 4s.',
-    effects:[{type:'slow_draw',dur:5},{type:'sorcery',cost:15,effect:{type:'weaken',dur:4}}]},
-
   thief_shadow_step: {id:'thief_shadow_step', name:'Shadow Step', icon:'👣', type:'utility', unique:true, champ:'thief', statId:'agi',
-    effect:'Apply [Dodge]. Gain 50 mana.\n[Sorcery] [20]: Also apply [Weaken] for 3s.',
-    effects:[{type:'dodge',dur:0},{type:'mana_gain',amt:50},{type:'sorcery',cost:20,effect:{type:'weaken',dur:3}}]},
+    effect:'Apply [Weaken] for 6s.',
+    effects:[{type:'weaken',dur:6}]},
 
-  thief_backstab: {id:'thief_backstab', name:'Backstab', icon:'🗡️', type:'attack', unique:true, champ:'thief', statId:'agi',
-    effect:'Deal 12 damage. If enemy is debuffed: deal 33 additional damage.',
-    unlock:{champion:'thief',level:5,gold:50}},
-
-  thief_death_mark: {id:'thief_death_mark', name:'Death Mark', icon:'🩸', type:'utility', unique:true, champ:'thief', statId:'wis',
-    effect:'Apply [Vulnerable] for 6s.\n[Vulnerable]: enemy takes 50% more damage from all sources.',
-    effects:[{type:'marked',dur:6}],
-    unlock:{champion:'thief',level:5,gold:50}},
-
-  thief_flicker: {id:'thief_flicker', name:'Flicker', icon:'💨', type:'attack', unique:true, champ:'thief', statId:'agi',
-    effect:'Deal 5 damage. Apply 4 [Poison]. Gain [Haste] 20% for 2s.',
-    effects:[{type:'dmg',base:5},{type:'poison',dpt:4,dur:6},{type:'haste',pct:20,dur:2}],
-    unlock:{champion:'thief',level:5,gold:50}},
+  // thief unlock cards — removed pending redesign (see Creature_Design_Reference.txt)
+  // Concepts to revisit:
+  //   Backstab: [Debuff] on enemy: deal 33 additional damage — condition syntax needs crit system
+  //   Death Mark: Apply [Vulnerable] for 6s — clean once explanation line removed
+  //   Flicker: remove entirely, weak design
+  //   Shadow Step Dodge: Dodge concept belongs on an unlock card with room to be interesting
 
   // Shadow Mark ghost card — generated by innate, not in any deck
   ghost_shadow_mark: {id:'ghost_shadow_mark', name:'Shadow Mark', icon:'🌑', type:'utility', unique:false, champ:'thief', statId:'agi',
-    effect:'Apply 12 [Poison]. Your next card is a guaranteed [Crit].\n[Crit]: 1.5× damage.'},
+    effect:'Apply 12 [Poison].\nNext attack card: +[Crit]: 100%.'},
 
   // ── Giant Rat ──
   rat_gnaw:   {id:'rat_gnaw',   name:'Gnaw',   icon:'🐀', type:'attack',  champ:'rat',      statId:'agi',
