@@ -1,0 +1,33 @@
+// ════════════════════════════════════════════════════
+// CREATURE: CORRUPTED BLOOM
+// ════════════════════════════════════════════════════
+
+CREATURES.bloom = {
+  id:       'bloom',
+  name:     'CORRUPTED BLOOM',
+  icon:     '🌺',
+  lore:     'It was a flower once. The corruption entered through the roots and climbed. Now it blooms in colours that do not occur in nature and releases spores that make living things forget they were ever healthy. The petals open wider when something approaches.',
+  role:     'Hand Size Scaling / Reactive Debuffer',
+  bossOnly: false,
+
+  baseStats: { str:16, agi:6, wis:12 },
+  growth:    { str:2,  agi:0, wis:1 },
+
+  innate: {
+    id:       'corruption_spread',
+    name:     'Corruption Spread',
+    desc:     'Passive: when the opponent plays an attack card, [Sorcery] [20]: create a Corrupt Spore ([Weaken] 4s, Ethereal) in own hand.',
+    active:   false,
+    cost:     0,
+    cooldown: 0,
+    triggers: [
+      { on: 'on_opponent_attack', condition: 'has_mana_20', effect: {type: 'corruption_spread'} }
+    ],
+  },
+
+  // Deck generated from STR + deckOrder (16 cards at base)
+  // 16 ÷ 5 = 3 each + 1 remainder → Vine Lash 4, Rot Guard 3, Wilt 3, Strike 3, Brace 3
+  deckOrder: ['bloom_vine_lash', 'bloom_rot_guard', 'bloom_wilt'],
+};
+// Backup: protect triggers array from being stripped
+CREATURES.bloom._innateTriggers = [{"on": "on_opponent_attack", "condition": "has_mana_20", "effect": {"type": "corruption_spread"}}];

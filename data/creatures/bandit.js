@@ -1,13 +1,34 @@
 // ════════════════════════════════════════════════════
 // CREATURE: BANDIT
-// Drop bandit.png into assets/creatures/ for a custom sprite.
 // ════════════════════════════════════════════════════
 
-CREATURES.bandit = {id:'bandit',name:'BANDIT CAPTAIN',icon:'🗡️',lore:'Once a soldier, maybe. Or a merchant who ran out of goods to sell. Whatever they were before, the captain title was earned by outlasting everyone else who wanted it.',baseStats:{str:18,agi:15,wis:7},growth:{str:2,agi:1.5,wis:0.8},baseDmg:4,dmgGrowth:0.8,gold:[5,10],
-    innate:{id:'ambush',name:'Ambush',desc:'Your first card each battle always deals double damage. Make the opening count.'},
-    openingMove:'quick_stab',
-    deck:[
-      {id:'quick_stab',  copies:2,name:'Quick Stab', effect:'dmg',          value:3,                                                         msg:'stabs quickly!'},
-      {id:'disarm',      copies:1,name:'Disarm',      effect:'force_autoplay',                                                               msg:'disarms you!'},
-      {id:'dirty_trick', copies:2,name:'Dirty Trick', effect:'dmg_and_dot',  value:2,dotDmg:2,dotTick:2000,dotDur:4000,status:'bleeding',    msg:'tricks you!'},
-    ]};
+CREATURES.bandit = {
+  id:       'bandit',
+  name:     'BANDIT',
+  icon:     '🗡️',
+  lore:     'The road bandits are not organised. They do not need to be. Each one fights with the desperate efficiency of someone who has learned that hesitation is more expensive than recklessness. Quick hands, sharp steel, no honour.',
+  role:     'Discard Engine / Multi-hit',
+  bossOnly: false,
+
+  baseStats: { str:12, agi:14, wis:8 },
+  growth:    { str:1,  agi:2,  wis:1 },
+
+  innate: {
+    id:       'quick_hands',
+    name:     'Quick Hands',
+    desc:     'Discard 1 card. Draw 2 cards.',
+    active:   true,
+    cost:     20,
+    cooldown: 3000,
+    effect: [
+      {type: 'discard_random', count: 1},
+      {type: 'draw_cards', count: 2}
+    ],
+  },
+
+  // Deck generated from STR + deckOrder (12 cards at base)
+  // 12 ÷ 5 = 2 each + 2 remainder → Shiv 3, Ransack 3, Smoke Bomb 2, Strike 2, Brace 2
+  deckOrder: ['bandit_shiv', 'bandit_ransack', 'bandit_smoke_bomb'],
+};
+// Backup: protect effect array from being stripped
+CREATURES.bandit._innateEffect = [{"type": "discard_random", "count": 1}, {"type": "draw_cards", "count": 2}];

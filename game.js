@@ -238,8 +238,12 @@ var PERSIST={
       sanctum:   {unlocked:false,slottedCard:null},
       market:{unlocked:false,slottedCard:null, stock:[], refreshProgress:0,
               deals:[], dealsProgress:0, rare:null, rareProgress:0},
-      board:{unlocked:false, slottedCard:null},
-      expedition_hall:{unlocked:false,level:1,slots:[{champId:null,areaId:null,type:null,startTime:null,totalMs:null,restUntil:null},{champId:null,areaId:null,type:null,startTime:null,totalMs:null,restUntil:null},{champId:null,areaId:null,type:null,startTime:null,totalMs:null,restUntil:null}],log:[]},
+      adventurers_hall:{unlocked:false, expeditionSlots:[
+        {champId:null,areaId:null,type:null,startTime:null,totalMs:null,restUntil:null},
+        {champId:null,areaId:null,type:null,startTime:null,totalMs:null,restUntil:null},
+        {champId:null,areaId:null,type:null,startTime:null,totalMs:null,restUntil:null}
+      ], expeditionLog:[]},
+      arena:{unlocked:false},
     },
     materials:{},  // { materialId: count } — populated from MATERIALS definition
     relics:{},     // { relicId: count } — crafted/found relics in inventory
@@ -251,8 +255,8 @@ var PERSIST={
     vaultGenTarget:null,  // randomised target (seconds) for current fill cycle
     cardFragments:0,
     marketOffers:[],
-    buildingXp:{vault:0,forge:0,shrine:0,bestiary:0,shard_well:0,sanctum:0,market:0,board:0},
-    buildingLevel:{vault:1,forge:1,shrine:1,bestiary:1,shard_well:1,sanctum:1,market:1,board:1},
+    buildingXp:{vault:0,forge:0,bestiary:0,shard_well:0,sanctum:0,market:0,adventurers_hall:0,arena:0},
+    buildingLevel:{vault:1,forge:1,bestiary:1,shard_well:1,sanctum:1,market:1,adventurers_hall:1,arena:1},
     quests:{
       offered:[],      // 3 quests shown on the board
       active:null,     // current active quest {def, progress, startTime}
@@ -369,8 +373,17 @@ function loadPersist(){
         PERSIST.town.vaultGenTarget=p.town.vaultGenTarget||null;
         PERSIST.town.marketOffers=p.town.marketOffers||[];
         if(p.town.quests) PERSIST.town.quests=Object.assign({offered:[],active:null,completed:[],offeredRefresh:0},p.town.quests);
-        if(p.town.buildings&&p.town.buildings.board) PERSIST.town.buildings.board=Object.assign({unlocked:false,slottedCard:null},p.town.buildings.board);
-        if(p.town.buildings&&p.town.buildings.expedition_hall) PERSIST.town.buildings.expedition_hall=Object.assign({unlocked:false,level:1,slots:[{champId:null,areaId:null,type:null,startTime:null,totalMs:null,restUntil:null},{champId:null,areaId:null,type:null,startTime:null,totalMs:null,restUntil:null},{champId:null,areaId:null,type:null,startTime:null,totalMs:null,restUntil:null}],log:[]},p.town.buildings.expedition_hall);
+        if(p.town.buildings&&p.town.buildings.adventurers_hall) PERSIST.town.buildings.adventurers_hall=Object.assign({unlocked:false,expeditionSlots:[{champId:null,areaId:null,type:null,startTime:null,totalMs:null,restUntil:null},{champId:null,areaId:null,type:null,startTime:null,totalMs:null,restUntil:null},{champId:null,areaId:null,type:null,startTime:null,totalMs:null,restUntil:null}],expeditionLog:[]},p.town.buildings.adventurers_hall);
+        // Migrate old board/expedition_hall saves
+        if(!p.town.buildings.adventurers_hall){
+          if((p.town.buildings.board&&p.town.buildings.board.unlocked)||(p.town.buildings.expedition_hall&&p.town.buildings.expedition_hall.unlocked)){
+            PERSIST.town.buildings.adventurers_hall.unlocked=true;
+          }
+          if(p.town.buildings.expedition_hall&&p.town.buildings.expedition_hall.slots){
+            PERSIST.town.buildings.adventurers_hall.expeditionSlots=p.town.buildings.expedition_hall.slots;
+          }
+        }
+        if(p.town.buildings&&p.town.buildings.arena) PERSIST.town.buildings.arena=Object.assign({unlocked:false},p.town.buildings.arena);
         if(p.town.buildings&&p.town.buildings.shard_well) PERSIST.town.buildings.shard_well=Object.assign({unlocked:false,slottedCard:null,shardAcc:0},p.town.buildings.shard_well);
       }
       if(p.bestiary){ PERSIST.bestiary=Object.assign({research:{},researchAcc:0},p.bestiary); }
@@ -605,6 +618,14 @@ function calcXpMult(champLevel, areaLevel){
 
 function buildArea(def,level){
   var pool=def.enemyPool.map(function(id){return CREATURES[id];}).filter(Boolean);
+  if(pool.length===0){
+    // No valid creatures — return a minimal area with just a Strike-only dummy
+    return {id:def.id+'-'+level, def:def, level:level, enemies:[{
+      id:'dummy', name:'???', icon:'❓', str:10, agi:10, wis:10,
+      baseHp:50, dmgMult:1, atkInterval:3000, xp:10,
+      innate:null, deck:['strike','strike','brace']
+    }]};
+  }
   var enemies=[];
 
   // Boss areas: use the pool exactly as defined — fixed lineup
@@ -625,14 +646,29 @@ function buildArea(def,level){
     return {def:def,level:level,enemies:enemies};
   }
 
-  var count=Math.min(8, 4+Math.floor(level/2));
+  var count=def.singleEnemy ? 1 : Math.min(8, 4+Math.floor(level/2));
+  // Dojo: cycle through pool sequentially
+  var dojoOffset = 0;
+  if(def.singleEnemy){
+    if(typeof window._dojoIdx === 'undefined') window._dojoIdx = 0;
+    dojoOffset = window._dojoIdx % pool.length;
+    window._dojoIdx++;
+  }
+  // Shuffle the pool so enemy order is unpredictable
+  var shuffled=pool.slice();
+  for(var si=shuffled.length-1;si>0;si--){ var sj=Math.floor(Math.random()*(si+1)); var tmp=shuffled[si]; shuffled[si]=shuffled[sj]; shuffled[sj]=tmp; }
   for(var i=0;i<count;i++){
-    var b=pool[i%pool.length];
+    // Pick from pool — dojo uses sequential cycling, normal areas use random
+    var b = def.singleEnemy ? pool[dojoOffset] : shuffled[i%shuffled.length];
+    // Re-shuffle when we've cycled through once for more variety
+    if(i>0 && i%shuffled.length===0){
+      for(var si2=shuffled.length-1;si2>0;si2--){ var sj2=Math.floor(Math.random()*(si2+1)); var tmp2=shuffled[si2]; shuffled[si2]=shuffled[sj2]; shuffled[sj2]=tmp2; }
+    }
     var str=Math.round(b.baseStats.str+(level-1)*b.growth.str);
     var agi=Math.round(b.baseStats.agi+(level-1)*b.growth.agi);
     var wis=Math.round(b.baseStats.wis+(level-1)*b.growth.wis);
     // Damage scaled by level multiplier: 1.2× at lv1, 3× at lv10, 5× at lv20
-    var baseDmg=b.baseDmg+(level-1)*b.dmgGrowth;
+    var baseDmg=(b.baseDmg||0)+(level-1)*(b.dmgGrowth||0);
     var dmgMult=1+level*0.2;
     var hp=str*5;
     enemies.push({
@@ -698,6 +734,7 @@ function calcDrawInterval(agi){ return Math.round(2000+6000/(1+agi*0.08)); }
 function calcMaxMana(wis){ return wis*20; }
 function calcManaRegen(wis){ return wis*1.5; }
 var HAND_SIZE=7;
+var SOUL_SHARDS_PER_PULL=100;
 
 // ═══════════════════════════════════════════════════════
 // DECK BUILDER — generates a creature's deck from STR + deckOrder
@@ -751,6 +788,7 @@ function getCreaturePlayable(id){
   if(!c.innateDesc&&c.innate)  c.innateDesc=c.innate.desc;
   if(c.innateActive===undefined&&c.innate) c.innateActive=!!c.innate.active;
   if(c.innateCost===undefined&&c.innate)   c.innateCost=c.innate.cost||0;
+  if(c.innateCooldown===undefined&&c.innate) c.innateCooldown=c.innate.cooldown||8000;
   // startDeck: deckOrder always wins if present (generates from STR).
   // Otherwise fall back to legacy deck / CREATURE_DECKS.
   if(c.deckOrder){
@@ -861,11 +899,11 @@ function makeGS(champId,area){
     mana:0, maxMana:calcMaxMana(stats.wis), manaRegen:calcManaRegen(stats.wis), manaAccum:0,
     enemies:area.enemies, enemyIdx:0,
     enemyHp:area.enemies[0].baseHp, enemyMaxHp:area.enemies[0].baseHp,
-    enemyShell:0, enemyHardened:0, enemyCardCount:0,
+    enemyShell:0, enemyCardCount:0,
     enemyDrawPool:[], enemyDiscardPile:[], enemyHand:[],
     enemyMana:0, enemyMaxMana:0, enemyManaRegen:0, enemyManaAccum:0, _innCooldown:0,
-    lastEnemyCard:null, goblinAlarmFired:false, skeletonUndyingUsed:false,
-    roachSwarmUsed:false, adaptiveStacks:0,
+    lastEnemyCard:null, lastCardPlayed:null,
+    adaptiveStacks:0,
     drawPool:deckIds.slice().sort(function(){return Math.random()-0.5;}),
     discardPile:[], hand:[],
     startTierMap:startTierMap, // {cardId: numUpgradedCopies} for start-only tier display
@@ -877,25 +915,11 @@ function makeGS(champId,area){
     _rooterAcc:0, _silktrapFired:false,
     lastPlayerCard:null,
     _brittleShellFired:false, _waxMeltAcc:0, _waxTimerAcc:0, waxDamageDealt:0,
-    holyShieldActive:false,
-    nextCardCrit:false, shadowMarkActive:false, conjuredCount:0,
+    nextCardCrit:false, shadowMarkActive:false, conjuredCount:0, _thornsGuard:false,
     killedEnemyIds:[],
-    _frenziedAcc:0, _frenziedStacks:0,
-    _skitterAcc:0,
     _damageTaken:0,
-    // Player creature innate flags
-    _toughHideActive:false,
-    _goldenReserves:false,
-    _soulSiphon:false,
-    _effigyFree:false,
-    _spreadingSporesCount:0,
-    _sporeBurstAcc:0,
-    _deepRootsAcc:0,
-    _bulwarkReady:false,
-    _frenzyBiteStacks:0,
-    _goblinRallied:false,
-    _bloatShieldActive:false,
     // New mechanic state
+    _conjuredCardId:null,
     _volatile:null,
     _suspended:false,
     _suspendEnd:0,
@@ -914,7 +938,9 @@ function makeGS(champId,area){
     _moltenCoreFired:false,
     _frenzyFired:false,
     _sporeHits:0,
-    _swarmAntUsed:false, // tracks enemy IDs defeated this run for card reward pool
+    _swarmAntUsed:false,
+    // Unified combat actors (new system — see combat.js)
+    actors: null,
   };
   // Apply equipped relics — modifies gs stats, flags, and starting values
   applyRelics(gs);
@@ -1655,7 +1681,6 @@ function _deRenderFooter(){
 }
 
 
-
 // ═══════════════════════════════════════════════════════
 // CHAMPION INFO PANEL
 // ═══════════════════════════════════════════════════════
@@ -1887,47 +1912,30 @@ function setEnemyUI(idx){
   document.getElementById('e-tags').innerHTML='';
   if(e.innate) addInnateTag('enemy',e.innate);
   trackSeen(e.id);
-  // Reset per-enemy flags
-  gs.enemyShell=0; gs.enemyHardened=(e.innate&&e.innate.id==='hardened')?2:0;
-  gs.goblinAlarmFired=false; gs.skeletonUndyingUsed=false;
+  // Reset per-enemy state
+  gs.enemyShell=0;
   gs.enemyCardCount=0; gs.lastEnemyCard=null;
-  gs.enemyHand=[]; gs.roachSwarmUsed=false; gs.adaptiveStacks=0;
+  gs.enemyHand=[];
   // Enemy mana — scales with WIS like player
   var eManaMax=Math.round(e.wis*8+40);
   gs.enemyMaxMana=eManaMax; gs.enemyMana=0;
   gs.enemyManaRegen=Math.round(e.wis*1.2+3); gs.enemyManaAccum=0; gs._innCooldown=0;
-  // Mistwoods per-fight state
-  gs.playerRooted=false; gs._rooterAcc=0;
+  gs.playerRooted=false;
   gs.playerDrawDelay=0;
-  gs.enemyDodge=(e.innate&&e.innate.id==='mist_veil');
-  gs.enemyDodgeProcReady=false;
-  gs._silktrapFired=false;
-  // Wax Dunes per-fight state
-  gs._brittleShellFired=false;
-  gs._waxMeltAcc=0;
-  gs._waxTimerAcc=0;
-  gs.waxDamageDealt=0;
-  gs.holyShieldActive=false;
-  gs._frenziedAcc=0; gs._frenziedStacks=0;
-  gs._skitterAcc=0;
-  gs._seepAcc=0; gs._accumAcc=0; gs._accumStacks=0;
-  gs._digInAcc=0; gs._digInFired=false;
-  gs._magmaAcc=0;
-  gs._lureApplied=false;
-  gs._inkCloudUsed=false;
-  gs._moltenCoreFired=false;
-  gs._frenzyFired=false;
-  gs._sporeHits=0;
-  gs._swarmAntUsed=false;
-  // Scout's Alarm: apply Rallying countdown buff at fight start
-  if(e.innate&&e.innate.id==='scouts_alarm'){
-    gs.goblinAlarmFired=false;
-    applyStatus('enemy','buff','⚠ Rallying...',0,'scouts_rally',15000,"Scout's Alarm: rallies in 15s — gaining +40% speed and +50% damage. Kill it first!");
+  gs.enemyDodge=false;
+  gs.adaptiveStacks=0;
+  // Build enemy deck — supports deckOrder (new), deck array (creature file),
+  // and old format inline card objects
+  var eDeck = e.deck || [];
+  // If creature has deckOrder, generate deck from it
+  if(!e.deck || e.deck.length === 0){
+    var creatureDef = CREATURES[e.id];
+    if(creatureDef && creatureDef.deckOrder){
+      eDeck = buildCreatureDeck(creatureDef, e.str || (creatureDef.baseStats && creatureDef.baseStats.str) || 10);
+    }
   }
-  // Build enemy deck — supports both new format (array of card ID strings)
-  // and old format (array of {id, copies, effect, value, ...} objects)
   var pool=[];
-  (e.deck||[]).forEach(function(card){
+  (eDeck).forEach(function(card){
     if(typeof card==='string'){
       // New format: card ID string — look up in CARDS
       var cDef=CARDS[card];
@@ -1942,9 +1950,63 @@ function setEnemyUI(idx){
   for(var i=pool.length-1;i>0;i--){ var j=Math.floor(Math.random()*(i+1)); var tmp=pool[i]; pool[i]=pool[j]; pool[j]=tmp; }
   gs.enemyDrawPool=pool;
   gs.enemyDiscardPile=[];
-  // On-entry innate effects
-  if(e.innate&&e.innate.id==='bog_aura'){
-    applyStatus('player','debuff','Bog Mud',-0.15,'drawspeed',999999,'Slows draw speed by 15%. Applied by Toad King\'s Bog Aura.');
+
+  // Initialize unified combat actors (new system)
+  // Player actor mirrors current gs state
+  if(typeof createActor === 'function'){
+    var playerActor = {
+      id: gs.champId,
+      creature: CREATURES[gs.champId],
+      side: 'player',
+      level: gs.level,
+      str: gs.stats.str, agi: gs.stats.agi, wis: gs.stats.wis,
+      hp: gs.playerHp, maxHp: gs.playerMaxHp,
+      mana: gs.mana, maxMana: gs.maxMana,
+      manaRegen: gs.manaRegen, manaAccum: gs.manaAccum,
+      shield: gs.playerShield,
+      hand: gs.hand,
+      drawPool: gs.drawPool,
+      discardPile: gs.discardPile,
+      drawInterval: calcDrawInterval(gs.stats.agi),
+      drawTimer: gs.drawTimer || 0,
+      drawSpeedMult: gs.drawSpeedBonus || 1.0,
+      statusEffects: gs.statusEffects.player,
+      innateCooldown: 0,
+      frenzyStacks: 0,
+      dodge: gs.playerDodge || false,
+      conjuredCount: gs.conjuredCount || 0,
+      shadowMarkActive: gs.shadowMarkActive || false,
+      nextCardCrit: gs.nextCardCrit || false,
+      cardsPlayed: 0,
+      lastCardPlayed: null,
+    };
+    var enemyActor = {
+      id: e.id,
+      creature: CREATURES[e.id] || {innate: e.innate, name: e.name},
+      side: 'enemy',
+      level: gs.level,
+      str: e.str, agi: e.agi, wis: e.wis,
+      hp: e.baseHp, maxHp: e.baseHp,
+      mana: 0, maxMana: eManaMax,
+      manaRegen: gs.enemyManaRegen, manaAccum: 0,
+      shield: 0,
+      hand: gs.enemyHand,
+      drawPool: gs.enemyDrawPool,
+      discardPile: gs.enemyDiscardPile,
+      drawInterval: calcDrawInterval(e.agi),
+      drawTimer: 0,
+      drawSpeedMult: 1.0,
+      statusEffects: gs.statusEffects.enemy,
+      innateCooldown: 0,
+      frenzyStacks: 0,
+      dodge: gs.enemyDodge || false,
+      conjuredCount: 0,
+      shadowMarkActive: false,
+      nextCardCrit: false,
+      cardsPlayed: 0,
+      lastCardPlayed: null,
+    };
+    gs.actors = { player: playerActor, enemy: enemyActor };
   }
 }
 
@@ -2004,27 +2066,9 @@ function startBattle(){
     if(gs._shrineCursedTouch>=2) applyStatus('enemy','debuff','Marked',0.5,'death_mark',3000,'Cursed Touch: +50% damage taken.');
     addLog('Cursed Touch: enemy weakened!','debuff');
   }
-  // Opening Volley — tracked per-battle, consumed in executeCard
   // (gs._shrineOpenVolley already set, consumed on card play)
   // ── Player Creature Innate effects at battle start ──
-  var pInnate=CREATURES[gs.champId]&&CREATURES[gs.champId].innate;
-  if(pInnate){
-    // Tough Hide — first hit 50% reduced
-    if(pInnate.id==='tough_hide') gs._toughHideActive=true;
-    // Golden Reserves — 80% faster mana regen (applied via mRegenMult in gameTick)
-    if(pInnate.id==='golden_reserves') gs._goldenReserves=true;
-    // Soul Siphon — mana on kill (checked in trackKill)
-    if(pInnate.id==='soul_siphon') gs._soulSiphon=true;
-    // Effigy — first card this battle costs no mana
-    if(pInnate.id==='effigy') gs._effigyFree=true;
-    // Rapid Assault — draw interval permanently -15% (applied once per run in makeGS, stacks with battle bonuses)
-    if(pInnate.id==='rapid_assault') gs.drawSpeedBonus=(gs.drawSpeedBonus||1)+0.15;
-    // Bog Aura (player) — reduce enemy attack speed permanently
-    if(pInnate.id==='bog_aura'){
-      applyStatus('enemy','debuff','Bog Aura',-0.15,'atkspeed',9999999,'Bog Aura: enemy -15% attack speed permanently.');
-      addLog('Bog Aura! Enemy slowed.','buff');
-    }
-  }
+  // (Future: on_battle_start triggers can be added to creature innate definitions)
   for(var i=0;i<startCards;i++) doDraw(null,true);
 
   startLoops();
@@ -2074,8 +2118,23 @@ function checkManabound(target, mana, effects){
       removeTagByLabel(target, fLabel);
       if(target === 'player'){
         gs.drawSpeedBonus = 1.0;
+        gs._frenzyDrawBonus = 0;
         addLog('⚡ Frenzy collapsed (manabound — mana depleted).', 'sys');
       }
+      if(target === 'enemy'){
+        var ce = gs.enemies[gs.enemyIdx];
+        if(ce) ce._frenzyAtkMult = 1;
+      }
+      purged = true;
+    }
+  }
+  // Thorns purge
+  for(var i = effects.length-1; i >= 0; i--){
+    if(effects[i].stat === 'thorns'){
+      var tLabel = effects[i].label || 'Thorns';
+      effects.splice(i, 1);
+      removeTagByLabel(target, tLabel);
+      if(target === 'player') addLog('⚡ Thorns purged (manabound — mana depleted).', 'sys');
       purged = true;
     }
   }
@@ -2083,30 +2142,18 @@ function checkManabound(target, mana, effects){
 
 function gameTick(){
   if(paused||!gs||!gs.running) return;
-  tickStatuses(100); tickDoTs(100); tickEnemyInnates(100);
+  // Sync old gs fields → actors (in case old code modified gs directly)
+  if(gs.actors && typeof syncGSToActors === 'function') syncGSToActors();
+  tickStatuses(100); tickDoTs(100);
   // Manabound purge — if mana hits 0, remove all manabound effects
   checkManabound('player', gs.mana, gs.statusEffects.player);
   checkManabound('enemy', gs.enemyMana, gs.statusEffects.enemy);
-  // Battle timer (used by Goblin War Cry rally check)
+  // Battle timer
   gs._battleTimeMs=(gs._battleTimeMs||0)+100;
-  // Bloat Shield — apply Poison to enemy while shield is active
-  if(gs._bloatShieldActive&&gs.playerShield>0){
-    var bsP=gs.statusEffects.enemy.find(function(s){return s.id==='bloat_poison';});
-    if(!bsP){gs.statusEffects.enemy.push({id:'bloat_poison',label:'Bloat Poison',cls:'debuff',stat:'dot',remaining:9999999,maxRemaining:9999999,dot:true,dpt:2,tickMs:1000,tickAcc:0,desc:'Bloat: 2/s while shield holds.'});}
-  } else {
-    gs.statusEffects.enemy=gs.statusEffects.enemy.filter(function(s){return s.id!=='bloat_poison';});
-  }
   updateTagTimers();
   // Mana regen — applies mana_regen debuffs from statuses (Lich, Watcher, etc.)
   var mRegenMult=1;
   getStatuses('player','mana_regen').forEach(function(s){ mRegenMult=Math.max(0.1,mRegenMult+s.val); });
-  // Golden Reserves — 80% faster mana regen
-  if(gs._goldenReserves) mRegenMult*=1.8;
-  // Cursed Conviction (Paladin) — +50% mana regen while Burn is active on enemy
-  if(gs.champId==='paladin'){
-    var hasBurn=gs.statusEffects.enemy.some(function(s){return s.id==='burn'&&s.dpt>0;});
-    if(hasBurn) mRegenMult*=1.5;
-  }
   // Relic: mana_coil
   if(gs._relicManaRegenMult&&gs._relicManaRegenMult!==1) mRegenMult*=gs._relicManaRegenMult;
   gs.manaAccum+=gs.manaRegen*mRegenMult/10;
@@ -2118,35 +2165,30 @@ function gameTick(){
     var eg=Math.floor(gs.enemyManaAccum);
     if(eg>=1){ gs.enemyManaAccum-=eg; gs.enemyMana=Math.min(gs.enemyMaxMana,gs.enemyMana+eg); }
   }
-  // Enemy innate cooldown tick
+  // Enemy innate cooldown tick (player cooldown)
   if(gs._innCooldown>0) gs._innCooldown=Math.max(0,gs._innCooldown-100);
-  // on_timer innate triggers
-  var _eInn=gs.enemies[gs.enemyIdx]&&gs.enemies[gs.enemyIdx].innate;
-  if(_eInn&&_eInn.trigger==='on_timer'&&gs._innCooldown===0){
-    enemyCheckActivateInnate(gs.enemies[gs.enemyIdx]);
-  }
 
-  // ── Player Creature passive innate ticks ──
-  // Spore Burst — apply Poison to enemy every 8s
-  if(gs._goldenReserves===undefined){ } // skip if not set
-  if(CREATURES[gs.champId]&&CREATURES[gs.champId].innate){
-    var pi=CREATURES[gs.champId].innate;
-    if(pi.id==='spore_burst'){
-      gs._sporeBurstAcc=(gs._sporeBurstAcc||0)+100;
-      if(gs._sporeBurstAcc>=8000){ gs._sporeBurstAcc=0;
-        applyDoT('player_vs_enemy','spore_dot',3,2000,6000,'Spore Burst: 3/2s');
-        applyStatus('enemy','debuff','Spore Burst',-0.03,'dot_dummy',6000,'Spore Burst: poisoned by spores.');
-        addLog('Spore Burst! Poison applied to enemy.','buff'); }
-    }
-    if(pi.id==='deep_roots'){
-      gs._deepRootsAcc=(gs._deepRootsAcc||0)+100;
-      if(gs._deepRootsAcc>=5000){ gs._deepRootsAcc=0;
-        if(gs.playerHp<gs.playerMaxHp){ gs.playerHp=Math.min(gs.playerMaxHp,gs.playerHp+2); spawnHealNum('player',2); flashHpBar('player','hp-flash-green'); }
+  // Enemy active innate AI — route through actorActivateInnate
+  if(gs.actors && gs.actors.enemy && typeof actorActivateInnate === 'function'){
+    var eActor = gs.actors.enemy;
+    if(typeof syncGSToActors === 'function') syncGSToActors();
+    if(eActor.creature && eActor.creature.innate && eActor.creature.innate.active){
+      // Get effect array from innate or INNATE_EFFECTS registry
+      var eInn = eActor.creature.innate;
+      var eEffArr = eInn.effect || (typeof INNATE_EFFECTS !== 'undefined' ? INNATE_EFFECTS[eInn.id] : null);
+      if(eEffArr && eEffArr.length && eActor.innateCooldown <= 0 && eActor.mana >= (eInn.cost||0)){
+        var shouldActivate = true;
+        if(eInn.id === 'absorb' && (!gs.lastCardPlayed || !CARDS[gs.lastCardPlayed])) shouldActivate = false;
+        if(eInn.id === 'quick_hands' && eActor.hand.length === 0) shouldActivate = false;
+        if(shouldActivate){
+          actorActivateInnate(eActor);
+          if(typeof syncActorsToGS === 'function') syncActorsToGS();
+          updateAll();
+        }
       }
     }
-    if(pi.id==='spreading_spores'){
-      // Tracked per-card-played via gs._spreadingSporesCount, applied in executeCard
-    }
+    // Tick enemy actor innate cooldown
+    if(eActor.innateCooldown > 0) eActor.innateCooldown = Math.max(0, eActor.innateCooldown - 100);
   }
   // Draw speed bonus timer
   if(gs.drawSpeedBonusTimer>0){
@@ -2183,11 +2225,11 @@ function scheduleEnemyAction(){
   var e=gs.enemies[gs.enemyIdx];
   var interval=e.atkInterval;
   getStatuses('enemy','atkspeed').forEach(function(s){ interval=Math.round(interval/(1+(s.val||0))); });
+  // Frenzy: reduce interval by frenzy multiplier
+  if(e._frenzyAtkMult && e._frenzyAtkMult > 1) interval = Math.round(interval / e._frenzyAtkMult);
   // slow_draw: add flat ms to draw interval (non-stacking, just one instance)
   var slowDraw=gs.statusEffects.enemy.find(function(s){return s.stat==='slow_draw';});
   if(slowDraw) interval+=slowDraw.val||600;
-  // Harbourmaster / Waterlogged: 50% slower attack but triple damage (handled in applyEnemyDmgMods)
-  if(e.innate&&(e.innate.id==='harbourmaster'||e.innate.id==='waterlogged')) interval=Math.round(interval*1.5);
   if(!interval||isNaN(interval)||interval<200) interval=200;
   // Animate draw bar draining over interval
   var elapsed=0;
@@ -2222,20 +2264,61 @@ function enemyDrawCard(e){
 }
 
 function doEnemyAction(e){
-  var handSize=e.handSize||1;
-  // Draw one card into hand; if at capacity, oldest auto-plays first (FIFO)
-  if(gs.enemyHand.length>=handSize){
-    var toPlay=gs.enemyHand.shift();
-    playEnemyCard(toPlay,e);
-  }
+  var handSize=e.handSize||HAND_SIZE;
+
+  // Sync before action
+  if(gs.actors && typeof syncGSToActors === 'function') syncGSToActors();
+
+  // Draw a card into hand
   var drawn=enemyDrawCard(e);
   if(drawn) gs.enemyHand.push(drawn);
-  // If hand was empty (first draw), play immediately
-  if(gs.enemyHand.length===1&&handSize===1){
-    playEnemyCard(gs.enemyHand.shift(),e);
+
+  // Play oldest card from hand
+  if(gs.enemyHand.length>0){
+    // Overflow: auto-play until at capacity
+    while(gs.enemyHand.length > handSize){
+      _enemyPlayCard(e);
+      if(!gs||!gs.running) return;
+    }
+    // Normal play: one card per tick
+    if(gs.enemyHand.length>0){
+      _enemyPlayCard(e);
+    }
   }
-  // Check if active innate can fire after this action
-  enemyCheckActivateInnate(e);
+  // Sync after action
+  if(gs.actors && typeof syncActorsToGS === 'function') syncActorsToGS();
+  updateAll(); checkEnd();
+}
+
+// Helper: play oldest card from enemy hand through new system
+function _enemyPlayCard(e){
+  if(!gs.enemyHand.length) return;
+  var toPlay = gs.enemyHand[0];
+  var cardDef = toPlay.id ? CARDS[toPlay.id] : null;
+
+  if(gs.actors && gs.actors.enemy && cardDef && cardDef.effects && cardDef.effects.length){
+    // New system
+    playCardForActor(gs.actors.enemy, 0);
+    if(gs.actors) gs.enemyMana = gs.actors.enemy.mana;
+  } else if(cardDef){
+    // Card exists but has no effects array — play as basic damage/defense
+    gs.enemyHand.shift();
+    var cardName = cardDef.name || toPlay.id;
+    addLog(e.name+' — '+cardName+'.', cardDef.type==='defense'?'buff':'debuff');
+    // Basic execution: just deal damage or apply shield based on type
+    if(cardDef.type === 'attack'){
+      var baseDmg = cardDef.dmg || 10;
+      dealDamageToPlayer(baseDmg);
+    } else if(cardDef.type === 'defense'){
+      var shieldAmt = cardDef.shield || 12;
+      gs.enemyShell = (gs.enemyShell||0) + shieldAmt;
+    }
+    if(!toPlay.ghost) gs.enemyDiscardPile.push(toPlay.id);
+  } else {
+    // Unknown card — just discard it
+    gs.enemyHand.shift();
+    addLog(e.name+' plays unknown card.','sys');
+  }
 }
 
 // ── Enemy Active Innate Trigger System ──────────────────────────
@@ -2243,366 +2326,9 @@ function doEnemyAction(e){
 // Creatures with innate.trigger:'hp_below' fire when HP <= threshold.
 // Creatures with innate.trigger:'on_timer' fire every innate.cooldown ms.
 // Passive innates (trigger:'passive' or no trigger) need no AI here.
-function enemyCheckActivateInnate(e){
-  if(!e||!e.innate) return;
-  var inn=e.innate;
-  // Support both old trigger format and new active/cost format
-  var cost=inn.cost||inn.manaCost||0;
-  var trigger=inn.trigger||(inn.active?'mana_threshold':'passive');
-  if(trigger==='passive') return;
-  // Cooldown guard
-  if(gs._innCooldown>0) return;
-
-  var shouldFire=false;
-  if(trigger==='mana_full'&&gs.enemyMana>=gs.enemyMaxMana&&gs.enemyMaxMana>0) shouldFire=true;
-  if(trigger==='mana_threshold'&&cost>0&&gs.enemyMana>=cost) shouldFire=true;
-  if(trigger==='hp_below'&&inn.triggerValue&&gs.enemyHp<=(gs.enemyMaxHp*(inn.triggerValue||0.5))) shouldFire=true;
-
-  if(!shouldFire) return;
-  if(cost>0&&gs.enemyMana<cost) return;
-  gs.enemyMana=Math.max(0,gs.enemyMana-cost);
-  // Set cooldown — support new cooldown field (ms) or old (ms)
-  gs._innCooldown=inn.cooldown||8000;
-  executeEnemyInnateEffect(inn,e);
-}
-
-function executeEnemyInnateEffect(inn,e){
-  addLog(e.name+' — '+inn.name+'.','innate');
-  var id=inn.id;
-
-  // ── New Sewers innates ──
-
-  // Spite Spines — Convert oldest hand card to Spite (Ethereal), play immediately
-  if(id==='spite_spines'){
-    var spite={id:'spite_ethereal',name:'Spite',effect:'spite',ghost:true,
-      value:Math.max(1,Math.floor((gs.enemyMaxHp-gs.enemyHp)/4)),
-      thornsVal:8, thornsDur:6000};
-    // Remove oldest card from hand if any, otherwise just play Spite
-    if(gs.enemyHand.length>0) gs.enemyHand.shift();
-    // Apply Spite effects
-    var spiteDmg=spite.value;
-    if(spiteDmg>0){ dealDamageToPlayer(spiteDmg); addLog(e.name+' — Spite! '+spiteDmg+' dmg.','innate'); }
-    applyStatus('player','buff','Thorns',spite.thornsVal,'thorns',spite.thornsDur,'Thorns: reflects '+spite.thornsVal+' dmg per hit.');
-    addLog(e.name+' — [Thorns] ('+spite.thornsVal+') applied to self.','buff');
-    return;
-  }
-
-  // Volatile Injection — apply 2 Volatile stacks to self (as enemy, targets player)
-  if(id==='volatile_injection'){
-    _applyVolatile(2);
-    addLog(e.name+' — Volatile Injection! +2 [Volatile].','innate');
-    return;
-  }
-
-  // Feast on Carrion — Shield from discard pile × 4, then Refresh
-  if(id==='feast_on_carrion'){
-    var discardCount=gs.enemyDiscardPile.length;
-    var shieldAmt=discardCount*4;
-    if(shieldAmt>0){
-      gs.enemyShell+=shieldAmt;
-      addTag('enemy','buff','Carrion Shield ('+shieldAmt+')',null,null,'Shield from '+discardCount+' discarded cards.');
-      setTimeout(function(){ if(!gs) return; gs.enemyShell=Math.max(0,gs.enemyShell-shieldAmt); }, 5000);
-      addLog(e.name+' — Feast! Shield +'+shieldAmt+' ('+discardCount+' cards).','buff');
-    }
-    // Refresh enemy deck
-    gs.enemyDrawPool=gs.enemyDrawPool.concat(gs.enemyDiscardPile.splice(0));
-    for(var ri=gs.enemyDrawPool.length-1;ri>0;ri--){
-      var rj=Math.floor(Math.random()*(ri+1));
-      var rt=gs.enemyDrawPool[ri]; gs.enemyDrawPool[ri]=gs.enemyDrawPool[rj]; gs.enemyDrawPool[rj]=rt;
-    }
-    addLog(e.name+' — [Refresh] deck.','innate');
-    return;
-  }
-
-  // Self-heal
-  if(inn.effect==='self_heal'){
-    var healAmt=Math.round((inn.value||0.2)*gs.enemyMaxHp);
-    gs.enemyHp=Math.min(gs.enemyMaxHp,gs.enemyHp+healAmt);
-    spawnFloatNum('enemy','+'+healAmt,false,'heal-num');
-    flashHpBar('enemy','hp-flash-green');
-    updateAll();
-  }
-  // Apply DoT to player
-  else if(inn.effect==='dot'){
-    applyDoT('player',id+'_dot',inn.dotDmg||3,inn.dotTick||2000,inn.dotDur||6000,inn.name+': '+(inn.dotDmg||3)+' dmg/'+(inn.dotTick||2000)/1000+'s');
-  }
-  // Speed burst for enemy
-  else if(inn.effect==='speed_burst'){
-    applyStatus('enemy','buff',inn.name,inn.value||0.3,'atkspeed',inn.dur||4000,inn.name+': +'+(Math.round((inn.value||0.3)*100))+'% atk speed for '+(inn.dur||4000)/1000+'s.');
-  }
-  // Damage buff
-  else if(inn.effect==='dmg_buff'){
-    applyStatus('enemy','buff',inn.name,inn.value||0.25,'dmg',inn.dur||5000,inn.name+': +'+(Math.round((inn.value||0.25)*100))+'% damage for '+(inn.dur||5000)/1000+'s.');
-  }
-  // Shield
-  else if(inn.effect==='shield'){
-    var shAmt=Math.round((inn.value||6)*(e.str||1));
-    gs.enemyShell=(gs.enemyShell||0)+shAmt;
-    addTag('enemy','shield',inn.name,null,null,'Absorbs '+shAmt+' dmg per hit.');
-    var dur=inn.dur||5000;
-    setTimeout(function(){ if(gs){ gs.enemyShell=Math.max(0,gs.enemyShell-shAmt); removeTagByLabel('enemy',inn.name); } },dur);
-  }
-  // Debuff player mana regen
-  else if(inn.effect==='mana_drain'){
-    applyStatus('player','debuff',inn.name,-(inn.value||0.3),'mana_regen',inn.dur||6000,inn.name+': mana regen -'+(Math.round((inn.value||0.3)*100))+'% for '+(inn.dur||6000)/1000+'s.');
-  }
-  // Direct damage burst
-  else if(inn.effect==='dmg_burst'){
-    var dmgAmt=Math.round((inn.value||8)*(e.dmgMult||1));
-    dealDamageToPlayer(applyEnemyDmgMods(dmgAmt,e));
-  }
-  // Dodge grant
-  else if(inn.effect==='dodge'){
-    gs.enemyDodge=true;
-    addTag('enemy','buff','Dodge',0,'',''+inn.name+': next hit evaded.');
-  }
-  updateAll(); checkEnd();
-}
-// ────────────────────────────────────────────────────────────────
-
-function playEnemyCard(card,e){
-  gs.lastEnemyCard=card;
-  gs.enemyCardCount++;
-
-  // Light Fingers — enemy drains 5 player mana on every card play
-  if(e.innate&&e.innate.id==='light_fingers'){
-    gs.mana=Math.max(0,gs.mana-5);
-    addLog(e.name+' — Light Fingers: -5 mana.','mana');
-    updateAll();
-  }
-  // Waterlogged — enemy's Sorcery[15]: Apply Slow fires if enemy has ≥15 mana
-  if(e.innate&&e.innate.id==='waterlogged'){
-    if(gs.enemyMana>=15){
-      gs.enemyMana-=15;
-      // Apply Slow to player draw interval
-      var existingSlow=gs.statusEffects.player.find(function(s){return s.stat==='slow_draw';});
-      if(existingSlow){ existingSlow.remaining=4000; }
-      else { gs.statusEffects.player.push({id:'slow_player',label:'Slow',cls:'debuff',stat:'slow_draw',val:600,remaining:4000,maxRemaining:4000,desc:'Slow: draw interval +600ms.'}); addTag('player','debuff','Slow',0,'slow_draw','Slow: draw interval +600ms.'); }
-      addLog(e.name+' — Waterlogged: [Slow] applied to you.','debuff');
-    }
-  }
-
-  var mult=1;
-  if(e.innate&&(e.innate.id==='ambush'||e.innate.id==='poison_ambush'||e.innate.id==='silent_strike')&&gs.enemyCardCount===1){
-    mult=2; addLog(e.name+' — Ambush. Double damage.','innate');
-    if(e.innate.id==='poison_ambush'){
-      var pa=gs.statusEffects.player.find(function(s){return s.id==='poison';});
-      if(pa){pa.dpt+=8;pa.remaining=8000;}
-      else{gs.statusEffects.player.push({id:'poison',label:'Poison (8/2s)',cls:'debuff',stat:'dot',remaining:8000,maxRemaining:8000,dot:true,dpt:8,tickMs:2000,tickAcc:0,desc:'Poison Ambush: 8/2s.'});addTag('player','debuff','Poison (8/2s)',0,'dot','Poison Ambush!');}
-      addLog('Poison Ambush — +8 Poison.','innate');
-    }
-    if(e.innate.id==='silent_strike'){
-      gs.enemyDodge=true;
-      addTag('enemy','buff','Dodge',0,'','Silent Strike: dodges after the first hit.');
-      addLog('Silent Strike — '+e.name+' gains [Dodge].','innate');
-    }
-  }
-  if(e.innate&&e.innate.id==='swoop'&&gs.enemyCardCount%4===0){ mult*=2; addLog(e.name+' — Swoop. ×2 damage.','innate'); }
-  if(e.innate&&e.innate.id==='slither'&&gs.enemyCardCount%3===0){
-    applyDoT('player','venom_slither',2,2000,6000,'Venom (Slither): 2 dmg/2s');
-    addLog(e.name+' — Slither. Venom 2/2s.','innate');
-  }
-
-  var logCls=card.effect==='self_buff'||card.effect==='self_heal'||card.effect==='self_shell'?'buff':'debuff';
-  addLog(e.name+' — '+card.name+'.', logCls);
-  executeEnemyCard(card,e,mult);
-  gs.enemyDiscardPile.push(card);
-  updateAll(); checkEnd();
-}
-
-function executeEnemyCard(card,e,mult){
-  mult=mult||1;
-  var levelMult=e.dmgMult||1; // area-level damage scaling
-
-  // New format: card ID string resolved through CARDS + EFFECT_TYPES
-  if(card._new&&card.id){
-    var cDef=CARDS[card.id];
-    if(cDef&&cDef.effects&&cDef.effects.length){
-      // Build enemy-perspective pdmg (applies level scaling)
-      var ePdmg=function(base){ return Math.max(1,Math.round(base*mult*levelMult)); };
-      var eStat=e||{};
-      // Filthy Persistence: extend debuff durations by 50%
-      var _debuffMult=(e.innate&&e.innate.id==='filthy_persistence')?1.5:1;
-      executeEnemyEffects(cDef.effects, ePdmg, cDef.name, e, _debuffMult);
-    }
-    return;
-  }
-
-  // Lurk: first card double damage
-  if(e.innate&&e.innate.id==='lurk'&&gs.enemyCardCount===1) mult*=2;
-  // Infectious: extend DoT durations by 40%
-  var dotDurMult=(e.innate&&e.innate.id==='infectious')?1.4:1;
-  var val=Math.round((card.value||0)*mult*levelMult);
-
-  if(card.effect==='dmg'){
-    dealDamageToPlayer(applyEnemyDmgMods(Math.max(1,val),e));
-  } else if(card.effect==='dmg_and_debuff'){
-    dealDamageToPlayer(applyEnemyDmgMods(Math.max(1,val),e));
-    applyStatus('player','debuff',card.status||'debuffed',card.debuffVal,
-      (card.status&&(card.status.indexOf('speed')!==-1||card.status==='pinched'||card.status==='constricted'))?'atkspeed':'dmg',
-      card.debuffDur,'Enemy debuff: '+(Math.abs(card.debuffVal||0)*100|0)+'% for '+(card.debuffDur/1000)+'s');
-  } else if(card.effect==='dmg_and_dot'){
-    dealDamageToPlayer(applyEnemyDmgMods(Math.max(1,val),e));
-    var dotDmg=Math.round((card.dotDmg||1)*levelMult);
-    applyDoT('player',card.status||'dot',dotDmg,card.dotTick,Math.round(card.dotDur*dotDurMult),card.name+': '+dotDmg+' dmg/'+card.dotTick/1000+'s');
-  } else if(card.effect==='dot'){
-    var dotDmg2=Math.round((card.dotDmg||1)*levelMult);
-    applyDoT('player',card.status||'dot',dotDmg2,card.dotTick,Math.round(card.dotDur*dotDurMult),card.name+': '+dotDmg2+' dmg/'+card.dotTick/1000+'s');
-  } else if(card.effect==='self_buff'){
-    if(card.status==='haste_rat'||card.status==='airborne'||card.status==='fleeing'||card.status==='roach_evade'||card.status==='wisp_evade'){
-      applyStatus('enemy','buff',card.status,card.value||0,'atkspeed',card.dur||2000,'Attack speed +'+(Math.round((card.value||0)*100))+'%');
-      // Apply damage reduction if card defines dmgMult (e.g. fleeing goblin hits softer)
-      if(card.dmgMult&&card.dmgMult<1){
-        applyStatus('enemy','debuff','fleeing_dmg',card.dmgMult,'fleeing_dmg',card.dur||2000,'Deals '+(Math.round(card.dmgMult*100))+'% damage while fleeing.');
-      }
-    } else if(card.status==='shell'||card.status==='grub_shield'||card.status==='amalgam_shield'){
-      var shieldAmt=Math.round((card.value||2)*levelMult);
-      gs.enemyShell=(gs.enemyShell||0)+shieldAmt;
-      var sLabel=card.status==='grub_shield'?'Bloat Shield':card.status==='amalgam_shield'?'Absorb':'Shell';
-      addTag('enemy','shield',sLabel,null,null,'Absorbs '+shieldAmt+' dmg per hit');
-      setTimeout(function(){ gs.enemyShell=0; removeTagByLabel('enemy',sLabel); },card.dur||4000);
-    } else if(card.status==='fortified'){
-      var fAmt=Math.round((card.value||5)*levelMult);
-      gs.enemyShell=(gs.enemyShell||0)+fAmt;
-      addTag('enemy','shield','Fortified',null,null,'Absorbs '+fAmt+' dmg per hit');
-      setTimeout(function(){ gs.enemyShell=0; removeTagByLabel('enemy','Fortified'); },card.dur);
-    } else {
-      applyStatus('enemy','buff',card.status,card.value||0,'dmg',card.dur||4000,'Damage +'+(Math.round((card.value||0)*100))+'%');
-    }
-  } else if(card.effect==='self_heal'){
-    var healAmt=Math.round((card.value||3)*levelMult);
-    gs.enemyHp=Math.min(gs.enemyMaxHp,gs.enemyHp+healAmt);
-    addLog(e.name+' heals '+healAmt+' HP!','heal');
-    updateAll();
-  } else if(card.effect==='stun_player'){
-    var stunMs=card.value||600;
-    gs.drawSpeedBonus=Math.max(0.2,gs.drawSpeedBonus*0.5);
-    gs.drawSpeedBonusTimer=Math.max(gs.drawSpeedBonusTimer,stunMs);
-    applyStatus('player','debuff','Stunned',-0.5,'drawspeed',stunMs,'Briefly stunned! Draw speed halved.');
-    addLog('You are stunned for '+(stunMs/1000).toFixed(1)+'s!','debuff');
-  } else if(card.effect==='self_shell'){
-    // Bark Armour / self-block
-    var shAmt=Math.round((card.value||8)*levelMult);
-    gs.enemyShell=(gs.enemyShell||0)+shAmt;
-    addTag('enemy','shield','Bark Armour',null,null,'Absorbs '+shAmt+' dmg per hit');
-    setTimeout(function(){ gs.enemyShell=Math.max(0,gs.enemyShell-shAmt); removeTagByLabel('enemy','Bark Armour'); },card.dur||4000);
-    addLog(e.name+' hardens its bark, blocking '+shAmt+' damage!','buff');
-  } else if(card.effect==='root_player'){
-    // Night Entling root — freeze player draws
-    var rootMs=card.value||2500;
-    gs.playerRooted=true;
-    addTag('player','debuff','Rooted',null,null,'Cannot draw for '+(rootMs/1000).toFixed(1)+'s!');
-    addLog('Roots erupt! You cannot draw for '+(rootMs/1000).toFixed(1)+'s!','debuff');
-    spawnFloatNum('player','🌿ROOTED',false,'block-num');
-    setTimeout(function(){
-      if(gs){ gs.playerRooted=false; removeTagByLabel('player','Rooted'); }
-    },rootMs);
-  } else if(card.effect==='drain_mana'){
-    // Foghast drain
-    var drainAmt=Math.round((card.drainMana||15)*levelMult);
-    var dmgAmt=Math.round((card.value||8)*levelMult);
-    if(dmgAmt>0) dealDamageToPlayer(applyEnemyDmgMods(Math.max(1,dmgAmt),e));
-    if(gs.mana>=drainAmt){ gs.mana-=drainAmt; addLog(e.name+' drains '+drainAmt+' mana!','debuff'); spawnFloatNum('player','-'+drainAmt+'✦',false,'resist-num'); }
-    else { var drained=gs.mana; gs.mana=0; addLog(e.name+' drains all mana ('+drained+')!','debuff'); }
-    updateAll();
-  } else if(card.effect==='drain_mana_only'){
-    var dmOnly=Math.round((card.value||20)*levelMult);
-    if(gs.mana>=dmOnly){ gs.mana-=dmOnly; addLog(e.name+' chills your mind, draining '+dmOnly+' mana!','debuff'); }
-    else { gs.mana=0; addLog(e.name+' drains all mana!','debuff'); }
-    spawnFloatNum('player','-'+dmOnly+'✦',false,'resist-num'); updateAll();
-  } else if(card.effect==='slow_draw'){
-    // Draw speed debuff — add to player's draw timer
-    var slMs=card.value||1000;
-    var slDur=card.dur||4000;
-    gs.playerDrawDelay=(gs.playerDrawDelay||0)+slMs;
-    applyStatus('player','debuff','Slowed',0,'drawspeed',slDur,'Draw speed reduced by '+(slMs/1000)+'s for '+(slDur/1000)+'s');
-    addLog('Your draws are slowed for '+(slDur/1000)+'s!','debuff');
-    spawnFloatNum('player','🕸SLOW',false,'block-num');
-    setTimeout(function(){ if(gs) gs.playerDrawDelay=Math.max(0,(gs.playerDrawDelay||0)-slMs); },slDur);
-  } else if(card.effect==='discard'){
-    // Scatter a card from player's hand
-    if(gs.hand.length>0){
-      var discIdx=Math.floor(Math.random()*gs.hand.length);
-      var discCard=gs.hand.splice(discIdx,1)[0];
-      if(!discCard.ghost) gs.discardPile.push(discCard.id);
-      addLog(e.name+' scatters '+(CARDS[discCard.id]?CARDS[discCard.id].name:discCard.id)+' from your hand!','debuff');
-      spawnFloatNum('player','✦SCATTER',false,'dodge-num');
-      renderHand(); renderPiles();
-    }
-  } else if(card.effect==='dmg_multi'){
-    // Multi-hit
-    var hits=card.hits||3;
-    var hitVal=Math.max(1,Math.round((card.value||4)*levelMult));
-    addLog(e.name+' attacks '+hits+'×!','enemy');
-    for(var h=0;h<hits;h++){
-      dealDamageToPlayer(applyEnemyDmgMods(hitVal,e));
-    }
-  } else if(card.effect==='dmg_dot'){
-    // Damage + DoT (spider venom)
-    dealDamageToPlayer(applyEnemyDmgMods(Math.max(1,val),e));
-    var dotDmgV=Math.round((card.dotDmg||3)*levelMult);
-    applyDoT('player',card.status||'venom',dotDmgV,card.dotTick||2000,Math.round((card.dotDur||6000)*dotDurMult),card.name+': '+dotDmgV+' dmg every '+(card.dotTick/1000)+'s');
-  } else if(card.effect==='haste'){
-    // Speed buff for enemy
-    applyStatus('enemy','buff','Haste',card.value||0.4,'atkspeed',card.dur||3000,'Attack speed +'+(Math.round((card.value||0.4)*100))+'%');
-  } else if(card.effect==='self_dodge'){
-    // Enemy self-dodge
-    gs.enemyDodge=true;
-    addTag('enemy','buff','Dodge',null,null,'Next hit will be dodged');
-    addLog(e.name+' prepares to dodge!','buff');
-  } else if(card.effect==='mimic_last'){
-    // Wax Effigy: mirror the last card the player played
-    var mirrorId=gs.lastPlayerCard||null;
-    var dmgTable={
-      strike:18, brace:0, void_bolt:12+gs.stats.wis, drifting_comet:16,
-      nova_burst:20, stellar_shards:21, retribution:22, holy_shield:0,
-      consecrate:12, quick_slash:10+gs.stats.agi, backstab:35, poison_dart:0,
-      smoke_bomb:0, shadow_step:0, death_mark:0,
-    };
-    var scale=card.value||0.7;
-    var baseDmg=mirrorId?(dmgTable[mirrorId]||10):8;
-    var mimicDmg=Math.max(1,Math.round(baseDmg*scale*mult));
-    var mirrorName=mirrorId&&CARDS[mirrorId]?CARDS[mirrorId].name:'Unknown Move';
-    if(mirrorId&&baseDmg>0){
-      addLog(e.name+' mimics your '+mirrorName+'! ('+mimicDmg+' dmg)','innate');
-      dealDamageToPlayer(applyEnemyDmgMods(mimicDmg,e));
-    } else if(mirrorId){
-      addLog(e.name+' mimics '+mirrorName+' — no effect.','innate');
-    } else {
-      // Nothing played yet — basic wax strike
-      var fallback=Math.max(1,Math.round(6*mult));
-      addLog(e.name+' finds nothing to mimic — basic strike! ('+fallback+' dmg)','enemy');
-      dealDamageToPlayer(applyEnemyDmgMods(fallback,e));
-    }
-  } else if(card.effect==='force_autoplay'){
-    forceAutoplay();
-  }
-}
-
-
-function applyEnemyDmgMods(dmg,e){
-  // Enemy buffs that increase their own attack
-  getStatuses('enemy','dmg').forEach(function(s){ if(s.val>0) dmg=Math.round(dmg*(1+s.val)); });
-  // Enemy debuffs that reduce their own attack (Cursed, Hex, etc.) — stat:'dmg' with negative val
-  getStatuses('enemy','dmg').forEach(function(s){ if(s.val<0) dmg=Math.round(dmg*(1+s.val)); });
-  // Player debuffs that reduce incoming damage (player shields, resistances)
-  getStatuses('player','dmg').forEach(function(s){ if(s.val<0) dmg=Math.round(dmg*(1+s.val)); });
-  if(e.innate&&e.innate.id==='battle_rage'&&gs.enemyHp<=(gs.enemyMaxHp/3)) dmg*=2;
-  if(e.innate&&e.innate.id==='ancient_fury'&&gs.enemyHp<=(gs.enemyMaxHp/4)) dmg*=2;
-  if(e.innate&&(e.innate.id==='harbourmaster'||e.innate.id==='waterlogged')) dmg=Math.round(dmg*3); // slow but devastating
-  if(getStatus('enemy','fleeing_dmg')) dmg=Math.round(dmg*0.8);
-  if(e.innate&&e.innate.id==='filth_armour') dmg=Math.max(1,dmg-1);
-  if(e.innate&&e.innate.id==='adaptive'&&gs.adaptiveStacks>0){
-    var resist=1-(gs.adaptiveStacks*0.08);
-    dmg=Math.max(1,Math.round(dmg*resist));
-  }
-  return Math.max(1,Math.round(dmg));
-}
-
 function applyPlayerDmgMods(dmg,e){
   // Lurk: first enemy card deals double damage
   if(e.innate&&e.innate.id==='lurk'&&gs.enemyCardCount===1) dmg*=2;
-  // Ambush handled in playEnemyCard
   return Math.max(1,Math.round(dmg));
 }
 
@@ -2691,7 +2417,7 @@ function spawnCardFloat(cardId, type){
     var discEl = document.getElementById('disc-cnt');
     if(discEl){
       var discRect = discEl.getBoundingClientRect();
-      _spawnGhost(c.icon, startX, startY, discRect.left + discRect.width/2, discRect.top + discRect.height/2, 'discard');
+      _spawnGhost(c.icon, startX, startY, discRect.left + discRect.width/2, discRect.top + discRect.height/2, 'discard', c.name);
     }
     return;
   }
@@ -2705,39 +2431,39 @@ function spawnCardFloat(cardId, type){
 
   if(target === 'both' && enemyRect && playerRect){
     // Shatter into two fragments
-    var ghost = _createGhostEl(c.icon, startX, startY);
+    var ghost = _createGhostEl(c.icon, startX, startY, c.name);
     ghost.classList.add('ghost-shatter');
     document.body.appendChild(ghost);
     // After brief hold, spawn two fragments
     setTimeout(function(){
       if(ghost.parentNode) ghost.parentNode.removeChild(ghost);
-      _spawnGhost(c.icon, startX, startY, enemyRect.left + enemyRect.width/2, enemyRect.top + enemyRect.height/2, 'attack');
-      _spawnGhost(c.icon, startX, startY, playerRect.left + playerRect.width/2, playerRect.top + playerRect.height/2, 'buff');
+      _spawnGhost(c.icon, startX, startY, enemyRect.left + enemyRect.width/2, enemyRect.top + enemyRect.height/2, 'attack', c.name);
+      _spawnGhost(c.icon, startX, startY, playerRect.left + playerRect.width/2, playerRect.top + playerRect.height/2, 'buff', c.name);
     }, 120);
   } else if(target === 'player' && playerRect){
-    _spawnGhost(c.icon, startX, startY, playerRect.left + playerRect.width/2, playerRect.top + playerRect.height/2, 'buff');
+    _spawnGhost(c.icon, startX, startY, playerRect.left + playerRect.width/2, playerRect.top + playerRect.height/2, 'buff', c.name);
   } else if(target === 'neutral'){
     // Neutral card (Dead Weight etc.) — fizzle in place
-    var ghost = _createGhostEl(c.icon, startX, startY);
+    var ghost = _createGhostEl(c.icon, startX, startY, c.name);
     ghost.classList.add('card-ghost-neutral');
     document.body.appendChild(ghost);
     setTimeout(function(){ if(ghost.parentNode) ghost.parentNode.removeChild(ghost); }, 500);
   } else if(enemyRect){
-    _spawnGhost(c.icon, startX, startY, enemyRect.left + enemyRect.width/2, enemyRect.top + enemyRect.height/2, 'attack');
+    _spawnGhost(c.icon, startX, startY, enemyRect.left + enemyRect.width/2, enemyRect.top + enemyRect.height/2, 'attack', c.name);
   }
 }
 
-function _createGhostEl(icon, x, y){
+function _createGhostEl(icon, x, y, name){
   var el = document.createElement('div');
   el.className = 'card-ghost';
-  el.textContent = icon;
+  el.innerHTML = '<div class="cg-icon">'+(icon||'?')+'</div>'+(name?'<div class="cg-name">'+name+'</div>':'');
   el.style.left = x + 'px';
   el.style.top = y + 'px';
   return el;
 }
 
-function _spawnGhost(icon, fromX, fromY, toX, toY, cls){
-  var el = _createGhostEl(icon, fromX, fromY);
+function _spawnGhost(icon, fromX, fromY, toX, toY, cls, name){
+  var el = _createGhostEl(icon, fromX, fromY, name);
   el.classList.add('card-ghost-' + cls);
   el.style.setProperty('--dx', (toX - fromX) + 'px');
   el.style.setProperty('--dy', (toY - fromY) + 'px');
@@ -2762,13 +2488,12 @@ function spawnEchoFloat(cardId){
 
 // Remove all Conjured copies from hand, deck (drawPool), and discard.
 // gs.conjuredCount tracks total conjured copies in existence.
-// We remove copies by scanning all zones for the conjured card ID and
-// removing up to conjuredCount instances (originals are safe because
-// the base deck count is subtracted).
+// gs._conjuredCardId tracks which card ID is conjured.
 function purgeAllConjured(){
   if(!gs || !gs.conjuredCount || gs.conjuredCount <= 0) return 0;
   var toRemove = gs.conjuredCount;
   var purged = 0;
+  var targetId = gs._conjuredCardId;
 
   // Remove from hand (hand items have _conjured flag)
   for(var i = gs.hand.length - 1; i >= 0 && toRemove > 0; i--){
@@ -2779,23 +2504,26 @@ function purgeAllConjured(){
     }
   }
 
-  // Remove from discard pile (scan backwards, remove newest first)
-  for(var i = gs.discardPile.length - 1; i >= 0 && toRemove > 0; i--){
-    if(gs.discardPile[i] === 'druid_star_shard'){
-      gs.discardPile.splice(i, 1);
-      toRemove--; purged++;
+  // Remove from discard pile (scan for conjured card ID)
+  if(targetId){
+    for(var i = gs.discardPile.length - 1; i >= 0 && toRemove > 0; i--){
+      if(gs.discardPile[i] === targetId){
+        gs.discardPile.splice(i, 1);
+        toRemove--; purged++;
+      }
     }
-  }
 
-  // Remove from draw pool
-  for(var i = gs.drawPool.length - 1; i >= 0 && toRemove > 0; i--){
-    if(gs.drawPool[i] === 'druid_star_shard'){
-      gs.drawPool.splice(i, 1);
-      toRemove--; purged++;
+    // Remove from draw pool
+    for(var i = gs.drawPool.length - 1; i >= 0 && toRemove > 0; i--){
+      if(gs.drawPool[i] === targetId){
+        gs.drawPool.splice(i, 1);
+        toRemove--; purged++;
+      }
     }
   }
 
   gs.conjuredCount = 0;
+  gs._conjuredCardId = null;
   return purged;
 }
 
@@ -2812,9 +2540,8 @@ function spawnDrawAnim(cardId, origin){
   var srcRect = src.getBoundingClientRect();
   var destRect = dest.getBoundingClientRect();
   var el = document.createElement('div');
-  el.className = 'draw-anim';
-  el.textContent = c.icon;
-  // Start at source position
+  el.className = 'draw-arc';
+  el.innerHTML = '<div class="cg-icon">'+(c.icon||'?')+'</div><div class="cg-name">'+(c.name||cardId)+'</div>';
   var startX = srcRect.left + srcRect.width/2;
   var startY = srcRect.top + srcRect.height/2;
   var endX = destRect.left + destRect.width/2;
@@ -2824,497 +2551,64 @@ function spawnDrawAnim(cardId, origin){
   el.style.setProperty('--dx', (endX - startX) + 'px');
   el.style.setProperty('--dy', (endY - startY) + 'px');
   document.body.appendChild(el);
-  setTimeout(function(){ if(el.parentNode) el.parentNode.removeChild(el); }, 350);
+  setTimeout(function(){ if(el.parentNode) el.parentNode.removeChild(el); }, 450);
 }
 
+
+// Thin wrappers — route through dealDamage when actors exist
 function dealDamageToPlayer(dmg){
-  // Dodge — full evade
-  if(gs.playerDodge){
-    gs.playerDodge=false;
-    removeTagByLabel('player','Dodge');
-    addLog('Dodged! No damage taken.','buff');
-    spawnFloatNum('player','DODGE',false,'dodge-num');
-    shakeIcon('player',false);
-    return;
-  }
-  // Shield absorption
-  var hadShield = gs.playerShield > 0;
-  if(gs.playerShield>0){
-    var b=Math.min(gs.playerShield,dmg); gs.playerShield-=b; dmg-=b;
-    if(b>0){
-      addLog('Shield absorbs '+b+'!','buff');
-      spawnFloatNum('player','🛡 '+b,false,'block-num');
-      flashHpBar('player','hp-flash-blue');
+  if(gs.actors && gs.actors.player && typeof dealDamage === 'function'){
+    dealDamage(gs.actors.player, dmg);
+  } else {
+    dmg = Math.max(0, dmg);
+    gs.playerHp = Math.max(0, gs.playerHp - dmg);
+    if(dmg > 0){
+      spawnFloatNum('player', '-'+dmg, dmg>=50);
+      shakeIcon('player', false); flashHpBar('player', 'hp-flash-red');
+      addLog('You take '+dmg+' dmg! ('+gs.playerHp+'/'+gs.playerMaxHp+' HP)', 'dmg');
     }
-    if(gs.playerShield<=0){
-      gs.playerShield=0; removeTagsByClass('player','shield');
-      // Remove shield status effect
-      for(var si=gs.statusEffects.player.length-1;si>=0;si--){
-        if(gs.statusEffects.player[si].id==='shield'){
-          if(typeof gs.statusEffects.player[si]._onExpiry==='function') gs.statusEffects.player[si]._onExpiry();
-          gs.statusEffects.player.splice(si,1);
-        }
-      }
-      if(gs.playerShieldMana>0){ gs.mana=Math.min(gs.maxMana,gs.mana+gs.playerShieldMana); addLog('Shield converted to +'+gs.playerShieldMana+' mana.','mana'); gs.playerShieldMana=0; }
-    }
-  }
-  // Cursed Retribution — Paladin innate: apply Burn to enemy on any hit while shield was active
-  if(hadShield){
-    var crInnate=CREATURES[gs.champId]&&CREATURES[gs.champId].innate;
-    if(crInnate&&crInnate.id==='cursed_retribution'){
-      var crWis=gs.stats.wis||14;
-      var crBurn=gs.statusEffects.enemy.find(function(s){return s.id==='burn';});
-      if(crBurn){
-        crBurn.remaining=9000; crBurn.maxRemaining=9000; // refresh duration
-      } else {
-        gs.statusEffects.enemy.push({id:'burn',label:'Burn ('+crWis+'/s)',cls:'debuff',stat:'dot',
-          remaining:9000,maxRemaining:9000,dot:true,dpt:crWis,tickMs:1000,tickAcc:0,
-          desc:'Cursed Retribution: '+crWis+' dmg/s. Bypasses Shield.'});
-        addTag('enemy','debuff','Burn ('+crWis+'/s)',0,'dot','Cursed Retribution: '+crWis+' dmg/s.');
-      }
-      spawnFloatNum('enemy','🔥 CURSED',false,'crit-num');
-      addLog('⚡ Cursed Retribution! Burn applied ('+crWis+'/s).','innate');
-    }
-  }
-  dmg=Math.max(0,dmg);
-  // Tough Hide — first hit each battle deals 50% less damage
-  if(gs._toughHideActive&&dmg>0){ dmg=Math.max(1,Math.round(dmg*0.5)); gs._toughHideActive=false; addLog('Tough Hide absorbs half the blow!','buff'); }
-  // Toxic Body — retaliate with Poison on hit
-  if(dmg>0){
-    var _tbInnate=CREATURES[gs.champId]&&CREATURES[gs.champId].innate;
-    if(_tbInnate&&_tbInnate.id==='toxic_body'){
-      var tbPoison=gs.statusEffects.enemy.find(function(s){return s.id==='poison';});
-      if(tbPoison){ tbPoison.dpt+=2; tbPoison.remaining=8000; }
-      else { gs.statusEffects.enemy.push({id:'poison',label:'Poison (2/2s)',cls:'debuff',stat:'dot',remaining:8000,maxRemaining:8000,dot:true,dpt:2,tickMs:2000,tickAcc:0,desc:'Toxic Body: 2/2s.'}); addTag('enemy','debuff','Poison (2/2s)',0,'dot','Toxic Body: enemy poisoned.'); }
-    }
-  }
-  // Resilience shrine blessing
-  if(gs._shrineResilience&&dmg>0) dmg=Math.max(1,Math.round(dmg*(1-gs._shrineResilience)));
-  gs.playerHp=Math.max(0,gs.playerHp-dmg);
-  // Relic: thorn_band — reflect damage on every hit
-  if(dmg>0&&gs._relicThorns){
-    var thornDmg=gs._relicThorns;
-    gs.enemyHp=Math.max(0,gs.enemyHp-thornDmg);
-    spawnFloatNum('enemy','-'+thornDmg,false,'crit-num');
-    addLog('Thorn Band reflects '+thornDmg+' dmg.','buff');
     updateAll(); checkEnd();
   }
-  // Second Wind — survive killing blow
-  if(gs.playerHp<=0&&gs._shrineSecondWind&&!gs._shrineSecondWindUsed){
-    gs.playerHp=gs._shrineSecondWind;
-    gs._shrineSecondWindUsed=true;
-    addLog('✦ Second Wind! Survived at '+gs._shrineSecondWind+' HP!','buff');
-    spawnFloatNum('player','SECOND WIND!',true,'crit-num');
-    flashHpBar('player','hp-flash-green');
-  }
-  if(dmg>0){
-    gs._damageTaken=(gs._damageTaken||0)+dmg; // track for no-damage quests
-    addLog('You take '+dmg+' dmg! ('+gs.playerHp+'/'+gs.playerMaxHp+' HP)','dmg');
-    playDamagePlayerSfx();
-    shakeIcon('player',false);
-    flashHpBar('player','hp-flash-red');
-    spawnFloatNum('player','-'+dmg, dmg>=50);
-  } else if(dmg===0&&gs.playerShield===0){
-    // Fully blocked
-    spawnFloatNum('player','BLOCKED',false,'block-num');
+}
+
+function dealDamageToEnemy(dmg){
+  if(gs.actors && gs.actors.enemy && typeof dealDamage === 'function'){
+    dealDamage(gs.actors.enemy, dmg);
+  } else {
+    dmg = Math.max(0, dmg);
+    gs.enemyHp = Math.max(0, gs.enemyHp - dmg);
+    if(dmg > 0){
+      spawnFloatNum('enemy', '-'+dmg, dmg>=50);
+      shakeIcon('enemy', false); flashHpBar('enemy', 'hp-flash-red');
+      addLog('Enemy takes '+dmg+' dmg! ('+gs.enemyHp+'/'+gs.enemyMaxHp+' HP)', 'dmg');
+    }
+    updateAll(); checkEnd();
   }
 }
 
-function dealDamageToEnemy(dmg,bypassHardened){
-  var e=gs.enemies[gs.enemyIdx];
-  // Skitter (Sewer Roach): dodge every 8s via skitter_dodge status
-  if(e.innate&&e.innate.id==='skitter'&&getStatus('enemy','skitter_dodge')){
-    var sk=gs.statusEffects.enemy.findIndex(function(s){return s.stat==='skitter_dodge';});
-    if(sk!==-1){ gs.statusEffects.enemy.splice(sk,1); removeTagByLabel('enemy','Dodge'); }
-    addLog('Roach skitters — attack evaded!','buff');
-    spawnFloatNum('enemy','DODGE',false,'dodge-num');
-    return;
-  }
-  // Enemy dodge (Mistraven Mist Veil, Masked Owl Silent Glide)
-  if(gs.enemyDodge){
-    gs.enemyDodge=false;
-    removeTagByLabel('enemy','Dodge');
-    addLog(e.name+' dodges the attack!','buff');
-    spawnFloatNum('enemy','DODGE',false,'dodge-num');
-    if(e.innate&&e.innate.id==='mist_veil') gs.enemyDodgeProcReady=true;
-    return;
-  }
-  // Silktrapper: first hit of 10+ triggers permanent draw delay
-  if(e.innate&&e.innate.id==='silktrapper'&&!gs._silktrapFired&&dmg>=10){
-    gs._silktrapFired=true;
-    gs.playerDrawDelay=(gs.playerDrawDelay||0)+800;
-    addTag('player','debuff','Webbed',null,null,'Silktrapper: draw interval +0.8s permanently for this fight');
-    addLog('The Orbweaver\'s silk traps you! Draw interval +0.8s!','debuff');
-    spawnFloatNum('player','🕸WEBBED',false,'block-num');
-  }
-  var origDmg=dmg;
-  if(!bypassHardened&&gs.enemyHardened>0){
-    var h=Math.min(gs.enemyHardened,dmg); dmg-=h;
-    if(dmg<=0){
-      addLog('Hardened absorbs all damage!','buff');
-      spawnFloatNum('enemy','🪨 BLOCKED',false,'block-num');
-      return;
-    }
-    addLog('Hardened absorbs '+h+'.','buff');
-    spawnFloatNum('enemy','🪨 -'+h,false,'block-num');
-  }
-  if(gs.enemyShell>0){
-    var s2=Math.min(gs.enemyShell,dmg); dmg-=s2;
-    if(s2>0){
-      addLog('Shell blocks '+s2+'.','buff');
-      spawnFloatNum('enemy','🛡 '+s2,false,'block-num');
-    }
-  }
-  // Heat Armour (Dune Crawler): -1 flat damage per hit
-  if(e.innate&&e.innate.id==='heat_armour'){ dmg=Math.max(1,dmg-1); }
-  if(e.innate&&e.innate.id==='ethereal'){ dmg=Math.max(1,dmg-1); }
-  if(e.innate&&e.innate.id==='stone_skin'){ dmg=Math.max(1,dmg-3); }
-  if(e.innate&&e.innate.id==='vigilance'){ dmg=Math.max(1,dmg-5); }
-  // Adaptive resistance
-  if(e.innate&&e.innate.id==='adaptive'&&gs.adaptiveStacks>0){
-    var resistedAmt=Math.round(origDmg*gs.adaptiveStacks*0.08);
-    if(resistedAmt>0) spawnFloatNum('enemy','◈ -'+resistedAmt,false,'resist-num');
-  }
-  getStatuses('enemy','death_mark').forEach(function(s){ dmg=Math.round(dmg*1.5); });
-  dmg=Math.max(0,dmg);
-  gs.enemyHp=Math.max(0,gs.enemyHp-dmg);
-  // Thorns reflect — if player has Thorns buff, reflect damage back
-  if(dmg>0) _checkThornsReflect();
-  // Track damage for Wax Oasis timed fight
-  if(e.innate&&e.innate.id==='wax_timed'&&dmg>0){
-    gs.waxDamageDealt=(gs.waxDamageDealt||0)+dmg;
-  }
-  if(dmg>0){
-    addLog('Enemy takes '+dmg+' dmg! ('+gs.enemyHp+'/'+gs.enemyMaxHp+' HP)','dmg');
-    playDamageEnemySfx();
-    shakeIcon('enemy',false); flashHpBar('enemy','hp-flash-red'); spawnFloatNum('enemy','-'+dmg,dmg>=50);
-    // Spore Count (Mycelid): every 3rd hit triggers Poison burst
-    if(e.innate&&e.innate.id==='spore_count'){
-      gs._sporeHits=(gs._sporeHits||0)+1;
-      if(gs._sporeHits%3===0){
-        gs.playerHp=Math.max(0,gs.playerHp-6);
-        spawnFloatNum('player','-6',false); flashHpBar('player','hp-flash-red');
-        addLog('Spore Count! Burst of 6 Poison damage (bypasses shield)!','debuff'); updateAll();
-      }
-    }
-    // Ink Cloud (Ink Squall): first hit grants Dodge
-    if(e.innate&&e.innate.id==='ink_cloud'&&!gs._inkCloudUsed){
-      gs._inkCloudUsed=true;
-      gs.enemyDodge=true;
-      addTag('enemy','buff','Dodge',0,'','Ink Cloud: next direct hit evaded.');
-      addLog('Ink Cloud! Squall evades the next hit!','buff');
-    }
-    // Molten Core (Ember Golem): at 50% HP trigger
-    if(e.innate&&e.innate.id==='molten_core'&&!gs._moltenCoreFired&&gs.enemyHp<=gs.enemyMaxHp*0.5){
-      gs._moltenCoreFired=true;
-      applyStatus('enemy','buff','Molten Core',0.20,'atkspeed',9999999,'Molten Core: +20% attack speed.');
-      addTag('enemy','buff','Molten Core',0,'','Molten Core: hits now apply Burn!');
-      addLog('Molten Core ignites! +20% speed, hits apply Burn.','innate');
-      spawnFloatNum('enemy','IGNITE!',true,'crit-num');
-    }
-    // Feeding Frenzy (Shark Knight): at 50% HP trigger
-    if(e.innate&&e.innate.id==='feeding_frenzy'&&!gs._frenzyFired&&gs.enemyHp<=gs.enemyMaxHp*0.5){
-      gs._frenzyFired=true;
-      applyStatus('enemy','buff','Feeding Frenzy',0.30,'atkspeed',9999999,'Feeding Frenzy: +30% attack speed below 50% HP.');
-      addLog('Feeding Frenzy! +30% attack speed!','innate');
-      spawnFloatNum('enemy','FRENZY!',true,'crit-num');
-    }
-    // Soot Cloud (Ash Bat): 30% chance on hit to apply Slow to player
-    if(e.innate&&e.innate.id==='soot_cloud'&&Math.random()<0.30){
-      applyStatus('player','debuff','Soot',-0.40,'atkspeed',2000,'Soot Cloud: -40% draw speed for 2s.');
-      addLog('Soot Cloud! Slowed for 2s.','debuff');
-    }
-    // Adaptive stacks
-    if(e.innate&&e.innate.id==='adaptive'&&dmg>=5){
-      gs.adaptiveStacks=(gs.adaptiveStacks||0);
-      if(gs.adaptiveStacks<3){
-        gs.adaptiveStacks++;
-        removeTagByLabel('enemy','Adaptive');
-        addTag('enemy','buff','Adaptive',0,'adaptive','Damage resistance +'+(gs.adaptiveStacks*8)+'% ('+gs.adaptiveStacks+'/3 stacks)');
-        addLog('Adaptive: resistance stack '+gs.adaptiveStacks+'/3!','buff');
-      }
-    }
-    // Molten Core: apply Burn on hit when fired
-    if(e.innate&&e.innate.id==='molten_core'&&gs._moltenCoreFired){
-      var pb=gs.statusEffects.player.find(function(s){return s.id==='molten_burn';});
-      if(pb){ pb.dpt+=3; pb.remaining=9000; } else { gs.statusEffects.player.push({id:'molten_burn',label:'Molten Burn',cls:'debuff',stat:'dot',remaining:9000,maxRemaining:9000,dot:true,dpt:3,tickMs:3000,tickAcc:0,desc:'Molten Core: 3/3s.'}); addTag('player','debuff','Molten Burn',0,'dot','Molten Core burn.'); }
-    }
-  }
-}
-
-function tickEnemyInnates(ms){
-  if(!gs||!gs.running) return;
-  var e=gs.enemies[gs.enemyIdx];
-  // Trigger mana_full / mana_threshold innates on every tick too
-  if(e.innate&&(e.innate.trigger==='mana_full'||e.innate.trigger==='mana_threshold')&&gs._innCooldown===0){
-    enemyCheckActivateInnate(e);
-  }
-  // Frenzied (Giant Rat): +8% atkspeed every 4s, indefinitely
-  // Seep (Cave Grub): Poison DoT stack every 5s
-  if(e.innate&&e.innate.id==='seep'){
-    gs._seepAcc=(gs._seepAcc||0)+ms;
-    if(gs._seepAcc>=5000){
-      gs._seepAcc=0;
-      var ps=gs.statusEffects.player.find(function(s){return s.id==='poison';});
-      if(ps){ ps.dpt+=2; ps.remaining=8000; } else { gs.statusEffects.player.push({id:'poison',label:'Poison (2/2s)',cls:'debuff',stat:'dot',remaining:8000,maxRemaining:8000,dot:true,dpt:2,tickMs:2000,tickAcc:0,desc:'Seep: 2 dmg/2s.'}); addTag('player','debuff','Poison (2/2s)',0,'dot','Seep: poison stacking.'); }
-      addLog('Seep! Poison stacks on you.','debuff');
-    }
-  }
-  // Accumulate (Sump Thing): +8% dmg every 5s, permanent stacks
-  if(e.innate&&e.innate.id==='accumulate'){
-    gs._accumAcc=(gs._accumAcc||0)+ms;
-    if(gs._accumAcc>=5000){
-      gs._accumAcc=0;
-      gs._accumStacks=(gs._accumStacks||0)+1;
-      removeTagByLabel('enemy','Swelling ×'+(gs._accumStacks-1));
-      applyStatus('enemy','buff','Swelling ×'+gs._accumStacks,gs._accumStacks*0.08,'dmg',9999999,'Accumulate: +'+(gs._accumStacks*8)+'% damage permanently.');
-      if(gs._accumStacks===5) applyStatus('enemy','buff','Surging',0.10,'atkspeed',9999999,'Swelling: +10% attack speed at 5 stacks.');
-      addLog('Swelling ×'+gs._accumStacks+'! +'+(gs._accumStacks*8)+'% damage.','innate');
-      spawnFloatNum('enemy','SWELLING!',gs._accumStacks>=5,'crit-num');
-    }
-  }
-  // Dig In (Mine Ghoul): +15% dmg after 6s
-  if(e.innate&&e.innate.id==='dig_in'&&!gs._digInFired){
-    gs._digInAcc=(gs._digInAcc||0)+ms;
-    if(gs._digInAcc>=6000){
-      gs._digInFired=true;
-      applyStatus('enemy','buff','Dug In',0.15,'dmg',9999999,'Dig In: +15% damage permanently.');
-      addLog('Mine Ghoul digs in! +15% damage.','innate');
-      spawnFloatNum('enemy','DUG IN!',false,'crit-num');
-    }
-  }
-  // Magma Trail (Lava Crawler): stacking Burn every 5s
-  if(e.innate&&e.innate.id==='magma_trail'){
-    gs._magmaAcc=(gs._magmaAcc||0)+ms;
-    if(gs._magmaAcc>=5000){
-      gs._magmaAcc=0;
-      var burn=gs.statusEffects.player.find(function(s){return s.id==='magma_burn';});
-      if(burn){ burn.dpt+=3; burn.remaining=9000; addLog('Magma Trail! Burn intensifies.','debuff'); }
-      else { gs.statusEffects.player.push({id:'magma_burn',label:'Magma Burn',cls:'debuff',stat:'dot',remaining:9000,maxRemaining:9000,dot:true,dpt:3,tickMs:3000,tickAcc:0,desc:'Magma Trail: 3 dmg/3s, stacking.'}); addTag('player','debuff','Magma Burn',0,'dot','Magma Trail: stacking burn.'); addLog('Magma Trail! Burn applied.','debuff'); }
-    }
-  }
-  // Molten Core (Ember Golem): trigger at 50% HP — handled in dealDamageToEnemy
-  // Lure (Siren): draw speed debuff while alive
-  if(e.innate&&e.innate.id==='lure'&&!gs._lureApplied){
-    gs._lureApplied=true;
-    gs.drawSpeedBonus=Math.max(0.5,(gs.drawSpeedBonus||1)*0.80);
-    addTag('player','debuff','Lured',0,'','Siren: draw speed -20% while it lives.');
-    addLog('Lure! Draw speed reduced by 20%.','debuff');
-  }
-  if(e.innate&&e.innate.id==='frenzied'){
-    gs._frenziedAcc=(gs._frenziedAcc||0)+ms;
-    if(gs._frenziedAcc>=4000){
-      gs._frenziedAcc=0;
-      gs._frenziedStacks=(gs._frenziedStacks||0)+1;
-      var stackVal=gs._frenziedStacks*0.08;
-      removeTagByLabel('enemy','Frenzied ×'+(gs._frenziedStacks-1));
-      if(gs._frenziedStacks===1) removeTagByLabel('enemy','Frenzied');
-      applyStatus('enemy','buff','Frenzied ×'+gs._frenziedStacks,stackVal,'atkspeed',9999999,'Frenzied: attack speed +'+(gs._frenziedStacks*8)+'%. Stacks every 4s.');
-      addLog('Frenzied! Attack speed now +'+(gs._frenziedStacks*8)+'%.','innate');
-    }
-  }
-  // Overcharge (Cursed Urn): +10% atkspeed every 6s, permanent
-  if(e.innate&&e.innate.id==='overcharge'){
-    gs._overchargeAcc=(gs._overchargeAcc||0)+ms;
-    if(gs._overchargeAcc>=6000){
-      gs._overchargeAcc=0;
-      gs._overchargeStacks=(gs._overchargeStacks||0)+1;
-      var ocVal=gs._overchargeStacks*0.10;
-      removeTagByLabel('enemy','Overcharge ×'+(gs._overchargeStacks-1));
-      applyStatus('enemy','buff','Overcharge ×'+gs._overchargeStacks,ocVal,'atkspeed',9999999,'Overcharge: +'+(gs._overchargeStacks*10)+'% attack speed.');
-      addLog('Overcharge ×'+gs._overchargeStacks+'! +10% attack speed.','innate');
-    }
-  }
-  // Infectious Bloom (Corruption Bloom): stacking Poison + draw slow every 4s
-  if(e.innate&&e.innate.id==='bloom'){
-    gs._bloomAcc=(gs._bloomAcc||0)+ms;
-    if(gs._bloomAcc>=4000){
-      gs._bloomAcc=0;
-      gs._bloomStacks=Math.min(3,(gs._bloomStacks||0)+1);
-      // Stack poison
-      var bloomPoison=gs.statusEffects.player.find(function(s){return s.id==='bloom_poison';});
-      if(bloomPoison){ bloomPoison.dpt+=3; bloomPoison.remaining=8000; }
-      else { gs.statusEffects.player.push({id:'bloom_poison',label:'Bloom Poison',cls:'debuff',stat:'dot',remaining:8000,maxRemaining:8000,dot:true,dpt:3,tickMs:2000,tickAcc:0,desc:'Bloom: 3/2s stacking poison.'}); addTag('player','debuff','Bloom Poison',0,'dot','Infectious Bloom: stacking poison.'); }
-      // Draw slow stacks (5% per stack, max 3)
-      if(gs._bloomStacks<=3){
-        removeTagByLabel('player','Bloom Slow ×'+(gs._bloomStacks-1));
-        applyStatus('player','debuff','Bloom Slow ×'+gs._bloomStacks,-0.05*gs._bloomStacks,'atkspeed',9999999,'Bloom: draw speed -'+(gs._bloomStacks*5)+'%.');
-      }
-      addLog('Infectious Bloom ×'+gs._bloomStacks+'! Poison + draw slow stack.','debuff');
-    }
-  }
-  // Deep Pressure (Abyss Crawler): squeeze max mana every 5s
-  if(e.innate&&e.innate.id==='deep_pressure'){
-    gs._deepPressureAcc=(gs._deepPressureAcc||0)+ms;
-    if(gs._deepPressureAcc>=5000){
-      gs._deepPressureAcc=0;
-      gs.maxMana=Math.max(20,gs.maxMana-15);
-      gs.mana=Math.min(gs.mana,gs.maxMana);
-      addLog('Deep Pressure! Max mana reduced by 15 for 4s.','debuff');
-      setTimeout(function(){ if(gs){ gs.maxMana=Math.min(gs.maxMana+15,gs.playerMaxMana||200); } },4000);
-    }
-  }
-  // Skitter (Sewer Roach): gain [Dodge] every 8s
-  if(e.innate&&e.innate.id==='skitter'){
-    gs._skitterAcc=(gs._skitterAcc||0)+ms;
-    if(gs._skitterAcc>=8000){
-      gs._skitterAcc=0;
-      if(!getStatus('enemy','skitter_dodge')){
-        applyStatus('enemy','buff','Dodge',0,'skitter_dodge',9999999,'Skitter: next direct hit will be evaded.');
-        addLog('Roach skitters — [Dodge] gained!','innate');
-      }
-    }
-  }
-  if(e.innate&&e.innate.id==='wounded_fury'&&gs.enemyHp<=(gs.enemyMaxHp/2)){
-    var hasWF=getStatus('enemy','wounded_fury');
-    if(!hasWF) applyStatus('enemy','buff','Wounded Fury',0.2,'atkspeed',9999999,'Attack speed +20%. Permanent below 50% HP.');
-  }
-  if(e.innate&&e.innate.id==='regeneration'){
-    gs._trollRegenAcc=(gs._trollRegenAcc||0)+ms;
-    if(gs._trollRegenAcc>=4000){ gs._trollRegenAcc=0; gs.enemyHp=Math.min(gs.enemyMaxHp,gs.enemyHp+1); addLog('Troll regenerates 1 HP.','heal'); }
-  }
-  if(e.innate&&e.innate.id==='flame_aura'){
-    gs._wyrmAuraAcc=(gs._wyrmAuraAcc||0)+ms;
-    if(gs._wyrmAuraAcc>=5000){ gs._wyrmAuraAcc=0; applyDoT('player','wyrm_flame',3,3000,9000,'Wyrm Flame Aura: 3 dmg/3s'); addLog('Flame Aura burns you!','debuff'); }
-  }
-  // Malevolent Gaze: -30% mana regen (applied as a persistent debuff tag)
-  if(e.innate&&e.innate.id==='malevolent_gaze'){
-    if(!getStatus('player','gaze_mana')){ applyStatus('player','debuff','Gaze',-0.3,'mana_regen',9999999,'Malevolent Gaze: mana regen -30%.'); }
-  }
-  // Death Aura (Lich): -50% mana regen
-  if(e.innate&&e.innate.id==='death_aura'){
-    if(!getStatus('player','death_aura_mana')){ applyStatus('player','debuff','Death Aura',-0.5,'mana_regen',9999999,'Death Aura: mana regen halved.'); }
-  }
-  // Slow Melt (Wax Soldier): 50% faster mana regen — shown as aura tag
-  if(e.innate&&e.innate.id==='slow_melt'){
-    if(!getStatus('enemy','slow_melt_tag')){ applyStatus('enemy','buff','Slow Melt',0,'',9999999,'Mana regens 50% faster.'); }
-    gs._waxMeltAcc=(gs._waxMeltAcc||0)+ms;
-    if(gs._waxMeltAcc>=1000){
-      var meltGain=Math.floor(e.wis*1.5*(gs._waxMeltAcc/1000)*0.5);
-      gs.enemyMana=Math.min(gs.enemyMaxMana||100,(gs.enemyMana||0)+meltGain);
-      gs._waxMeltAcc=0;
-    }
-  }
-  // Brittle Shell (Wax Hound): once per fight at ≤20% HP — heal + speed burst
-  if(e.innate&&e.innate.id==='brittle_shell'&&!gs._brittleShellFired){
-    if(gs.enemyHp<=gs.enemyMaxHp*0.20){
-      gs._brittleShellFired=true;
-      var shellHeal=Math.round(gs.enemyMaxHp*0.15);
-      gs.enemyHp=Math.min(gs.enemyMaxHp,gs.enemyHp+shellHeal);
-      applyStatus('enemy','buff','Shell Burst',0.6,'atkspeed',5000,'Brittle Shell cracked! +60% atk speed for 5s.');
-      addLog(e.name+'\'s shell cracks! Heals '+shellHeal+' HP and surges!','innate');
-      spawnFloatNum('enemy','+'+shellHeal,false,'heal-num');
-      updateAll();
-    }
-  }
-  // Heat Armour (Dune Crawler): handled in dealDamageToEnemy — tag display here
-  if(e.innate&&e.innate.id==='heat_armour'){
-    if(!getStatus('enemy','heat_armour_tag')){ applyStatus('enemy','buff','Heat Armour',0,'',9999999,'Takes 1 less dmg per hit.'); }
-  }
-  // Wax Timed (Wax Oasis): countdown timer
-  if(e.innate&&e.innate.id==='wax_timed'){
-    gs._waxTimerAcc=(gs._waxTimerAcc||0)+ms;
-    gs.enemyHp=gs.enemyMaxHp; // regen constantly — can't be killed
-    if(gs._waxTimerAcc>=45000){ endWaxOasisFight(); return; }
-    // Update the enemy HP bar label to show countdown
-    var remaining=Math.ceil((45000-gs._waxTimerAcc)/1000);
-    var dmgSoFar=gs.waxDamageDealt||0;
-    document.getElementById('e-hp-bar').style.width='100%';
-    document.getElementById('e-hp-txt').textContent='TIME: '+remaining+'s | DMG: '+dmgSoFar;
-  }
-  if(e.innate&&e.innate.id==='rooter'){
-    gs._rooterAcc=(gs._rooterAcc||0)+ms;
-    if(gs._rooterAcc>=8000){
-      gs._rooterAcc=0;
-      if(!gs.playerRooted){
-        gs.playerRooted=true;
-        addTag('player','debuff','Rooted',null,null,'Cannot draw for 2.5s!');
-        addLog('Roots erupt from the earth! You cannot draw!','debuff');
-        spawnFloatNum('player','🌿ROOTED',false,'block-num');
-        setTimeout(function(){ if(gs){ gs.playerRooted=false; removeTagByLabel('player','Rooted'); } },2500);
-      }
-    }
-  }
-  // Mist Veil (Mistraven): on dodge, 30% chance to refresh dodge
-  if(e.innate&&e.innate.id==='mist_veil'&&gs.enemyDodgeProcReady){
-    gs.enemyDodgeProcReady=false;
-    if(Math.random()<0.30){
-      gs.enemyDodge=true;
-      addTag('enemy','buff','Dodge',null,null,'Mist Veil: dodge refreshed!');
-      addLog('Mist Veil swirls — dodge refreshed!','buff');
-    }
-  }
-  // Mist Drain passive tag (Foghast) — shown as an aura tag on enter
-  if(e.innate&&e.innate.id==='mist_drain'){
-    if(!getStatus('enemy','mist_drain_tag')){ applyStatus('enemy','buff','Mist Drain',0,'',9999999,'Drains 15 mana on each hit.'); }
-  }
-}
 
 function forceAutoplay(){
   if(gs.hand.length===0) return;
-  var oldest=gs.hand.shift();
-  addLog('Forced autoplay: '+((CARDS[oldest.id]&&CARDS[oldest.id].name)||oldest.id)+'!','debuff');
-  executeCard(oldest.id,oldest.ghost,true);
-  if(!oldest.ghost) gs.discardPile.push(oldest.id);
-  renderHand(); renderPiles();
+  addLog('Forced autoplay: '+((CARDS[gs.hand[0].id]&&CARDS[gs.hand[0].id].name)||gs.hand[0].id)+'!','debuff');
+  if(gs.actors && gs.actors.player){
+    if(typeof syncGSToActors === 'function') syncGSToActors();
+    playCardForActor(gs.actors.player, 0);
+    if(typeof syncActorsToGS === 'function') syncActorsToGS();
+  }
+  renderHand(); renderPiles(); updateAll();
 }
 
 // ═══════════════════════════════════════════════════════
 // DRAW & PLAY
 // ═══════════════════════════════════════════════════════
-function doDraw(overrideId,silent){
-  if(!overrideId&&gs.drawPool.length===0){
-    if(gs.discardPile.length===0){ addLog('No cards to draw!','draw'); return; }
-    gs.drawPool=gs.discardPile.slice().sort(function(){return Math.random()-.5;});
-    gs.discardPile=[];
-    addLog('Deck exhausted — discard reshuffled.','draw');
-    playCardShuffleSfx();
-  }
-  if(gs.hand.length>=HAND_SIZE){
-    var oldest=gs.hand[0];
-    var oc=CARDS[oldest.id];
-    // All cards auto-play freely
-    gs.hand.shift();
-    if(SETTINGS.logd!=='brief') addLog('Auto-played '+(oc?oc.name:oldest.id)+'.','draw');
-    playCardSfx();
-    var delay=ASPEED_DELAYS[SETTINGS.aspeed]||600;
-    if(delay===0){ executeCard(oldest.id,oldest.ghost,true); if(!oldest.ghost) gs.discardPile.push(oldest.id); }
-    else (function(item){setTimeout(function(){ if(gs&&gs.running){ executeCard(item.id,item.ghost,true); if(!item.ghost) gs.discardPile.push(item.id); updateAll(); } },delay);})(oldest);
-    if(!gs.running) return;
-  }
-  var drawnId,isGhost=false;
-  if(overrideId){ drawnId=overrideId; isGhost=true; }
-  else{ var ix=Math.floor(Math.random()*gs.drawPool.length); drawnId=gs.drawPool.splice(ix,1)[0]; }
-  var newItem={id:drawnId,ghost:isGhost};
-  // Mark conjured copies when drawn — if conjuredCount > 0 and this card
-  // matches a conjured card ID, this drawn copy is conjured
-  if(!isGhost && gs.conjuredCount > 0 && drawnId === 'druid_star_shard'){
-    newItem._conjured = true;
-  }
-  // Shadow Mark active: any attack card drawn also gets +[Crit]: 100%
-  if(gs.shadowMarkActive && !isGhost){
-    var drawnCard=CARDS[drawnId];
-    if(drawnCard && drawnCard.type==='attack'){
-      newItem.critBonus=100;
-    }
-  }
-  // Legacy fallback: nextCardCrit for non-shadowMark paths
-  if(gs.nextCardCrit && !isGhost){
-    var drawnCard2=CARDS[drawnId];
-    if(drawnCard2 && drawnCard2.type==='attack'){
-      newItem.critBonus=100;
-      gs.nextCardCrit=false;
-    }
-  }
-  newItem._newDraw=true;
-  // Brief draw lock — card can't be played for 200ms (visual travel time)
-  newItem._drawLock=Date.now()+200;
-  gs.hand.push(newItem);
-  if(!silent&&SETTINGS.logd!=='brief'){ var c=CARDS[drawnId]; addLog('Drew '+(c?c.name:drawnId)+(isGhost?' [Ghost]':'')+'.','draw'); }
-  if(!silent&&!isGhost){
-    playCardDrawSfx();
-    spawnDrawAnim(drawnId, isGhost?'innate':'deck');
-  }
+// ── PLAYER DRAW (timer-driven) ──
+// Called by gameTick when draw timer fires.
+// Delegates all logic to actorDraw in combat.js.
+function doDraw(overrideId, silent) {
+  if (!gs.actors || !gs.actors.player) return;
+  if (typeof syncGSToActors === 'function') syncGSToActors();
+  actorDraw(gs.actors.player, overrideId || null, silent);
+  if (typeof syncActorsToGS === 'function') syncActorsToGS();
   renderHand(); renderPiles();
 }
 
@@ -3322,35 +2616,40 @@ function playCard(idx){
   if(!gs||!gs.running||paused) return;
   if(idx<0||idx>=gs.hand.length) return;
   var item=gs.hand[idx];
-  // Draw lock — card just arrived, can't play yet
   if(item._drawLock && Date.now() < item._drawLock) return;
-  // Focus mana gate
-  if(item.id==='druid_focus'&&!item.ghost){
-    var threshold=Math.round(gs.maxMana*0.8);
-    if(gs.mana<threshold){ addLog('Not enough mana to cast Focus manually (need '+threshold+').','mana'); return; }
-  }
-  gs.hand.splice(idx,1);
-  spawnCardFloat(item.id, 'play');
+
   var c=CARDS[item.id];
-  addLog('You play '+(c?c.name:item.id)+'!','sys');
-  playCardSfx();
-  // Pass critBonus from Shadow Mark injection
-  if(item.critBonus){
-    gs._critBonus = item.critBonus;
-    gs.shadowMarkActive = false;
-    gs.hand.forEach(function(h){ delete h.critBonus; });
-    removeTagByLabel('player','Shadow Mark');
+  if(!c){ addLog('Unknown card: '+item.id,'sys'); return; }
+
+  // Sync before play
+  if(gs.actors && typeof syncGSToActors === 'function') syncGSToActors();
+
+  if(gs.actors && gs.actors.player && c.effects && c.effects.length > 0){
+    playCardForActor(gs.actors.player, idx);
+  } else if(gs.actors && gs.actors.player){
+    // Card has no effects array — basic execution
+    gs.hand.splice(idx,1);
+    spawnCardFloat(item.id, 'play');
+    addLog('You play '+c.name+'!','sys');
+    playCardSfx();
+    gs.lastCardPlayed = item.id;
+    if(c.type === 'attack'){
+      var dmg = c.dmg || 18;
+      if(gs.actors.enemy) dealDamage(gs.actors.enemy, dmg);
+      else dealDamageToEnemy(dmg);
+    }
+    if(!item.ghost) gs.discardPile.push(item.id);
   }
-  executeCard(item.id,item.ghost,false);
-  gs._critBonus = 0;
-  if(!item.ghost) gs.discardPile.push(item.id);
+
+  // Sync after play
+  if(gs.actors && typeof syncActorsToGS === 'function') syncActorsToGS();
   pendingConfirmIdx=-1;
   checkEnd(); renderHand(); renderPiles(); updateAll();
 }
 
 
 // ═══════════════════════════════════════════════════════
-// CARD EFFECTS (executeCard, activateInnate, combat helpers)
+// CARD EFFECTS (activateInnate, combat helpers)
 // Loaded from data/card_effects.js
 // ═══════════════════════════════════════════════════════
 
@@ -3422,23 +2721,27 @@ function tickStatuses(ms){
       if(list[i].remaining<=0){
         var lbl=list[i].label;
         var stat=list[i].stat;
+        var statusId=list[i].id;
         var onExpiry=list[i]._onExpiry;
         // Shield expiry — clear shield value
-        if(list[i].id==='shield'){
+        if(statusId==='shield'){
           if(t==='player'){ gs.playerShield=0; }
           else { gs.enemyShell=0; }
           if(typeof onExpiry==='function') onExpiry();
         }
         list.splice(i,1);
         removeTagByLabel(t,lbl);
-        // Scout's Rally expiry — goblin transforms
-        if(stat==='scouts_rally'&&gs&&gs.running&&!gs.goblinAlarmFired){
-          gs.goblinAlarmFired=true;
-          applyStatus('enemy','buff','⚠ Rallied!',0.4,'atkspeed',9999999,'Rallied: +40% attack speed. +50% damage. The Scout has been emboldened.');
-          applyStatus('enemy','buff','Rallied Dmg',0.5,'dmg',9999999,'Rallied: +50% damage.');
-          addTag('enemy','buff','⚠ Rallied!',0,'','Rallied: +40% atk speed, +50% damage. Permanent.');
-          addLog('⚠ The Goblin Scout rallies! +40% speed, +50% damage!','innate');
-          spawnFloatNum('enemy','RALLIED!',true,'crit-num');
+        // Frenzy expiry — clear speed multiplier
+        if(statusId==='frenzy'){
+          if(t==='player'){
+            gs.drawSpeedBonus=1.0;
+            gs._frenzyDrawBonus=0;
+            addLog('Frenzy collapsed!','sys');
+          }
+          if(t==='enemy'){
+            var ce=gs.enemies[gs.enemyIdx];
+            if(ce) ce._frenzyAtkMult=1;
+          }
         }
       }
     }
@@ -3452,31 +2755,70 @@ function tickStatuses(ms){
 }
 
 function tickDoTs(ms){
-  // If suspended, skip timer advancement for player statuses
   var suspended=gs._suspended&&Date.now()<(gs._suspendEnd||0);
   ['player','enemy'].forEach(function(t){
     gs.statusEffects[t].forEach(function(s){
       if(!s.dot) return;
-      // Suspend pauses player buff/debuff ticks
       if(suspended&&t==='player') return;
       s.tickAcc+=ms;
       while(s.tickAcc>=s.tickMs){
         s.tickAcc-=s.tickMs;
-        if(s.id==='starburn'){ var dmg=(s.stacks||1)*5; dealDamageToEnemy(dmg); if(SETTINGS.logd==='verbose') addLog('Starburn ('+s.stacks+'×): '+dmg+' dmg.','debuff'); }
-        else if(t==='enemy'){ dealDamageToEnemy(s.dpt); if(SETTINGS.logd==='verbose') addLog(s.label+': '+s.dpt+' dmg.','debuff'); }
-        else {
-          // Poison immunity check (Plague Bearer)
-          if((s.id==='poison'||s.id==='poison_self')&&_hasPoisonImmunity()) continue;
-          // DoTs bypass [Shield] — deal directly to HP
-          var dotDmg=s.dpt;
+        var dotDmg = s.dpt || 0;
+        if(s.id==='starburn') dotDmg = (s.stacks||1)*5;
+        if(dotDmg <= 0) continue;
+
+        // Route through dealDamage if actors exist
+        if(t==='enemy' && gs.actors && gs.actors.enemy){
+          dealDamage(gs.actors.enemy, dotDmg, {isDot:true, bypassShield:true});
+          if(SETTINGS.logd==='verbose') addLog(s.label+': '+dotDmg+' dmg.','debuff');
+          // Mycelium Network: player gains Shield from enemy DoT ticks
+          _checkMyceliumNetwork('player', dotDmg);
+        } else if(t==='enemy'){
+          dealDamageToEnemy(dotDmg);
+          if(SETTINGS.logd==='verbose') addLog(s.label+': '+dotDmg+' dmg.','debuff');
+        } else if(t==='player' && gs.actors && gs.actors.player){
+          dealDamage(gs.actors.player, dotDmg, {isDot:true, bypassShield:true});
+          if(SETTINGS.logd==='verbose') addLog(s.label+': '+dotDmg+' dmg (bypasses shield).','dmg');
+          // Mycelium Network: enemy gains Shield from player DoT ticks
+          _checkMyceliumNetwork('enemy', dotDmg);
+        } else {
           gs.playerHp=Math.max(0,gs.playerHp-dotDmg);
           if(dotDmg>0){ shakeIcon('player',false); flashHpBar('player','hp-flash-red'); spawnFloatNum('player','-'+dotDmg,dotDmg>=50); }
-          if(SETTINGS.logd==='verbose') addLog(s.label+': '+s.dpt+' dmg (bypasses shield).','dmg');
+          if(SETTINGS.logd==='verbose') addLog(s.label+': '+dotDmg+' dmg (bypasses shield).','dmg');
           updateAll(); checkEnd();
         }
       }
     });
   });
+}
+
+// Mycelium Network helper — check if the given side's creature has it, apply Shield
+function _checkMyceliumNetwork(side, dotDmg){
+  if(dotDmg <= 0) return;
+  var innateId = null;
+  if(side === 'player'){
+    var pInn = CREATURES[gs.champId] && CREATURES[gs.champId].innate;
+    innateId = pInn && pInn.id;
+    // Also check INNATE_TRIGGERS registry
+    if(!innateId && typeof INNATE_TRIGGERS !== 'undefined'){
+      var cInn = CREATURES[gs.champId] && CREATURES[gs.champId].innate;
+      if(cInn && INNATE_TRIGGERS[cInn.id]) innateId = cInn.id;
+    }
+  } else {
+    var e = gs.enemies && gs.enemies[gs.enemyIdx];
+    innateId = e && e.innate && e.innate.id;
+  }
+  if(innateId === 'mycelium_network'){
+    if(side === 'player'){
+      gs.playerShield = (gs.playerShield||0) + dotDmg;
+      if(gs.actors && gs.actors.player) gs.actors.player.shield = gs.playerShield;
+      _refreshShieldTag('player', gs.playerShield);
+    } else {
+      gs.enemyShell = (gs.enemyShell||0) + dotDmg;
+      if(gs.actors && gs.actors.enemy) gs.actors.enemy.shield = gs.enemyShell;
+      _refreshShieldTag('enemy', gs.enemyShell);
+    }
+  }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -3510,6 +2852,10 @@ function addInnateTag(target,innate){
 }
 function removeTagByLabel(target,label){ var el=document.getElementById(target==='player'?'p-tags':'e-tags'); if(!el) return; var t=el.querySelector('[data-label="'+label+'"]'); if(t) t.remove(); }
 function removeTagsByClass(target,cls){ var el=document.getElementById(target==='player'?'p-tags':'e-tags'); if(!el) return; el.querySelectorAll('.tag.'+cls).forEach(function(t){t.remove();}); }
+function _refreshShieldTag(target,amt){
+  removeTagsByClass(target,'shield');
+  if(amt>0) addTag(target,'shield','Shield ('+amt+')',null,'shield','Shield: absorbs '+amt+' direct damage.');
+}
 
 function showTip(target,label,e,fallbackDesc){
   var list=gs?gs.statusEffects[target]:[];
@@ -3659,7 +3005,6 @@ function doVictory(){
     updateTopBar();
     // Show mid-battle popup
     var toastEl=document.getElementById('gold-toast');
-    var amtEl=document.getElementById('gold-toast-amount');
     var nextEl=document.getElementById('gold-toast-next');
     var nextIconEl=document.getElementById('gold-toast-next-icon');
     var nextHpEl=document.getElementById('gold-toast-next-hp');
@@ -3667,9 +3012,11 @@ function doVictory(){
     var lblEl=document.getElementById('gold-toast-lbl');
     var nextE=gs.enemies[gs.enemyIdx+1];
     if(toastEl){
-      if(amtEl) amtEl.textContent='';
       if(nextEl) nextEl.textContent=nextE?nextE.name:'';
-      if(nextIconEl) nextIconEl.textContent=nextE?nextE.icon:'⚔️';
+      if(nextIconEl) {
+        if(nextE) nextIconEl.innerHTML=creatureImgHTML(nextE.id, nextE.icon, '48px');
+        else nextIconEl.textContent='⚔️';
+      }
       if(nextHpEl) nextHpEl.textContent=nextE?nextE.baseHp+' HP':'';
       if(barEl){ barEl.style.transition='none'; barEl.style.width='100%'; }
       toastEl.style.display='flex';
@@ -4118,6 +3465,9 @@ function _highlightFillerCards(champId){
 
 function showDeckView(){
   _deckReturnScreen='game-screen';
+  // Hide begin-battle modal if it's open
+  var bbm=document.getElementById('begin-battle-modal');
+  if(bbm && bbm.style.display!=='none') { bbm.style.display='none'; _deckReturnScreen='begin-battle'; }
   stopLoops();
   var all=gs.drawPool.concat(gs.discardPile).concat(gs.hand.map(function(h){return h.id;}));
   var counts={}; all.forEach(function(id){counts[id]=(counts[id]||0)+1;});
@@ -4148,7 +3498,12 @@ function showDeckViewForChamp(champId){
 }
 
 function continueDeckView(){
-  if(_deckReturnScreen==='area-screen'){
+  if(_deckReturnScreen==='begin-battle'){
+    // Return to the begin-battle modal
+    showScreen('game-screen');
+    var bbm=document.getElementById('begin-battle-modal');
+    if(bbm) bbm.style.display='flex';
+  } else if(_deckReturnScreen==='area-screen'){
     showScreen('area-screen');
     showNav(true);
     updateNavBar('adventure');
@@ -4298,6 +3653,17 @@ function resolveCardEffect(line, gameState, statsOverride){
     .replace(/\b(WIS|STR|AGI)\b/g, function(m, stat){
       if(!s) return sv(m);
       return sv(s[stat.toLowerCase()]||0);
+    })
+    // "[Shield]" as a live value — resolves to current Shield HP
+    .replace(/Destroy \[Shield\]/gi, function(m){
+      if(!gameState) return m;
+      var shieldVal = gameState.playerShield || 0;
+      return 'Destroy ' + sv(shieldVal) + ' Shield';
+    })
+    .replace(/deal \[Shield\] additional damage/gi, function(m){
+      if(!gameState) return m;
+      var shieldVal = gameState.playerShield || 0;
+      return 'deal ' + sv(shieldVal) + ' additional damage';
     });
 
   // Collapse "Deal X + Y damage" into "Deal Z damage" (resolved total in blue)
@@ -4315,7 +3681,7 @@ function buildCardHTML(id,isGhost){
   var statCls=c.statId?'card-stat-'+c.statId:'card-stat-none';
   var rawLines=(c.effect||'').split('\n');
   var resolvedLines=rawLines.map(function(line){ return resolveCardEffect(line, typeof gs!=='undefined'&&gs?gs:null, null); });
-  var mechanic=renderKeywords(resolvedLines.join('<br>'));
+  var mechanic=renderKeywords(resolvedLines.join('<div class="card-line-sep"></div>'));
   var manaCost=c.manaCost!=null?c.manaCost:0;
   var fzStyle=cardEffectFontSize(c.effect);
   var tags=getCardTags(c);
@@ -4338,7 +3704,19 @@ function buildCardHTML(id,isGhost){
 // ═══════════════════════════════════════════════════════
 // RENDER
 // ═══════════════════════════════════════════════════════
-function maybeRenderHand(){ var k=gs.hand.map(function(h){return h.id+(h.ghost?'g':'');}).join(','); if(k!==lastHandStr) renderHand(); }
+function maybeRenderHand(){
+  var k=gs.hand.map(function(h){return h.id+(h.ghost?'g':'');}).join(',');
+  var hasArriving = gs.hand.some(function(h){ return h._arriveAt && Date.now() >= h._arriveAt && h._arriveAt > Date.now() - 150; });
+  if(k!==lastHandStr || hasArriving){
+    gs.hand.forEach(function(h){
+      if(h._arriveAt && Date.now() >= h._arriveAt){
+        h._justArrived = true;
+        delete h._arriveAt;
+      }
+    });
+    renderHand();
+  }
+}
 
 function renderHand(){
   lastHandStr=gs.hand.map(function(h){return h.id+(h.ghost?'g':'');}).join(',');
@@ -4353,7 +3731,9 @@ function renderHand(){
     var isSel=SETTINGS.confirm&&pendingConfirmIdx===i;
     var isNew=item._newDraw||false; if(isNew) delete item._newDraw;
     var isConjured=item._conjured||false;
-    d.className='card '+statCls+(isGhost?' ghost':'')+(isNew?' new-card':'')+(isSel?' selected-card':'')+(isConjured?' conjured-card':'');
+    var notArrived = item._arriveAt && Date.now() < item._arriveAt;
+    var justArrived = item._justArrived||false; if(justArrived) delete item._justArrived;
+    d.className='card '+statCls+(isGhost?' ghost':'')+(isNew?' new-card':'')+(isSel?' selected-card':'')+(isConjured?' conjured-card':'')+(notArrived?' card-arriving':'')+(justArrived?' card-fadein':'');
     d.setAttribute('data-idx',i);
 
     // Fan transform — rotate and drop from centre, scaled for 158x220 cards
@@ -4369,7 +3749,7 @@ function renderHand(){
     if(item.critBonus){
       resolvedLines.push('<span style="color:#60c060;">+[Crit]: '+item.critBonus+'%</span>');
     }
-    var mechanic=renderKeywords(resolvedLines.join('<br>'));
+    var mechanic=renderKeywords(resolvedLines.join('<div class="card-line-sep"></div>'));
     var fzStyle=cardEffectFontSize(cEffect);
     var manaCost=cd&&cd.manaCost!=null?cd.manaCost:0;
     var rTags=getCardTags(cd||{});
@@ -4462,6 +3842,8 @@ function updateShieldBar(prefix, shieldAmt, currentHp, maxHp){
 
 function updateAll(){
   if(!gs) return;
+  // Sync actors → gs fields (new system → old rendering)
+  if(gs.actors && typeof syncActorsToGS === 'function') syncActorsToGS();
   var pPct=(gs.playerHp/gs.playerMaxHp)*100;
   var ePct=(gs.enemyHp/gs.enemyMaxHp)*100;
   var mPct=gs.maxMana>0?(gs.mana/gs.maxMana)*100:0;
@@ -4481,19 +3863,37 @@ function updateAll(){
   var emVal=document.getElementById('e-mana-val'); if(emVal) emVal.textContent=(gs.enemyMana||0)+'/'+(gs.enemyMaxMana||0);
   var ch=getCreaturePlayable(gs.champId);
   // Hidden proxy
-  if(ch.innateActive) document.getElementById('innate-btn').disabled=(!gs.running||gs.mana<ch.innateCost);
+  if(ch.innateActive) document.getElementById('innate-btn').disabled=(!gs.running||gs.mana<ch.innateCost||gs._innCooldown>0);
   // Innate card: mana bar + ready glow
   if(ch.innateActive){
     var innateCard=document.getElementById('innate-card');
     var fill=document.getElementById('innate-mana-fill');
     var lbl=document.getElementById('innate-mana-lbl');
     var cost=ch.innateCost||1;
+    var onCooldown = gs._innCooldown > 0;
     var manaPct=Math.min(100,Math.round((gs.mana/cost)*100));
-    var ready=gs.running&&gs.mana>=cost;
-    if(fill){ fill.style.width=manaPct+'%'; fill.className='innate-mana-fill'+(manaPct>=100?' full':''); }
-    if(lbl){ lbl.textContent=Math.min(gs.mana,cost)+' / '+cost; }
+    var ready=gs.running&&gs.mana>=cost&&!onCooldown;
+    if(fill){
+      if(onCooldown){
+        // Show cooldown progress instead of mana
+        var cdPct = Math.round((gs._innCooldown / (ch.innateCooldown||8000)) * 100);
+        fill.style.width = (100 - cdPct) + '%';
+        fill.className = 'innate-mana-fill cooldown';
+      } else {
+        fill.style.width=manaPct+'%';
+        fill.className='innate-mana-fill'+(manaPct>=100?' full':'');
+      }
+    }
+    if(lbl){
+      if(onCooldown){
+        lbl.textContent = (gs._innCooldown/1000).toFixed(1)+'s';
+      } else {
+        lbl.textContent=Math.min(gs.mana,cost)+' / '+cost;
+      }
+    }
     if(innateCard){
       innateCard.classList.toggle('ready',ready);
+      innateCard.classList.toggle('on-cooldown',onCooldown);
       innateCard.style.cursor=ready?'pointer':'default';
     }
   }
@@ -4675,46 +4075,54 @@ function showLootToast(gained){
 }
 
 var BUILDINGS = {
+  // Row 1 — Check these (claims, timers, rewards)
   vault: {
-    id:'vault', name:'The Vault', icon:'📦',
-    desc:'Stores gems, materials and artifacts. Slot a gem to activate the generator — it slowly produces loot over time.',
-    unlocked:true,
-    slotEffect:function(tier){ return 0; }, // capacity now from level/upgrades
-    defaultCap:16,
+    id:'vault', name:'The Vault', icon:'📦', sprite:'vault_keeper', buildingIcon:'vault',
+    npc:{name:'Shtole', title:'Vault Keeper', greeting:'Everything is accounted for.', rare:'I didn\'t shteal anything.', pitch:0.7},
+    desc:'Materials and resources from your adventures.',
+    unlocked:true, defaultCap:16,
   },
-  forge: {
-    id:'forge', name:'The Forge', icon:'🔨',
-    desc:'Upgrades cards through gem tiers — Ruby, Emerald, Sapphire and beyond.',
+  adventurers_hall: {
+    id:'adventurers_hall', name:"Adventurer's Hall", icon:'⚐', sprite:'guild_girl', buildingIcon:'hall',
+    npc:{name:'Leona', title:'Guild Girl', greeting:'Welcome back! I mean... good to see you. Professionally.', pitch:1.5},
+    desc:'Quests, bounties, and expedition dispatch.',
     unlocked:false,
   },
   bestiary: {
-    id:'bestiary', name:'The Bestiary', icon:'📖',
-    desc:'Reveals full stats, innates, and tactics for every enemy you\'ve encountered.',
+    id:'bestiary', name:'The Bestiary', icon:'📖', sprite:'bestiary_keeper', buildingIcon:'bestiary',
+    npc:{name:'???', title:'Scholar', greeting:'What have you seen out there?'},
+    desc:'Records of every creature encountered. Claim discovery rewards.',
     unlocked:false,
   },
-  shard_well: {
-    id:'shard_well', name:'The Shard Well', icon:'🔮',
-    desc:'Slowly generates Shards over time for use in the Gacha.',
+  forge: {
+    id:'forge', name:'The Forge', icon:'🔨', sprite:'forge_keeper', buildingIcon:'forge',
+    npc:{name:'???', title:'Blacksmith', greeting:'Bring me materials and I\'ll make something useful.'},
+    desc:'Craft relics from area materials. Assign a champion to speed up.',
     unlocked:false,
   },
+  // Row 2 — Use these (strategic decisions)
   sanctum: {
-    id:'sanctum', name:'The Sanctum', icon:'⚗️',
-    desc:'Customise champion starting decks, upgrade cards, and raise level floors.',
+    id:'sanctum', name:'The Sanctum', icon:'⚗️', sprite:'sanctum_keeper', buildingIcon:'sanctum',
+    npc:{name:'???', title:'Sanctum Keeper', greeting:'Your champions await.'},
+    desc:'Champion management. Edit decks, equip relics, ascend.',
     unlocked:false,
   },
   market: {
-    id:'market', name:'The Market', icon:'🛒',
-    desc:'Buy chests with gold. Prices rise with each purchase.',
+    id:'market', name:'The Market', icon:'🛒', sprite:'market_keeper', buildingIcon:'market',
+    npc:{name:'???', title:'Merchant', greeting:'Take a look at my wares.'},
+    desc:'Buy chests and supplies with gold.',
     unlocked:false,
   },
-  board: {
-    id:'board', name:"Adventurer's Board", icon:'📋',
-    desc:'Take on quests for gold, gems, and glory. One active quest at a time.',
+  shard_well: {
+    id:'shard_well', name:'The Shard Well', icon:'🔮', sprite:'shard_well_keeper', buildingIcon:'shardwell',
+    npc:{name:'???', title:'Seer', greeting:'The well whispers of new allies.'},
+    desc:'Generates soul shards. Summon new champions.',
     unlocked:false,
   },
-  expedition_hall: {
-    id:'expedition_hall', name:'Expedition Hall', icon:'🏕️',
-    desc:'Dispatch champions on timed expeditions to gather materials while you fight.',
+  arena: {
+    id:'arena', name:'The Arena', icon:'⚔️', sprite:'arena_keeper', buildingIcon:'arena',
+    npc:{name:'???', title:'Arena Master', greeting:'Ready to test your strength?'},
+    desc:'Challenge imported champion builds. PvP via champion codes.',
     unlocked:false,
   },
 };
@@ -4805,12 +4213,12 @@ function buildTownCardsStrip(){ /* town card strip UI removed — gem slots depr
 // ── Building unlock costs ─────────────────────────────────────────────────
 var BUILDING_UNLOCK_COSTS = {
   forge:    { achId:'rising_power',  desc:'Reach level 3 — the Forge unlocks automatically.' },
-  board:    { achId:'battle_hardened', desc:'Reach level 5 — the Adventurer\'s Board unlocks automatically.' },
+  adventurers_hall: { achId:'battle_hardened', desc:'Reach level 5 — the Adventurer\'s Hall unlocks automatically.' },
   bestiary: { seenCount:10, gold:100, desc:'Unlocked by encountering 10 different enemies, or purchase for 100 gold.' },
   market:   { gold:150, desc:'Purchase The Market for 150 gold to buy chests.' },
   sanctum:  { gold:250, desc:'Purchase The Sanctum for 250 gold to customise champion decks and relics.' },
   shard_well:{ gold:300, desc:'Purchase the Shard Well for 300 gold.' },
-  expedition_hall:{ gold:400, desc:'Purchase the Expedition Hall for 400 gold.' },
+  arena:    { gold:500, desc:'Purchase The Arena for 500 gold.' },
 };
 
 function tryUnlockBuilding(id){
@@ -4925,14 +4333,399 @@ function refreshBuildingPanel(id){
   else if(id==='bestiary') refreshBestiaryPanel();
   else if(id==='market') refreshMarketPanel();
   else if(id==='sanctum') refreshSanctumPanel();
-  else if(id==='board') refreshBoardPanel();
+  else if(id==='adventurers_hall') refreshAdventurersHallPanel();
   else if(id==='shard_well') refreshShardWellPanel();
-  else if(id==='expedition_hall') refreshExpeditionHallPanel();
+  else if(id==='arena') refreshArenaPanel();
 }
+
+// Placeholder panels for buildings not yet implemented
+function refreshAdventurersHallPanel(){ _renderHallContent(); }
+
+function refreshArenaPanel(){}
+
+var _hallTab = 'quests';
+
+var LEONA_GREETINGS = [
+  'Welcome back! I mean... good to see you. Professionally.',
+  'Oh! You\'re here! I have some great contracts today. Really solid ones.',
+  'The board is looking good today. Not that I\'m excited or anything.',
+  'Champions! Quests! Expeditions! Sorry. I\'ll calm down.',
+  'I\'ve been organising the bounties. They\'re very organised now.',
+  'Another day at the Hall. Another chance to be... helpful.',
+  'You know what I love about this job? Everything. I mean. The paperwork.',
+  'I sorted the contracts by danger level. And then by how fun they sound.',
+  'Need something? A quest? An expedition? A... friend? I mean contract.',
+  'The expeditions are running smoothly. I checked. Twice.',
+];
+var LEONA_RARE = 'I wrote you a recommendation letter. For the quest. Not for... never mind.';
+
+function openAdventurersHall(){
+  var msgEl = document.getElementById('hall-npc-msg');
+  if(msgEl){
+    var msg = (Math.random() < 0.08) ? LEONA_RARE : LEONA_GREETINGS[Math.floor(Math.random() * LEONA_GREETINGS.length)];
+    npcTypewriter(msgEl, msg, {pitch: BUILDINGS.adventurers_hall.npc.pitch || 1.35});
+  }
+  // Refresh level bar
+  var hallLv = getBuildingLevel('adventurers_hall');
+  var hallXp = (PERSIST.town.buildingXp && PERSIST.town.buildingXp.adventurers_hall) || 0;
+  var hallXpNext = getBuildingXpToNext(hallLv);
+  var el1 = document.getElementById('hall-level-badge'); if(el1) el1.textContent = 'HALL Lv.' + hallLv;
+  var el2 = document.getElementById('hall-xp-bar'); if(el2) el2.style.width = Math.min(100, Math.round((hallXp/hallXpNext)*100)) + '%';
+  var el3 = document.getElementById('hall-xp-txt'); if(el3) el3.textContent = hallXp + '/' + hallXpNext + ' XP';
+
+  _renderHallContent();
+  document.getElementById('adventurers_hall-panel-bg').classList.add('show');
+}
+
+function closeAdventurersHall(){
+  npcTypewriterStop();
+  document.getElementById('adventurers_hall-panel-bg').classList.remove('show');
+  buildTownGrid();
+}
+
+// _stopHallTypewriter no longer needed — using shared npcTypewriterStop
+
+function switchHallTab(tab){
+  _hallTab = tab;
+  document.querySelectorAll('#adventurers_hall-panel-bg .vault-tab').forEach(function(el){ el.classList.remove('active'); });
+  var tabEl = document.getElementById('htab-' + tab);
+  if(tabEl) tabEl.classList.add('active');
+  _renderHallContent();
+}
+
+function _renderHallContent(){
+  var inner = document.getElementById('hall-body-inner');
+  if(!inner) return;
+
+  if(_hallTab === 'quests'){
+    inner.innerHTML = _renderQuestsTab();
+  } else if(_hallTab === 'expeditions'){
+    inner.innerHTML = _renderExpeditionsTab();
+  } else if(_hallTab === 'achievements'){
+    inner.innerHTML = _renderAchievementsTab();
+  }
+}
+
+var _achSort = 'default';
+
+function _renderAchievementsTab(){
+  if(typeof ACHIEVEMENTS === 'undefined' || !ACHIEVEMENTS.length){
+    return '<div style="padding:40px 20px;text-align:center;">'
+      +'<div style="font-size:24px;margin-bottom:12px;opacity:.4;">🏆</div>'
+      +'<div style="font-family:Cinzel,serif;font-size:11px;color:#5e4c2e;letter-spacing:2px;">NO ACHIEVEMENTS YET</div>'
+      +'</div>';
+  }
+
+  var completed = 0;
+  var claimable = 0;
+  var total = ACHIEVEMENTS.length;
+
+  // Build sortable list
+  var achList = ACHIEVEMENTS.map(function(ach){
+    var done = isAchComplete(ach);
+    var claimed = (typeof isAchClaimed === 'function') && isAchClaimed(ach);
+    if(done) completed++;
+    if(done && !claimed) claimable++;
+    var prog = getAchProgress(ach);
+    return { ach:ach, done:done, claimed:claimed, progress:prog.current||0, target:prog.needed||1, pct:Math.min(100,Math.round(((prog.current||0)/(prog.needed||1))*100)) };
+  });
+
+  // Sort
+  if(_achSort === 'claimable'){
+    achList.sort(function(a,b){
+      if(a.done && !a.claimed && !(b.done && !b.claimed)) return -1;
+      if(b.done && !b.claimed && !(a.done && !a.claimed)) return 1;
+      return b.pct - a.pct;
+    });
+  } else if(_achSort === 'progress'){
+    achList.sort(function(a,b){ return b.pct - a.pct; });
+  } else if(_achSort === 'category'){
+    achList.sort(function(a,b){ return (a.ach.cat||'').localeCompare(b.ach.cat||''); });
+  }
+  // default = original order
+
+  var cardsHtml = '';
+  achList.forEach(function(item){
+    var ach = item.ach;
+    var cls = 'hall-ach-card' + (item.claimed ? ' complete' : item.done ? ' claimable' : '');
+    cardsHtml += '<div class="' + cls + '">'
+      +'<div class="hall-ach-icon">' + (ach.icon || '🏆') + '</div>'
+      +'<div class="hall-ach-info">'
+        +'<div class="hall-ach-name">' + (ach.title || ach.id) + '</div>'
+        +'<div class="hall-ach-desc">' + (ach.desc || '') + '</div>'
+        +'<div class="hall-ach-progress"><div class="hall-ach-progress-fill' + (item.done ? ' complete' : '') + '" style="width:' + item.pct + '%"></div></div>'
+        +'<div class="hall-ach-progress-txt">' + item.progress + ' / ' + item.target
+          + (ach.reward && ach.reward.gold ? ' · Reward: ✦' + ach.reward.gold + 'g' : '')
+          + '</div>'
+      +'</div>';
+
+    if(item.claimed){
+      cardsHtml += '<div class="hall-ach-done">✓</div>';
+    } else if(item.done){
+      cardsHtml += '<button class="hall-quest-btn claim" style="width:auto;padding:4px 12px;font-size:8px;" onclick="claimAchievement(\''+ach.id+'\');_renderHallContent();">CLAIM</button>';
+    }
+
+    cardsHtml += '</div>';
+  });
+
+  var html = '<div class="vault-top-bar">'
+    +'<span class="vault-tally">COMPLETED <span class="vault-tally-val">' + completed + '/' + total + '</span></span>'
+    +(claimable > 0 ? '<span class="vault-tally">CLAIMABLE <span class="vault-tally-danger" style="color:#7fc06a;">' + claimable + '</span></span>' : '')
+    +'<span style="flex:1;"></span>'
+    +'<select class="hall-sort-select" onchange="_achSort=this.value;_renderHallContent();">'
+      +'<option value="default"' + (_achSort==='default'?' selected':'') + '>Default</option>'
+      +'<option value="claimable"' + (_achSort==='claimable'?' selected':'') + '>Claimable First</option>'
+      +'<option value="progress"' + (_achSort==='progress'?' selected':'') + '>By Progress</option>'
+      +'<option value="category"' + (_achSort==='category'?' selected':'') + '>By Category</option>'
+    +'</select>'
+    +'</div>';
+
+  html += '<div class="hall-ach-grid">' + cardsHtml + '</div>';
+  return html;
+}
+
+function _renderQuestsTab(){
+  var quests = PERSIST.town.quests || {offered:[], active:null, completed:[]};
+
+  // If no quests offered yet, generate some
+  if(!quests.offered || quests.offered.length === 0){
+    quests.offered = _generateBounties(3);
+    PERSIST.town.quests = quests;
+    savePersist();
+  }
+
+  var html = '<div class="hall-quest-grid">';
+
+  quests.offered.forEach(function(q, idx){
+    var isActive = quests.active && quests.active.id === q.id;
+    var isComplete = isActive && quests.active.progress >= q.target;
+    var progress = isActive ? quests.active.progress : 0;
+    var pct = Math.min(100, Math.round((progress / q.target) * 100));
+
+    var cls = 'hall-quest-card' + (isComplete ? ' complete' : isActive ? ' active' : '');
+    html += '<div class="' + cls + '">';
+
+    // Stamp
+    if(isComplete) html += '<div class="hall-quest-stamp complete-stamp">COMPLETE</div>';
+    else if(isActive) html += '<div class="hall-quest-stamp active-stamp">ACTIVE</div>';
+
+    // Content
+    html += '<div class="hall-quest-title">' + q.title + '</div>';
+    html += '<div class="hall-quest-issuer">issued by ' + (q.issuer || 'Leona') + '</div>';
+    html += '<div class="hall-quest-desc">' + q.desc + '</div>';
+
+    // Difficulty dots
+    html += '<div class="hall-quest-difficulty">';
+    for(var d = 0; d < 5; d++) html += '<div class="hall-quest-dot' + (d < q.difficulty ? '' : ' empty') + '"></div>';
+    html += '</div>';
+
+    // Progress (if active or complete)
+    if(isActive || isComplete){
+      html += '<div class="hall-quest-progress"><div class="hall-quest-progress-fill' + (isComplete ? ' complete' : '') + '" style="width:' + pct + '%"></div></div>';
+      html += '<div class="hall-quest-progress-txt">' + progress + ' / ' + q.target + '</div>';
+    }
+
+    // Rewards
+    html += '<div class="hall-quest-rewards">';
+    (q.rewards || []).forEach(function(r){
+      html += '<div class="hall-reward-chip">' + (r.icon || '✦') + ' ' + r.amount + ' ' + (r.label || r.type) + '</div>';
+    });
+    html += '</div>';
+
+    // Button
+    if(isComplete){
+      html += '<button class="hall-quest-btn claim" onclick="claimQuest()">CLAIM REWARD</button>';
+    } else if(isActive){
+      html += '<button class="hall-quest-btn" onclick="abandonQuest()" style="border-color:#5a3020;color:#8a5030;">ABANDON</button>';
+    } else if(!quests.active){
+      html += '<button class="hall-quest-btn" onclick="acceptQuest(' + idx + ')">ACCEPT</button>';
+    } else {
+      html += '<div style="font-size:8px;color:#6a5030;text-align:center;padding:4px;">Complete active quest first</div>';
+    }
+
+    html += '</div>';
+  });
+
+  html += '</div>';
+  return html;
+}
+
+function _renderExpeditionsTab(){
+  var hallLv = getBuildingLevel('adventurers_hall');
+  var expeditionsUnlocked = hallLv >= 2;
+
+  if(!expeditionsUnlocked){
+    return '<div style="padding:40px 20px;text-align:center;">'
+      +'<div style="font-size:24px;margin-bottom:12px;opacity:.4;">🏕️</div>'
+      +'<div style="font-family:Cinzel,serif;font-size:11px;color:#5e4c2e;letter-spacing:2px;">EXPEDITIONS LOCKED</div>'
+      +'<div style="font-size:9px;color:#3a2810;margin-top:8px;">Reach Hall Level 2 to unlock expeditions.</div>'
+      +'</div>';
+  }
+
+  var ahB = PERSIST.town.buildings.adventurers_hall;
+  var slots = ahB.expeditionSlots || [];
+  var maxSlots = Math.min(slots.length, 1 + Math.floor((hallLv - 1) / 2)); // 1 at lv2, 2 at lv4, 3 at lv6
+
+  var html = '<div class="hall-exp-grid">';
+
+  for(var i = 0; i < slots.length; i++){
+    var slot = slots[i];
+    var isLocked = i >= maxSlots;
+
+    if(isLocked){
+      html += '<div class="hall-exp-slot locked">'
+        +'<div class="hall-exp-empty-prompt">'
+        +'<div class="plus">🔒</div>'
+        +'<div class="label">HALL Lv.' + (2 + i * 2) + ' TO UNLOCK</div>'
+        +'</div></div>';
+      continue;
+    }
+
+    if(!slot.champId){
+      // Empty slot
+      html += '<div class="hall-exp-slot empty">'
+        +'<div class="hall-exp-empty-prompt">'
+        +'<div class="plus">+</div>'
+        +'<div class="label">SEND CHAMPION</div>'
+        +'</div>'
+        +'<button class="hall-exp-btn send" onclick="startExpeditionFlow(' + i + ')">DISPATCH →</button>'
+        +'</div>';
+      continue;
+    }
+
+    // Active or complete
+    var elapsed = Date.now() - slot.startTime;
+    var total = slot.totalMs || 1;
+    var isComplete = elapsed >= total;
+    var pct = Math.min(100, Math.round((elapsed / total) * 100));
+    var remaining = Math.max(0, total - elapsed);
+    var timeStr = _formatMs(remaining);
+
+    var champ = CREATURES[slot.champId];
+    var champName = champ ? champ.name : slot.champId;
+    var champIcon = champ ? champ.icon : '?';
+    var area = AREA_DEFS.find(function(a){ return a.id === slot.areaId; });
+    var areaName = area ? area.name : slot.areaId;
+
+    var slotCls = 'hall-exp-slot ' + (isComplete ? 'complete' : 'active');
+    html += '<div class="' + slotCls + '">';
+    html += '<div class="hall-exp-slot-header">';
+    html += '<div class="hall-exp-champ-icon"><img src="assets/creatures/' + slot.champId + '.png" onerror="this.outerHTML=\'' + champIcon + '\'"></div>';
+    html += '<div class="hall-exp-info">';
+    html += '<div class="hall-exp-name">' + champName + '</div>';
+    html += '<div class="hall-exp-area">▸ ' + areaName + '</div>';
+    html += '<div class="hall-exp-type">' + (slot.type || 'Scout') + ' · ' + _formatMs(total) + '</div>';
+    html += '</div></div>';
+
+    // Timer
+    html += '<div class="hall-exp-timer"><div class="hall-exp-timer-fill' + (isComplete ? ' complete' : '') + '" style="width:' + pct + '%"></div></div>';
+    html += '<div class="hall-exp-time-txt">' + (isComplete ? 'READY TO COLLECT' : 'Returning in ' + timeStr) + '</div>';
+
+    // Button
+    if(isComplete){
+      html += '<button class="hall-exp-btn collect" onclick="collectExpedition(' + i + ')">COLLECT</button>';
+    } else {
+      html += '<button class="hall-exp-btn" onclick="recallExpedition(' + i + ')">RECALL EARLY</button>';
+    }
+    html += '</div>';
+  }
+
+  html += '</div>';
+  return html;
+}
+
+function _formatMs(ms){
+  var s = Math.floor(ms / 1000);
+  var h = Math.floor(s / 3600); s %= 3600;
+  var m = Math.floor(s / 60); s %= 60;
+  if(h > 0) return h + 'h ' + m + 'm';
+  if(m > 0) return m + 'm ' + s + 's';
+  return s + 's';
+}
+
+// ── Quest System ──
+function _generateBounties(count){
+  var bounties = [];
+  var templates = [
+    // Sewer quests
+    {title:'Sewer Sweep', desc:'Clear the Sewers to prove your worth.', type:'clear', areaId:'sewers', target:3, difficulty:1, rewards:[{type:'gold',icon:'✦',amount:80,label:'Gold'}], issuer:'Leona'},
+    {title:'Rat Problem', desc:'The rats are getting bolder. Thin the herd.', type:'kill', enemyId:'rat', target:10, difficulty:1, rewards:[{type:'gold',icon:'✦',amount:50,label:'Gold'},{type:'material',icon:'🪨',amount:3,label:'Slick Stone'}], issuer:'Leona'},
+    {title:'Goblin Menace', desc:'Goblin scavengers are stealing supplies again.', type:'kill', enemyId:'goblin', target:12, difficulty:2, rewards:[{type:'gold',icon:'✦',amount:100,label:'Gold'}], issuer:'Leona'},
+    {title:'Drain Duty', desc:'Something lurks in the deep drains. Find it.', type:'kill', enemyId:'drain_lurker', target:5, difficulty:2, rewards:[{type:'gold',icon:'✦',amount:120,label:'Gold'},{type:'material',icon:'🪨',amount:5,label:'Slick Stone'}], issuer:'Town Guard'},
+    {title:'Undead Patrol', desc:'The dead are restless in the lower tunnels.', type:'kill', enemyId:'zombie', target:8, difficulty:2, rewards:[{type:'gold',icon:'✦',amount:110,label:'Gold'}], issuer:'Town Guard'},
+    // Pale Road quests
+    {title:'Road Patrol', desc:'The Pale Road needs clearing. Bandits and beasts.', type:'clear', areaId:'pale_road', target:2, difficulty:2, rewards:[{type:'gold',icon:'✦',amount:120,label:'Gold'}], issuer:'Leona'},
+    {title:'Wolf Cull', desc:'The wolves are too close to the road. Push them back.', type:'kill', enemyId:'wolf', target:8, difficulty:2, rewards:[{type:'gold',icon:'✦',amount:90,label:'Gold'},{type:'soul_shards',icon:'🔮',amount:10,label:'Shards'}], issuer:'Merchant Caravan'},
+    {title:'Bandit Bounty', desc:'A band of bandits has been raiding travellers.', type:'kill', enemyId:'bandit', target:6, difficulty:3, rewards:[{type:'gold',icon:'✦',amount:150,label:'Gold'}], issuer:'Bounty Office'},
+    {title:'Slime Samples', desc:'A scholar needs slime residue for research.', type:'kill', enemyId:'slime', target:10, difficulty:1, rewards:[{type:'gold',icon:'✦',amount:60,label:'Gold'},{type:'material',icon:'🔩',amount:3,label:'Bog Iron'}], issuer:'Scholar'},
+    // Swamp quests
+    {title:'Swamp Survey', desc:'Venture into Bogmire Swamp. Document what lives there.', type:'clear', areaId:'swamp', target:2, difficulty:3, rewards:[{type:'gold',icon:'✦',amount:150,label:'Gold'},{type:'soul_shards',icon:'🔮',amount:15,label:'Shards'}], issuer:'Leona'},
+    {title:'Spore Collection', desc:'The Bestiary needs Spore Puff samples. Carefully.', type:'kill', enemyId:'sporepuff', target:6, difficulty:3, rewards:[{type:'gold',icon:'✦',amount:130,label:'Gold'},{type:'material',icon:'🔩',amount:4,label:'Bog Iron'}], issuer:'Bestiary Scholar'},
+    {title:'Mycelid Study', desc:'A rare fungal creature has been spotted. Investigate.', type:'kill', enemyId:'mycelid', target:4, difficulty:3, rewards:[{type:'gold',icon:'✦',amount:180,label:'Gold'}], issuer:'Leona'},
+    {title:'Snake Venom', desc:'Snake venom is valuable to alchemists. Bring some back.', type:'kill', enemyId:'snake', target:8, difficulty:2, rewards:[{type:'gold',icon:'✦',amount:100,label:'Gold'},{type:'material',icon:'🔩',amount:2,label:'Bog Iron'}], issuer:'Alchemist'},
+    // General quests
+    {title:'The Endurance Test', desc:'Complete 5 runs. Any area. Just survive.', type:'runs', target:5, difficulty:2, rewards:[{type:'gold',icon:'✦',amount:200,label:'Gold'}], issuer:'Leona'},
+    {title:'Warm Up', desc:'Complete 3 runs to shake off the rust.', type:'runs', target:3, difficulty:1, rewards:[{type:'gold',icon:'✦',amount:75,label:'Gold'}], issuer:'Leona'},
+    {title:'Marathon', desc:'Complete 10 runs. Show your dedication.', type:'runs', target:10, difficulty:3, rewards:[{type:'gold',icon:'✦',amount:350,label:'Gold'},{type:'soul_shards',icon:'🔮',amount:25,label:'Shards'}], issuer:'Leona'},
+  ];
+  // Shuffle and pick
+  var shuffled = templates.slice().sort(function(){ return Math.random() - 0.5; });
+  for(var i = 0; i < count && i < shuffled.length; i++){
+    var t = shuffled[i];
+    bounties.push({id:'quest_' + Date.now() + '_' + i, title:t.title, desc:t.desc, type:t.type, areaId:t.areaId, enemyId:t.enemyId, target:t.target, difficulty:t.difficulty, rewards:t.rewards, issuer:'Leona'});
+  }
+  return bounties;
+}
+
+function acceptQuest(idx){
+  var quests = PERSIST.town.quests;
+  if(quests.active) return;
+  var q = quests.offered[idx];
+  if(!q) return;
+  quests.active = {id:q.id, progress:0};
+  savePersist();
+  _renderHallContent();
+}
+
+function abandonQuest(){
+  PERSIST.town.quests.active = null;
+  savePersist();
+  _renderHallContent();
+}
+
+function claimQuest(){
+  var quests = PERSIST.town.quests;
+  if(!quests.active) return;
+  var q = quests.offered.find(function(o){ return o.id === quests.active.id; });
+  if(!q) return;
+  // Grant rewards
+  (q.rewards || []).forEach(function(r){
+    if(r.type === 'gold') PERSIST.gold += r.amount;
+    else if(r.type === 'soul_shards') PERSIST.soulShards += r.amount;
+    else if(r.type === 'material' && r.id) PERSIST.town.materials[r.id] = (PERSIST.town.materials[r.id]||0) + r.amount;
+  });
+  // Remove from offered, mark complete
+  quests.offered = quests.offered.filter(function(o){ return o.id !== quests.active.id; });
+  quests.completed.push(quests.active.id);
+  quests.active = null;
+  // Refill if needed
+  while(quests.offered.length < 3){
+    var more = _generateBounties(1);
+    quests.offered = quests.offered.concat(more);
+  }
+  savePersist();
+  _renderHallContent();
+}
+
+// Expedition stubs — to be fully implemented
+function startExpeditionFlow(slotIdx){ alert('Expedition dispatch flow coming soon. Slot: ' + slotIdx); }
+function collectExpedition(slotIdx){ alert('Collect expedition coming soon. Slot: ' + slotIdx); }
+function recallExpedition(slotIdx){ alert('Recall expedition coming soon. Slot: ' + slotIdx); }
 
 function openBuilding(id){
   playSelectSfx();
   if(id==='vault'){ openVaultPanel(); showTutorial('vault_intro'); return; }
+  if(id==='adventurers_hall'){ openAdventurersHall(); showTutorial('adventurers_hall_intro'); return; }
   var panelBg=document.getElementById(id+'-panel-bg');
   if(!panelBg) return;
   panelBg.classList.add('show');
@@ -5005,107 +4798,32 @@ function showLockedBuildingUI(id){
 
 
 function isBuildingVisible(id){
-  var b=PERSIST.town.buildings[id];
-  if(b&&b.unlocked) return true; // always show unlocked
-  var cost=BUILDING_UNLOCK_COSTS[id];
-  if(!cost) return false;
-
-  // Vault: visible once town is visible (always)
-  if(id==='vault') return true;
-
-  // Forge + Board: visible once vault is unlocked (they'll auto-unlock via achievements)
-  if(id==='forge'||id==='board') return PERSIST.town.buildings.vault&&PERSIST.town.buildings.vault.unlocked;
-
-  // Gold-gated buildings: visible once vault is unlocked AND player has earned ≥50% of the gold cost
-  if(cost.gold){
-    if(!(PERSIST.town.buildings.vault&&PERSIST.town.buildings.vault.unlocked)) return false;
-    var totalGoldEarned=(PERSIST.achievements&&PERSIST.achievements['gold_earned'])||0;
-    // Fallback: just check if they've done at least one run (vault unlocked = first run done)
-    // Show shrine early, others progressively
-    if(id==='bestiary') return PERSIST.seenEnemies.length>=3||PERSIST.gold>=50;
-    if(id==='market') return PERSIST.town.buildings.bestiary&&PERSIST.town.buildings.bestiary.unlocked||PERSIST.gold>=150;
-    if(id==='sanctum') return PERSIST.town.buildings.bestiary&&PERSIST.town.buildings.bestiary.unlocked||PERSIST.gold>=150;
-    if(id==='shard_well') return PERSIST.town.buildings.market&&PERSIST.town.buildings.market.unlocked||PERSIST.gold>=200;
-    if(id==='expedition_hall') return PERSIST.town.buildings.sanctum&&PERSIST.town.buildings.sanctum.unlocked||PERSIST.gold>=250;
-  }
-  return false;
+  // All buildings are always visible — locked ones show as locked but browsable
+  return true;
 }
 
 function buildTownGrid(){
   refreshSummonsBanner();
   var grid=document.getElementById('town-grid'); grid.innerHTML='';
 
-  // Count visible buildings before rendering
-  var visibleCount=Object.values(BUILDINGS).filter(function(b){ return isBuildingVisible(b.id); }).length;
-  if(visibleCount===0){
-    grid.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:40px 20px;">'
-      +'<div style="font-size:32px;margin-bottom:12px;">🏕️</div>'
-      +'<div style="font-family:Cinzel,serif;font-size:11px;color:#5a4020;letter-spacing:2px;margin-bottom:8px;">YOUR SETTLEMENT AWAITS</div>'
-      +'<div style="font-size:9px;color:#3a2810;line-height:1.7;">Complete your first run to unlock the Vault<br>and begin building your town.</div>'
-      +'</div>';
-    return;
-  }
-
   Object.values(BUILDINGS).forEach(function(bdef){
-    // Progressive reveal — don't show buildings the player isn't ready for yet
-    if(!isBuildingVisible(bdef.id)) return;
-
     var b=PERSIST.town.buildings[bdef.id];
     var unlocked=b&&b.unlocked;
-    var slottedCard=null;
-    var isActive=false;
     var cost=BUILDING_UNLOCK_COSTS[bdef.id];
     var canAfford=cost&&cost.gold&&PERSIST.gold>=cost.gold;
 
-    var card=document.createElement('div');
-    card.className='building-card'+(statusCls==='active'&&unlocked?' active':'')+(unlocked?'':' locked');
-
-
-    var achOnly=cost&&cost.achId&&!cost.gold&&!cost.seenCount;
-    if(unlocked) card.onclick=function(){ openBuilding(bdef.id); };
-    else if(!achOnly&&canAfford) card.onclick=function(){ openBuilding(bdef.id); };
-
-    var pipHtml='';
-
-    var hintHtml='';
-    if(!unlocked&&cost){
-      var req, hintAffordable;
-      if(cost.achId&&!cost.gold){
-        // Achievement-only unlock — can't buy, must earn
-        var achDef=ACHIEVEMENTS.find(function(a){return a.id===cost.achId;});
-        var achDone=achDef&&isAchComplete(achDef);
-        req=achDone?'✦ Claim from Achievements to unlock':cost.desc;
-        hintAffordable=achDone;
-      } else if(cost.seenCount){
-        var seenNow=PERSIST.seenEnemies.length;
-        var seenMet=seenNow>=cost.seenCount;
-        req=seenMet?'Ready to unlock!':(seenNow+'/'+cost.seenCount+' seen · or ✦'+cost.gold+'g');
-        hintAffordable=seenMet||(cost.gold&&PERSIST.gold>=cost.gold);
-      } else {
-        req=cost.achId?'📋 achievement required':(cost.gold?'✦ '+cost.gold+' gold to build':'');
-        hintAffordable=!cost.achId&&cost.gold>0&&PERSIST.gold>=cost.gold;
-      }
-      hintHtml='<div class="bc-unlock-hint'+(hintAffordable?' affordable':'')+'">'+req+'</div>';
-    }
-
-    // Per-building meaningful status text
+    // Per-building status text
     var statusTxt='LOCKED', statusCls='locked';
     if(!unlocked){
       statusTxt='LOCKED'; statusCls='locked';
     } else {
-      // Default: OPEN
       statusTxt='OPEN'; statusCls='empty';
-      // Per-building overrides
       if(bdef.id==='forge'){
         var fq=(PERSIST.town.buildings.forge.queue||[]);
         if(fq.length>0){
           var fi=fq[0]; var fpct=Math.min(100,Math.round(((Date.now()-fi.startTime)/fi.totalMs)*100));
           statusTxt='CRAFTING — '+fpct+'%'; statusCls='active';
         } else { statusTxt='READY TO CRAFT'; statusCls='empty'; }
-      } else if(bdef.id==='shrine'){
-        var sb=PERSIST.town.buildings.shrine;
-        if(sb.activeBlessing){ statusTxt='BLESSING ACTIVE'; statusCls='active'; }
-        else { statusTxt='CHOOSE A BLESSING'; statusCls='empty'; }
       } else if(bdef.id==='market'){
         var mb=PERSIST.town.buildings.market;
         var mstock=(mb.stock||[]).length+(mb.deals||[]).length+(mb.rare?1:0);
@@ -5120,66 +4838,62 @@ function buildTownGrid(){
         var ss=PERSIST.soulShards||0;
         statusTxt=ss+' SOUL SHARD'+(ss!==1?'S':''); statusCls=ss>0?'active':'empty';
       } else if(bdef.id==='vault'){
-        var vi=(PERSIST.town.items&&Object.keys(PERSIST.town.items).length)||0;
         var vm=Object.keys(PERSIST.town.materials||{}).filter(function(k){return (PERSIST.town.materials[k]||0)>0;}).length;
-        var vtot=vi+vm;
-        statusTxt=vtot+' ITEM'+(vtot!==1?'S':'')+' STORED'; statusCls=vtot>0?'active':'empty';
-      } else if(bdef.id==='board'){
+        statusTxt=vm+' MATERIAL'+(vm!==1?'S':'')+' STORED'; statusCls=vm>0?'active':'empty';
+      } else if(bdef.id==='adventurers_hall'){
         var ba=PERSIST.town.quests&&PERSIST.town.quests.active;
-        statusTxt=ba?'QUEST ACTIVE':'CHECK BOARD'; statusCls=ba?'active':'empty';
-      } else if(bdef.id==='expedition_hall'){
-        var expB=PERSIST.town.buildings.expedition_hall;
-        var readySlots=(expB.slots||[]).filter(function(s){
+        var ahB=PERSIST.town.buildings.adventurers_hall;
+        var readyExp=(ahB.expeditionSlots||[]).filter(function(s){
           return s.champId && s.startTime && Date.now()>=s.startTime+s.totalMs;
         });
-        var activeSlots=(expB.slots||[]).filter(function(s){return !!s.champId;});
-        if(readySlots.length>0){
-          statusTxt='✦ '+readySlots.length+' EXPEDITION'+(readySlots.length>1?'S':'')+' COMPLETE';
+        var activeExp=(ahB.expeditionSlots||[]).filter(function(s){return !!s.champId;});
+        if(readyExp.length>0){
+          statusTxt='✦ '+readyExp.length+' EXPEDITION'+(readyExp.length>1?'S':'')+' READY';
           statusCls='active';
-        } else if(activeSlots.length>0){
-          statusTxt=activeSlots.length+' EXPEDITION'+(activeSlots.length>1?'S':'')+' ACTIVE';
-          statusCls='active';
-        } else { statusTxt='SEND CHAMPIONS'; statusCls='empty'; }
+        } else if(ba){
+          statusTxt='QUEST ACTIVE'; statusCls='active';
+        } else if(activeExp.length>0){
+          statusTxt=activeExp.length+' EXPEDITION'+(activeExp.length>1?'S':'')+''; statusCls='active';
+        } else { statusTxt='CHECK BOARD'; statusCls='empty'; }
+      } else if(bdef.id==='arena'){
+        statusTxt='COMING SOON'; statusCls='locked';
       }
     }
 
-    // Special hint for vault — locked until first run
-    if(!unlocked&&bdef.id==='vault'){
-      hintHtml='<div class="bc-unlock-hint">Complete your first run to unlock</div>';
-    }
+    // Build card
+    var card=document.createElement('div');
+    card.className='building-card'+(unlocked&&statusCls==='active'?' active':'')+(unlocked?'':' locked');
 
-    // Building level display for unlocked buildings
-    var levelHtml='';
-    if(unlocked){
-      var bLevel=getBuildingLevel(bdef.id);
-      var bXp=(PERSIST.town.buildingXp&&PERSIST.town.buildingXp[bdef.id])||0;
-      var bXpNext=getBuildingXpToNext(bLevel);
-      var xpPct=Math.min(100,Math.round((bXp/bXpNext)*100));
-      levelHtml='<div style="margin-top:6px;">'
-        +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">'
-          +'<span style="font-size:8px;color:#5a4020;font-family:Cinzel,serif;letter-spacing:.5px;">Lv'+bLevel+'</span>'
-          +'<span style="font-size:8px;color:#3a2010;">'+bXp+'/'+bXpNext+'</span>'
-        +'</div>'
-        +'<div style="height:3px;background:rgba(0,0,0,.4);border-radius:2px;overflow:hidden;">'
-          +'<div style="height:100%;width:'+xpPct+'%;background:#7a5010;border-radius:2px;"></div>'
-        +'</div>'
+    // All buildings are clickable (locked ones open with lock message)
+    card.onclick=function(){ openBuilding(bdef.id); };
+
+    // Sprite area — building icon
+    var spriteHtml='<div class="bc-sprite">'
+      +'<img src="assets/icons/buildings/'+bdef.buildingIcon+'.png" alt="'+bdef.name+'" onerror="this.textContent=\''+bdef.icon+'\';this.style.fontSize=\'48px\'">'
+      +'<span class="bc-lock">🔒</span>'
       +'</div>';
+
+    // Badge placeholder (notification system)
+    var badgeHtml='<div class="bc-badge" id="badge-'+bdef.id+'"></div>';
+
+    // Unlock hint for locked buildings
+    var hintHtml='';
+    if(!unlocked&&cost){
+      if(cost.gold){
+        hintHtml='<div class="bc-status '+(canAfford?'active':'locked')+'">'+
+          (canAfford?'UNLOCK — ✦'+cost.gold+'g':'✦'+cost.gold+'g TO UNLOCK')+'</div>';
+      }
     }
 
-    card.innerHTML='<div class="bc-icon">'+buildingImgHTML(bdef.id, bdef.icon)+'</div>'
+    card.innerHTML=badgeHtml+spriteHtml
       +'<div class="bc-body">'
         +'<div class="bc-name">'+bdef.name.toUpperCase()+'</div>'
         +'<div class="bc-desc">'+bdef.desc+'</div>'
-        +hintHtml
-        +levelHtml
-        +'<div class="bc-status '+statusCls+'">'+statusTxt+'</div>'
+        +(unlocked?'<div class="bc-status '+statusCls+'">'+statusTxt+'</div>':hintHtml||'<div class="bc-status locked">'+statusTxt+'</div>')
       +'</div>';
     grid.appendChild(card);
   });
-
-  
 }
-
 
 
 function onBuildingDrop(){ /* drag-drop slot UI removed */ }
@@ -5617,7 +5331,6 @@ function openLocationInBestiary(areaId){
 }
 
 
-
 // ── SANCTUM ────────────────────────────────────────────────────────
 var _sanctumChamp = null;
 var _sanctumTab   = 'overview';
@@ -5925,7 +5638,6 @@ function srUnhoverBonus(){
 }
 
 
-
 // ── OVERVIEW PANE ──────────────────────────────────────────────────
 function buildSanctumOverviewPane(){
   var el=document.getElementById('sanctum-overview-body');
@@ -6194,7 +5906,6 @@ function resetSanctumDeck(champId){
   showTownToast('Deck reset to default.');
   refreshSanctumPanel();
 }
-
 
 
 // ── UPGRADE PANE ───────────────────────────────────────────────────
@@ -6787,7 +6498,6 @@ function bestiaryTick(seconds){
 }
 
 
-
 function vaultTick(seconds){
   var b=PERSIST.town.buildings.vault;
   if(!b||!b.unlocked) return;
@@ -6996,7 +6706,6 @@ function closeSpoilsOverlay(){
   _spoilsChampId=null;
   goToAreaSelectAfterRun();
 }
-
 
 
 // ── Wire up town unlock ──
@@ -7536,13 +7245,23 @@ var TUTORIALS = {
     ]
   },
   vault_intro: {
-    icon:'📦',
-    title:'The Vault',
+    icon:'vault_keeper',
+    title:'Shtole — Vault Keeper',
+    isNpc: true,
     pages:[
-      {body:'The Vault stores all items: <span style="color:#c03030;">Gems</span>, <span style="color:#7a6030;">Materials</span>, keys and chests. When a gem is slotted, the Vault runs a passive generator that produces random loot on a timer. Higher-tier gems reduce the timer.',
-       tip:null},
-      {body:'Items can be inspected, sold for gold, or recycled into <span style="color:#2980b9;">💎 Gem Shards</span>. The Vault has a capacity cap. Shelf upgrades increase capacity. The Vault levels up while a gem is slotted — higher levels reveal item flavour text, drop sources, and crafting information.',
-       tip:null},
+      {body:'"Ah, welcome. This is the Vault. Everything you gather out there, materials, resources, it all comes here. I keep it safe. I keep it organised. Nothing goes missing."'},
+      {body:'"Materials come from the areas you explore. Each area drops different things. The rarer the material, the harder the area. I sort them for you. You just need to check in after your runs."'},
+      {body:'"One thing to watch. Storage has limits. If the shelves are full, I cannot accept more. Come back often, spend what you have at the Forge, and we will not have problems. ...I promise nothing has gone missing."'},
+    ]
+  },
+  adventurers_hall_intro: {
+    icon:'guild_girl',
+    title:'Leona — Guild Girl',
+    isNpc: true,
+    pages:[
+      {body:'"Oh! You\'re here for the first time! Welcome to the Adventurer\'s Hall! This is where all the action gets... coordinated. By me. Professionally."'},
+      {body:'"The QUESTS tab has bounties pinned to the board. Pick one that looks good, go complete it, then come back to claim your reward. Simple! I mean. Standard procedure."'},
+      {body:'"Once the Hall levels up, I\'ll open the EXPEDITIONS tab too. You can send your champions on timed missions while you\'re busy with other things. They bring back materials and experience. I\'ll keep track of everything. That\'s my job. Which I love. A normal amount."'},
     ]
   },
   forge_intro: {
@@ -7651,26 +7370,106 @@ function _openTutorial(id, force){
   document.getElementById('tutorial-overlay').style.display='flex';
 }
 
+// ══════════════════════════════════════════════════════════════
+// SHARED NPC TYPEWRITER
+// ══════════════════════════════════════════════════════════════
+// npcTypewriter(element, text, {pitch, speed, onComplete})
+// npcTypewriterStop()
+
+var _npcTW = { timer:null, blips:[], element:null };
+
+function npcTypewriter(el, text, opts){
+  if(!el || !text) return;
+  opts = opts || {};
+  npcTypewriterStop();
+  _npcTW.element = el;
+  el.textContent = '';
+
+  var pitch = opts.pitch || 1.0;
+  var speed = opts.speed || 28;
+  var charIdx = 0;
+  var plainText = text.replace(/<[^>]*>/g, '');
+  var isHtml = text !== plainText;
+
+  var blipAudio = null;
+  try { blipAudio = new Audio('assets/audio/sfx/chime-blip.mp3'); blipAudio.volume = 0.15; } catch(e){}
+
+  _npcTW.timer = setInterval(function(){
+    if(charIdx >= plainText.length){
+      npcTypewriterStop();
+      if(isHtml) el.innerHTML = text;
+      else el.textContent = plainText;
+      if(opts.onComplete) opts.onComplete();
+      return;
+    }
+    charIdx++;
+    el.textContent = plainText.substring(0, charIdx);
+    if(blipAudio && charIdx % 3 === 0 && plainText[charIdx-1] !== ' '){
+      var b = new Audio('assets/audio/sfx/chime-blip.mp3');
+      b.volume = 0.1 + Math.random() * 0.08;
+      b.playbackRate = pitch + (Math.random() * 0.12 - 0.06);
+      b.play().catch(function(){});
+      _npcTW.blips.push(b);
+    }
+  }, speed);
+
+  el.onclick = function(){
+    npcTypewriterStop();
+    if(isHtml) el.innerHTML = text;
+    else el.textContent = plainText;
+    el.onclick = null;
+    if(opts.onComplete) opts.onComplete();
+  };
+}
+
+function npcTypewriterStop(){
+  if(_npcTW.timer){ clearInterval(_npcTW.timer); _npcTW.timer = null; }
+  _npcTW.blips.forEach(function(b){ try{ b.pause(); b.currentTime = 0; }catch(e){} });
+  _npcTW.blips = [];
+  if(_npcTW.element) _npcTW.element.onclick = null;
+}
+
+// Legacy alias
+function _stopTypewriter(){ npcTypewriterStop(); }
+
 function _renderTutPage(){
   var tut=TUTORIALS[_tutCurrent]; if(!tut) return;
   var page=tut.pages[_tutPage];
-  document.getElementById('tut-icon').textContent=tut.icon;
+  var iconEl=document.getElementById('tut-icon');
+  if(tut.isNpc){
+    iconEl.innerHTML='<img src="assets/creatures/'+tut.icon+'.png" style="width:120px;height:120px;image-rendering:pixelated;filter:drop-shadow(0 2px 6px rgba(0,0,0,.5));transform:scaleX(-1);" onerror="this.parentNode.textContent=\'🦦\'">';
+  } else {
+    iconEl.textContent=tut.icon;
+  }
   document.getElementById('tut-title').textContent=tut.title;
-  document.getElementById('tut-body').innerHTML=page.body;
   var stepEl=document.getElementById('tut-step');
   var multi=tut.pages.length>1;
   stepEl.textContent=multi?'Page '+(_tutPage+1)+' of '+tut.pages.length:'';
   var nextBtn=document.getElementById('tut-next-btn');
   nextBtn.style.display=multi&&_tutPage<tut.pages.length-1?'inline-block':'none';
+
+  // Get NPC pitch from tutorial definition or BUILDINGS
+  var pitch = 1.0;
+  if(tut.isNpc && tut.icon){
+    // Find the building that uses this sprite
+    Object.values(BUILDINGS).forEach(function(b){
+      if(b.sprite === tut.icon && b.npc && b.npc.pitch) pitch = b.npc.pitch;
+    });
+  }
+
+  var bodyEl=document.getElementById('tut-body');
+  npcTypewriter(bodyEl, page.body, {pitch: pitch});
 }
 
 function tutorialNext(){
+  _stopTypewriter();
   var tut=TUTORIALS[_tutCurrent]; if(!tut) return;
   if(_tutPage<tut.pages.length-1){ _tutPage++; _renderTutPage(); }
   else dismissTutorial();
 }
 
 function dismissTutorial(){
+  _stopTypewriter();
   if(_tutCurrent){
     PERSIST.seenTutorials[_tutCurrent]=true;
     savePersist();
@@ -7685,6 +7484,7 @@ function dismissTutorial(){
 }
 
 function dismissAllTutorials(){
+  _stopTypewriter();
   SETTINGS.tutorial=false;
   var el=document.getElementById('s-tutorial'); if(el) el.checked=false;
   try{ localStorage.setItem('cetd_settings',JSON.stringify(SETTINGS)); }catch(e){}

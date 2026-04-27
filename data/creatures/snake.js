@@ -1,13 +1,33 @@
 // ════════════════════════════════════════════════════
-// CREATURE: SNAKE
-// Drop snake.png into assets/creatures/ for a custom sprite.
+// CREATURE: SWAMP SNAKE
 // ════════════════════════════════════════════════════
 
-CREATURES.snake = {id:'snake',name:'SWAMP SERPENT',icon:'🐍',lore:'The swamp serpent doesn\'t hunt so much as wait. It has learned that patience is the deadliest venom of all.',baseStats:{str:9,agi:18,wis:4},growth:{str:1,agi:1.5,wis:0.5},baseDmg:2,dmgGrowth:0.4,gold:[2,5],
-    innate:{id:'slither',name:'Slither',desc:'Every 3rd card played automatically applies Venom (2 dmg/2s for 6s) to the enemy.'},
-    openingMove:'bite',
-    deck:[
-      {id:'bite',         copies:3,name:'Bite',          effect:'dmg',            value:2,                                                  msg:'bites swiftly!'},
-      {id:'constrict',    copies:1,name:'Constrict',      effect:'dmg_and_debuff', value:1,status:'constricted',debuffVal:-0.25,debuffDur:3000,msg:'constricts you!'},
-      {id:'venom_strike', copies:1,name:'Venom Strike',   effect:'dmg_and_dot',    value:3,dotDmg:2,dotTick:2000,dotDur:6000,status:'venom', msg:'injects venom!'},
-    ]};
+CREATURES.snake = {
+  id:       'snake',
+  name:     'SWAMP SNAKE',
+  icon:     '🐍',
+  lore:     'The swamp breeds them long and patient. They coil beneath the surface of still water and wait for vibration. The venom is not immediately lethal — it is designed to slow prey down, so the snake can take its time.',
+  role:     'Poison / Tempo',
+  bossOnly: false,
+
+  baseStats: { str:10, agi:14, wis:10 },
+  growth:    { str:1,  agi:2,  wis:0 },
+
+  innate: {
+    id:       'venomous',
+    name:     'Venomous',
+    desc:     'Passive: all attack cards apply 1 [Poison].',
+    active:   false,
+    cost:     0,
+    cooldown: 0,
+    triggers: [
+      { on: 'on_attack', effect: {type: 'poison', dpt: 1, dur: 8} }
+    ],
+  },
+
+  // Deck generated from STR + deckOrder (10 cards at base)
+  // 10 ÷ 5 = 2 each
+  deckOrder: ['snake_fang', 'snake_coil', 'snake_spit'],
+};
+// Backup: protect triggers array from being stripped
+CREATURES.snake._innateTriggers = [{"on": "on_attack", "effect": {"type": "poison", "dpt": 1, "dur": 8}}];

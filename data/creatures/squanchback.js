@@ -10,23 +10,24 @@ CREATURES.squanchback = {
   role:     'Tank / Thorns Punisher',
   bossOnly: false,
 
-  baseStats: { str:18, agi:7, wis:10 },
-  growth:    { str:2,  agi:1, wis:1  },
+  baseStats: { str:18, agi:10, wis:10 },
+  growth:    { str:2,  agi:1,  wis:1 },
 
   innate: {
     id:       'spite_spines',
     name:     'Spite Spines',
-    desc:     '[Convert] the oldest card in hand into [Spite] (Ethereal). It is played immediately as the next card.\n[Spite]: Deal damage equal to missing HP ÷ 4. Apply [Thorns] (8) for 6s.',
+    desc:     'Convert the oldest card in hand into [Spite] (Ethereal). Deal missing HP ÷ 4 damage.',
     active:   true,
     cost:     30,
     cooldown: 2000,
+    effect: [
+      {type: 'convert_oldest_to', cardId: 'squanchback_spite'}
+    ],
   },
 
-  deck: [
-    'squanchback_lunge',
-    'squanchback_lunge',
-    'squanchback_harden',
-    'squanchback_harden',
-    'squanchback_gnash',
-  ],
+  // Deck generated from STR + deckOrder (18 cards at base)
+  // 18 ÷ 5 = 3 each + 3 remainder → Bristle 4, Shell Slam 4, Spine Lash 4, Strike 3, Brace 3
+  deckOrder: ['squanchback_bristle', 'squanchback_shell_slam', 'squanchback_spine_lash'],
 };
+// Backup: protect effect array from being stripped
+CREATURES.squanchback._innateEffect = [{"type": "convert_oldest_to", "cardId": "squanchback_spite"}];

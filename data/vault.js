@@ -135,11 +135,30 @@ var CHEST_LOOT_TABLES={
 
 
 function openVaultPanel(){
+  var msgEl = document.getElementById('vault-npc-msg');
+  if(msgEl){
+    var greetings = [
+      'Everything is accounted for.',
+      'Welcome back. Nothing has moved.',
+      'The shelves are in order.',
+      'I have been expecting you.',
+      'All present and correct.',
+      'Take your time. I will wait.',
+      'The materials are sorted. As always.',
+      'You were gone a while. Nothing changed.',
+      'I counted twice. All here.',
+      'Quiet day. Just how I like it.',
+    ];
+    var rare = 'I didn\'t shteal anything.';
+    var msg = (Math.random() < 0.08) ? rare : greetings[Math.floor(Math.random() * greetings.length)];
+    npcTypewriter(msgEl, msg, {pitch: BUILDINGS.vault.npc.pitch || 0.85});
+  }
   refreshVaultPanel();
   document.getElementById('vault-panel-bg').classList.add('show');
 }
 
 function closeVaultPanel(){
+  npcTypewriterStop();
   document.getElementById('vault-panel-bg').classList.remove('show');
   buildTownGrid();
 }
@@ -161,6 +180,16 @@ function refreshVaultLevelBar(){
   if(txt) txt.textContent=xp+'/'+xpNext+' XP';
 }
 
+var _vaultTab = 'materials';
+
+function switchVaultTab(tab){
+  _vaultTab = tab;
+  document.querySelectorAll('.vault-tab').forEach(function(el){ el.classList.remove('active'); });
+  var tabEl = document.getElementById('vtab-'+tab);
+  if(tabEl) tabEl.classList.add('active');
+  refreshVaultPanel();
+}
+
 function refreshVaultPanel(){
   showLockedBuildingUI('vault');
   var b=PERSIST.town.buildings.vault;
@@ -170,164 +199,307 @@ function refreshVaultPanel(){
   var inner=document.getElementById('vault-body-inner');
   if(!inner) return;
 
+  if(_vaultTab === 'inventory'){
+    inner.innerHTML = renderVaultInventory();
+    // Upgrades footer still shows
+    var footerEl = document.getElementById('vault-upgrades-footer');
+    if(footerEl) footerEl.style.display = 'flex';
+    renderVaultUpgradesFooter();
+    return;
+  }
+
+  // ── MATERIALS TAB — Forge Ledger Layout ──
   var u=PERSIST.town.vaultUpgrades||{};
   var cap=getVaultMatCap();
-  var lv=getVaultLevel();
 
-  // ── LEFT: chests and keys ──
-  var chests=Object.keys(LOOT_DEFS).filter(function(k){
-    return LOOT_DEFS[k].type==='chest' && (PERSIST.town.items[k]||0)>0;
-  });
-  var keys=Object.keys(LOOT_DEFS).filter(function(k){
-    return LOOT_DEFS[k].type==='key' && (PERSIST.town.items[k]||0)>0;
-  });
-  // Chests that have no matching key
-  var lockedChests=Object.keys(LOOT_DEFS).filter(function(k){
-    return LOOT_DEFS[k].type==='chest'
-      && (PERSIST.town.items[k]||0)>0
-      && !_chestHasKey(k);
-  });
+  // Gather area data
+  var groups=Object.keys(MATERIAL_DROPS);
+  var totalAreas = AREA_DEFS.filter(function(a){ return a.id !== 'dojo'; }).length;
+  var visitedAreas = 0;
+  var totalMats = 0;
+  var atCapCount = 0;
 
-  var leftHtml='<div class="vault-section-lbl">CHESTS</div>';
-  if(chests.length===0){
-    leftHtml+='<div class="vault-empty-hint">No chests yet — complete runs and open areas to find them.</div>';
-  } else {
-    chests.forEach(function(chestId){
-      var def=LOOT_DEFS[chestId];
-      var count=PERSIST.town.items[chestId]||0;
-      var hasKey=_chestHasKey(chestId);
-      var keyId=_findKeyForChest(chestId);
-      leftHtml+='<div class="vault-chest-row'+(hasKey?'':' vault-chest-no-key')+'" '
-        +(hasKey?'onclick="openChest(\''+chestId+'\',\''+keyId+'\')"':'')+'>'
-        +'<span class="vault-chest-icon">'+def.icon+'</span>'
-        +'<div class="vault-chest-info">'
-          +'<div class="vault-chest-name">'+def.name+'</div>'
-          +(hasKey
-            ?'<div class="vault-chest-key">🗝️ '+LOOT_DEFS[keyId].name+'</div>'
-            :'<div class="vault-chest-nokey">No key — explore '+_biomeHint(chestId)+'</div>')
-        +'</div>'
-        +'<span class="vault-chest-count">×'+count+'</span>'
-        +(u.sellDesk&&hasKey?'<button class="vault-sell-btn" onclick="event.stopPropagation();sellVaultItem(\''+chestId+'\')">SELL '+getSellPrice({lootKey:chestId})+'g</button>':'')
-        +'</div>';
+  var areaData = [];
+  groups.forEach(function(groupId){
+    var entries = MATERIAL_DROPS[groupId];
+    var areas = AREA_DEFS.filter(function(a){ return a.materialGroup === groupId; });
+    var areaNames = areas.map(function(a){ return a.name; }).join(' · ');
+    var visited = areas.some(function(a){ return (PERSIST.areaRuns[a.id]||0) > 0; });
+    var runs = 0;
+    areas.forEach(function(a){ runs += (PERSIST.areaRuns[a.id]||0); });
+    if(visited) visitedAreas++;
+
+    var mats = [];
+    var rowAtCap = false;
+    entries.forEach(function(entry){
+      var mat = MATERIALS[entry.id]; if(!mat) return;
+      var qty = PERSIST.town.materials[entry.id] || 0;
+      var pct = Math.min(100, Math.round((qty/cap)*100));
+      var isCap = qty >= cap;
+      if(isCap){ atCapCount++; rowAtCap = true; }
+      totalMats++;
+      mats.push({ id:entry.id, name:mat.name, icon:mat.icon, rarity:mat.rarity||'common', qty:qty, cap:cap, pct:pct, atCap:isCap });
     });
-    // Open all button — only if any chest has a key
-    var openableCount=chests.filter(function(k){return _chestHasKey(k);}).length;
-    if(openableCount>0){
-      leftHtml+='<button class="vault-open-all-btn" onclick="openAllChests()">OPEN ALL WITH KEYS →</button>';
-    }
-  }
 
-  leftHtml+='<div class="vault-divider"></div><div class="vault-section-lbl">KEYS</div>';
-  if(keys.length===0){
-    leftHtml+='<div class="vault-empty-hint">Keys drop from runs in each area.</div>';
-  } else {
-    keys.forEach(function(keyId){
-      var def=LOOT_DEFS[keyId];
-      var count=PERSIST.town.items[keyId]||0;
-      leftHtml+='<div class="vault-key-row">'
-        +'<span class="vault-key-icon">🗝️</span>'
-        +'<span class="vault-key-name">'+def.name+'</span>'
-        +'<span class="vault-key-count">×'+count+'</span>'
-        +(u.sellDesk?'<button class="vault-sell-btn" onclick="sellVaultItem(\''+keyId+'\')">'+getSellPrice({lootKey:keyId})+'g</button>':'')
-        +'</div>';
+    var areaIcon = '';
+    var areaBg = '';
+    var areaIds = [];
+    areas.forEach(function(a){
+      if(a.icon) areaIcon = a.icon;
+      areaIds.push(a.id);
     });
-  }
+    // Use first area's ID for background image
+    if(areaIds.length > 0) areaBg = areaIds[0];
 
-  // ── RIGHT: materials by group ──
-  var rightHtml='<div class="vault-section-lbl" style="display:flex;justify-content:space-between;align-items:center;">'
-    +'<span>MATERIALS</span>'
-    +'<span class="vault-cap-note">cap: '+cap+' per group</span>'
+    areaData.push({
+      groupId: groupId,
+      areaNames: areaNames,
+      areaIcon: areaIcon,
+      areaBg: areaBg,
+      visited: visited,
+      runs: runs,
+      materials: mats,
+      hasAtCap: rowAtCap,
+      converterUnlocked: !!u.converter,
+    });
+  });
+
+  // Top bar with tally chips
+  var html = '<div class="vault-top-bar">'
+    +'<span class="vault-tally">AREAS <span class="vault-tally-val">'+visitedAreas+'/'+totalAreas+'</span></span>'
+    +'<span class="vault-tally">MATERIALS <span class="vault-tally-val">'+totalMats+'</span></span>'
+    +(atCapCount > 0 ? '<span class="vault-tally">AT CAP <span class="vault-tally-danger">'+atCapCount+'</span></span>' : '')
+    +'<span style="flex:1;"></span>'
+    +'<span class="vault-tally">CAP: <span class="vault-tally-val">'+cap+'</span> PER MATERIAL</span>'
     +'</div>';
 
-  // Build group data from MATERIAL_DROPS keys
-  var groups=Object.keys(MATERIAL_DROPS);
-  groups.forEach(function(groupId){
-    var entries=MATERIAL_DROPS[groupId];
-    var hasAny=entries.some(function(e){return (PERSIST.town.materials[e.id]||0)>0;});
-    // Check if player has visited any area with this group
-    var visited=AREA_DEFS.some(function(a){
-      return a.materialGroup===groupId && (PERSIST.areaRuns[a.id]||0)>0;
-    });
+  // Column headers
+  html += '<div class="vault-col-headers">'
+    +'<div class="vault-col-identity"></div>'
+    +'<div class="vault-col-materials">'
+      +'<div class="vault-col-hdr">COMMON</div>'
+      +'<div class="vault-col-hdr">UNCOMMON</div>'
+      +'<div class="vault-col-hdr">RARE</div>'
+    +'</div>'
+    +'<div class="vault-col-converter vault-col-hdr">CONVERTER</div>'
+    +'</div>';
 
-    if(!visited){
-      rightHtml+='<div class="vault-mat-group vault-mat-group-unknown">'
-        +'<div class="vault-mat-group-name">'+groupId.toUpperCase()+' <span class="vault-mat-group-areas">— unexplored</span></div>'
-        +'<div class="vault-mat-unknown-hint">Run in a '+groupId+' area to discover these materials.</div>'
+  // Area rows
+  areaData.forEach(function(area){
+    if(!area.visited){
+      // Locked row
+      html += '<div class="vault-area-row locked">'
+        +'<div class="vault-accent"></div>'
+        +'<div class="vault-area-identity">'
+          +'<div class="vault-area-name" style="color:#3a2810;">???</div>'
+          +'<div class="vault-area-sub">Unexplored</div>'
+        +'</div>'
+        +'<div class="vault-col-materials" style="flex:1;display:grid;grid-template-columns:repeat(3,1fr);gap:16px;">'
+          +'<div style="text-align:center;"><div class="vault-locked-sigil">?</div></div>'
+          +'<div style="text-align:center;"><div class="vault-locked-sigil">?</div></div>'
+          +'<div style="text-align:center;"><div class="vault-locked-sigil">?</div></div>'
+        +'</div>'
+        +'<div class="vault-converter-cell"><span style="font-size:16px;opacity:.3;">🔒</span></div>'
         +'</div>';
       return;
     }
 
-    // Area names for this group
-    var areaNames=AREA_DEFS.filter(function(a){return a.materialGroup===groupId;})
-      .map(function(a){return a.name;}).join(' · ');
+    var rowCls = 'vault-area-row' + (area.hasAtCap ? ' has-cap' : '');
+    var areaIconHtml = '<img src="assets/icons/areas/'+area.areaBg+'.png" class="area-icon-sprite" onerror="this.outerHTML=\'<span class=area-icon>'+area.areaIcon+'</span>\'">';
+    html += '<div class="'+rowCls+'">'
+      +'<div class="vault-accent"></div>'
+      +'<div class="vault-area-identity">'
+        +'<div class="vault-area-identity-bg" style="background-image:url(\'assets/backgrounds/'+area.areaBg+'.png\');"></div>'
+        +'<div class="vault-area-identity-content">'
+          +'<div class="vault-area-name">'+areaIconHtml+' '+area.areaNames+'</div>'
+          +'<div class="vault-area-sub">'+area.groupId+'</div>'
+          +'<div class="vault-area-runs">'+area.runs+' RUN'+(area.runs!==1?'S':'')+'</div>'
+        +'</div>'
+      +'</div>'
+      +'<div style="flex:1;display:grid;grid-template-columns:repeat(3,1fr);gap:16px;">';
 
-    rightHtml+='<div class="vault-mat-group">'
-      +'<div class="vault-mat-group-name">'+groupId.toUpperCase()
-        +' <span class="vault-mat-group-areas">'+areaNames+'</span>'
-      +'</div>';
-
-    entries.forEach(function(entry){
-      var mat=MATERIALS[entry.id]; if(!mat) return;
-      var qty=PERSIST.town.materials[entry.id]||0;
-      var pct=Math.min(100,Math.round((qty/cap)*100));
-      var atCap=qty>=cap;
-      var rarity=mat.rarity||'common';
-      rightHtml+='<div class="vault-mat-row'+(atCap?' vault-mat-at-cap':'')+'">'
-        +'<span class="vault-mat-icon">'+mat.icon+'</span>'
-        +'<span class="vault-mat-name">'+mat.name+'</span>'
-        +'<span class="vault-mat-rarity vault-rarity-'+rarity+'">'+rarity.toUpperCase().slice(0,5)+'</span>'
-        +'<div class="vault-mat-bar-wrap"><div class="vault-mat-bar-bg">'
-          +'<div class="vault-mat-bar vault-bar-'+rarity+'" style="width:'+pct+'%"></div>'
-        +'</div></div>'
-        +'<span class="vault-mat-count'+(atCap?' vault-mat-count-cap':'')+'">'+qty+'</span>'
-        +'<span class="vault-mat-cap">/'+cap+'</span>'
-        +(u.recycle&&qty>0?'<button class="vault-recycle-btn" onclick="recycleVaultItem(\''+entry.id+'\',1)" title="Recycle 1 for '+getRecycleValue(entry.id)+'g">↩</button>':'')
+    // Material cells (common, uncommon, rare)
+    area.materials.forEach(function(mat){
+      var cellCls = 'vault-mat-cell' + (mat.atCap ? ' at-cap' : '');
+      var fillCls = mat.atCap ? 'vault-fill-cap' : 'vault-fill-'+mat.rarity;
+      var matIconHtml = '<img src="assets/icons/materials/'+mat.id+'.png" class="mat-icon-sprite" onerror="this.outerHTML=\'<span class=vault-mat-glyph>'+mat.icon+'</span>\'">';
+      html += '<div class="'+cellCls+'">'
+        +'<div class="vault-mat-cell-top">'
+          +matIconHtml
+          +'<span class="vault-mat-name vault-mat-name-'+mat.rarity+'">'+mat.name+'</span>'
+        +'</div>'
+        +'<div class="vault-fill-track"><div class="vault-fill-bar '+fillCls+'" style="width:'+mat.pct+'%"></div></div>'
+        +'<div style="display:flex;align-items:center;gap:4px;margin-top:3px;">'
+          +'<span class="vault-mat-count">'+mat.qty+'</span>'
+          +'<span class="vault-mat-count-cap">/'+mat.cap+'</span>'
+          +(mat.atCap ? '<span class="vault-mat-full-pill">● FULL</span>' : '')
+        +'</div>'
         +'</div>';
     });
 
-    // Converter button if unlocked and has enough commons
-    if(u.converter){
-      var commonEntry=entries.find(function(e){return MATERIALS[e.id]&&MATERIALS[e.id].rarity==='common';});
-      var uncommonEntry=entries.find(function(e){return MATERIALS[e.id]&&MATERIALS[e.id].rarity==='uncommon';});
-      if(commonEntry&&uncommonEntry){
-        var commonQty=PERSIST.town.materials[commonEntry.id]||0;
-        var canConvert=commonQty>=10;
-        rightHtml+='<div class="vault-converter-row">'
-          +'<button class="vault-convert-btn" data-group="'+groupId+'" '+(canConvert?'onclick="convertMaterials(this.dataset.group)"':'disabled')+'>'
-          +(canConvert?'CONVERT 10 &#8594; 1 '+MATERIALS[uncommonEntry.id].name:'Need 10 '+MATERIALS[commonEntry.id].name)
-          +'</button></div>';
+    html += '</div>';
+
+    // Converter cell
+    html += '<div class="vault-converter-cell">';
+    if(area.converterUnlocked && area.materials.length >= 2){
+      var common = area.materials.find(function(m){ return m.rarity === 'common'; });
+      var uncommon = area.materials.find(function(m){ return m.rarity === 'uncommon'; });
+      if(common && uncommon){
+        var canConvert = common.qty >= 10;
+        html += '<button class="vault-convert-btn" '
+          +(canConvert ? 'onclick="convertMaterials(\''+area.groupId+'\')"' : 'disabled')+'>'
+          +(canConvert ? '10 → 1' : '10 → 1')
+          +'</button>';
       }
+    } else if(!area.converterUnlocked){
+      html += '<span style="font-size:16px;opacity:.3;">🔒</span>';
     }
-    rightHtml+='</div>';
+    html += '</div>';
+
+    html += '</div>';
   });
 
-  // ── UPGRADES footer ──
-  var upgHtml='<div class="vault-upgrades-row">';
-  VAULT_UPGRADES.forEach(function(upg){
-    var owned=!!u[upg.id];
-    var meetsReq=!upg.requires||!!u[upg.requires];
-    var meetsLevel=lv>=(upg.minLevel||1);
-    var canAfford=PERSIST.gold>=upg.cost;
-    var canBuy=!owned&&meetsReq&&meetsLevel&&canAfford;
-    var cls='vault-upg-item'+(owned?' vault-upg-owned':'')+(meetsReq&&meetsLevel&&!owned?' vault-upg-next':'');
-    upgHtml+='<div class="'+cls+'">'
-      +'<div class="vault-upg-name">'+upg.label+'</div>'
-      +'<div class="vault-upg-effect">'+upg.effect+'</div>'
-      +(owned?'':!meetsReq?'<div class="vault-upg-req">Requires '+upg.requires+'</div>'
-        :!meetsLevel?'<div class="vault-upg-req">Needs Vault Lv.'+upg.minLevel+'</div>'
-        :'<button class="vault-upg-btn" '+(canBuy?'onclick="buyVaultUpgrade(\''+upg.id+'\')"':'disabled')+'>'
-          +(canAfford?'✦'+upg.cost+'g':'Need '+(upg.cost-PERSIST.gold)+'g')
-        +'</button>')
+  inner.innerHTML = html;
+  renderVaultUpgradesFooter();
+}
+
+function renderVaultUpgradesFooter(){
+  var u=PERSIST.town.vaultUpgrades||{};
+  var lv = getVaultLevel();
+  // ── Upgrades footer (anchored, not scrollable) ──
+  var footerEl = document.getElementById('vault-upgrades-footer');
+  if(footerEl){
+    var upgHtml = '<span class="vault-upgrades-title">UPGRADES</span>';
+
+    VAULT_UPGRADES.forEach(function(upg){
+      var owned = !!(u[upg.id]);
+      var meetsReq = !upg.requires || !!(u[upg.requires]);
+      var meetsLevel = lv >= (upg.minLevel||1);
+      var canAfford = PERSIST.gold >= upg.cost;
+
+      if(owned){
+        upgHtml += '<div class="vault-upg-chip owned" title="'+upg.effect+'">✓ '+upg.label+'</div>';
+      } else if(meetsReq && meetsLevel){
+        upgHtml += '<div class="vault-upg-chip available" onclick="buyVaultUpgrade(\''+upg.id+'\')" title="'+upg.effect+'">'
+          +upg.label+' · '+(canAfford ? '✦'+upg.cost+'g' : 'Need '+upg.cost+'g')
+          +'</div>';
+      } else {
+        var reason = !meetsLevel ? 'Vault Lv.'+upg.minLevel : 'Requires '+upg.requires;
+        upgHtml += '<div class="vault-upg-chip locked" title="'+reason+'">🔒 '+upg.label+'</div>';
+      }
+    });
+
+    footerEl.innerHTML = upgHtml;
+    footerEl.style.display = 'flex';
+  }
+}
+
+// ── Inventory Tab ──
+
+function renderVaultInventory(){
+  var u=PERSIST.town.vaultUpgrades||{};
+  var items = PERSIST.town.items || {};
+  var relics = PERSIST.town.relics || {};
+
+  // Categorise items
+  var categories = [
+    { id:'chests', label:'CHESTS', icon:'📦', items:[] },
+    { id:'keys', label:'KEYS', icon:'🗝️', items:[] },
+    { id:'gems', label:'GEMS', icon:'💎', items:[] },
+    { id:'tokens', label:'SUMMON TOKENS', icon:'🎟️', items:[] },
+    { id:'relics', label:'RELICS', icon:'⚗️', items:[] },
+    { id:'misc', label:'OTHER', icon:'📋', items:[] },
+  ];
+
+  // Sort LOOT_DEFS items into categories
+  Object.keys(items).forEach(function(itemId){
+    var qty = items[itemId] || 0;
+    if(qty <= 0) return;
+    var def = (typeof LOOT_DEFS !== 'undefined' && LOOT_DEFS[itemId]) || null;
+    var entry = { id:itemId, qty:qty, name:def?def.name:itemId, icon:def?def.icon:'❓', type:def?def.type:'misc' };
+
+    if(entry.type === 'chest') categories[0].items.push(entry);
+    else if(entry.type === 'key') categories[1].items.push(entry);
+    else if(entry.type === 'gem') categories[2].items.push(entry);
+    else if(entry.type === 'token' || entry.type === 'summon_token') categories[3].items.push(entry);
+    else categories[5].items.push(entry);
+  });
+
+  // Relics (unequipped, in town inventory)
+  Object.keys(relics).forEach(function(relicId){
+    var qty = relics[relicId] || 0;
+    if(qty <= 0) return;
+    var def = (typeof RELICS !== 'undefined' && RELICS[relicId]) || null;
+    categories[4].items.push({ id:relicId, qty:qty, name:def?def.name:relicId, icon:def?def.icon:'⚗️', type:'relic' });
+  });
+
+  // Gems from persist (if stored separately)
+  // Future: PERSIST.gems or similar
+
+  // Count total items
+  var totalItems = 0;
+  categories.forEach(function(cat){ totalItems += cat.items.length; });
+
+  var html = '<div class="vault-top-bar">'
+    +'<span class="vault-tally">ITEMS <span class="vault-tally-val">'+totalItems+'</span></span>'
+    +'<span style="flex:1;"></span>'
+    +(u.sellDesk ? '<span class="vault-tally" style="color:#70a030;">SELL DESK ACTIVE</span>' : '')
+    +'</div>';
+
+  if(totalItems === 0){
+    html += '<div style="padding:40px 20px;text-align:center;">'
+      +'<div style="font-size:24px;margin-bottom:12px;opacity:.4;">📦</div>'
+      +'<div style="font-family:Cinzel,serif;font-size:10px;color:#3a2810;letter-spacing:2px;">INVENTORY EMPTY</div>'
+      +'<div style="font-size:9px;color:#2a1808;margin-top:6px;">Items from runs, chests, and rewards will appear here.</div>'
       +'</div>';
-  });
-  upgHtml+='</div>';
+    return html;
+  }
 
-  inner.innerHTML=
-    '<div class="vault-two-col">'
-      +'<div class="vault-left">'+leftHtml+'</div>'
-      +'<div class="vault-right">'+rightHtml+'</div>'
-    +'</div>'
-    +upgHtml;
+  // Render each non-empty category
+  categories.forEach(function(cat){
+    if(cat.items.length === 0) return;
+
+    html += '<div class="vault-inv-category">'
+      +'<div class="vault-inv-cat-header">'+cat.icon+' '+cat.label+'</div>'
+      +'<div class="vault-inv-cat-grid">';
+
+    cat.items.forEach(function(item){
+      var actions = '';
+      if(u.sellDesk){
+        var price = (typeof getSellPrice === 'function') ? getSellPrice({lootKey:item.id}) : 5;
+        actions += '<button class="vault-inv-action" onclick="event.stopPropagation();sellVaultItem(\''+item.id+'\')">SELL '+price+'g</button>';
+      }
+      if(item.type === 'relic'){
+        actions += '<button class="vault-inv-action vault-inv-action-go" onclick="event.stopPropagation();closeBuildingPanel(\'vault\');openBuilding(\'sanctum\')">EQUIP →</button>';
+      }
+      if(item.type === 'gem'){
+        actions += '<button class="vault-inv-action vault-inv-action-go" onclick="event.stopPropagation();closeBuildingPanel(\'vault\');openBuilding(\'sanctum\')">ASCEND →</button>';
+      }
+      if(item.type === 'token' || item.type === 'summon_token'){
+        actions += '<button class="vault-inv-action vault-inv-action-go" onclick="event.stopPropagation();closeBuildingPanel(\'vault\');openBuilding(\'shard_well\')">SUMMON →</button>';
+      }
+      if(item.type === 'chest'){
+        var hasKey = (typeof _chestHasKey === 'function') && _chestHasKey(item.id);
+        if(hasKey){
+          var keyId = (typeof _findKeyForChest === 'function') ? _findKeyForChest(item.id) : null;
+          actions += '<button class="vault-inv-action vault-inv-action-go" onclick="event.stopPropagation();openChest(\''+item.id+'\',\''+keyId+'\')">OPEN</button>';
+        }
+      }
+
+      html += '<div class="vault-inv-item">'
+        +'<div class="vault-inv-item-icon">'+item.icon+'</div>'
+        +'<div class="vault-inv-item-info">'
+          +'<div class="vault-inv-item-name">'+item.name+'</div>'
+          +'<div class="vault-inv-item-qty">×'+item.qty+'</div>'
+        +'</div>'
+        +(actions ? '<div class="vault-inv-item-actions">'+actions+'</div>' : '')
+        +'</div>';
+    });
+
+    html += '</div></div>';
+  });
+
+  return html;
 }
 
 // ── Helpers ──

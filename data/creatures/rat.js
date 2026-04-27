@@ -20,9 +20,14 @@ CREATURES.rat = {
     active:   false,
     cost:     0,
     cooldown: 0,
+    triggers: [
+      { on: 'on_attack', effect: {type: 'frenzy', stacks: 1} }
+    ],
   },
 
   // Deck generated from STR + deckOrder (12 cards at base)
   // 12 ÷ 5 = 2 each + 2 remainder → Gnaw 3, Slash 3, Dart 2, Strike 2, Brace 2
   deckOrder: ['rat_gnaw', 'rat_slash', 'rat_dart'],
 };
+// Backup: protect triggers array from being stripped
+CREATURES.rat._innateTriggers = [{"on": "on_attack", "effect": {"type": "frenzy", "stacks": 1}}];

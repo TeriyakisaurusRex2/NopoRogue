@@ -349,21 +349,68 @@
   <div class="town-panel-bg" id="vault-panel-bg" onclick="closeVaultPanel()">
     <div class="vault-panel-main" onclick="event.stopPropagation()">
       <div class="vault-header">
-        <div class="town-panel-icon">📦</div>
+        <div class="town-panel-icon"><img src="assets/icons/buildings/vault.png" alt="Vault" onerror="this.parentNode.textContent='📦'"></div>
         <div style="flex:1;">
           <div class="town-panel-name">THE VAULT</div>
-          <div class="town-panel-sub">Materials, chests and keys from your runs</div>
+          <div class="town-panel-sub">Materials and resources from your adventures</div>
         </div>
-        <button class="ach-close-btn" onclick="closeVaultPanel()">✕</button>
         <button class="tut-help-btn" onclick="showBuildingTutorial('vault')" title="Help">?</button>
+        <button class="ach-close-btn" onclick="closeVaultPanel()">✕</button>
+      </div>
+      <div class="npc-greeting" id="vault-npc-greeting">
+        <div class="npc-greeting-sprite"><img src="assets/creatures/vault_keeper.png" alt="Shtole" onerror="this.parentNode.textContent='🦦'"></div>
+        <div class="npc-greeting-text">
+          <div class="npc-greeting-name">SHTOLE</div>
+          <div class="npc-greeting-msg" id="vault-npc-msg">Everything is accounted for.</div>
+        </div>
       </div>
       <div class="vault-level-row">
         <span class="vault-level-badge" id="vault-level-badge">VAULT Lv.1</span>
         <div class="vault-xp-wrap"><div class="vault-xp-bar" id="vault-xp-bar" style="width:0%"></div></div>
         <span class="vault-xp-txt" id="vault-xp-txt"></span>
       </div>
+      <div class="vault-tabs">
+        <div class="vault-tab active" onclick="switchVaultTab('materials')" id="vtab-materials">MATERIALS</div>
+        <div class="vault-tab" onclick="switchVaultTab('inventory')" id="vtab-inventory">INVENTORY</div>
+      </div>
       <div class="town-locked-msg" id="vault-locked-msg" style="display:none;"></div>
       <div id="vault-body-inner" style="flex:1;overflow-y:auto;"></div>
+      <div id="vault-upgrades-footer" class="vault-upgrades-bar" style="display:none;"></div>
+    </div>
+  </div>
+
+  <!-- Adventurer's Hall panel -->
+  <div class="town-panel-bg" id="adventurers_hall-panel-bg" onclick="closeBuildingPanel('adventurers_hall')">
+    <div class="hall-panel-main" onclick="event.stopPropagation()">
+      <div class="hall-header">
+        <div class="town-panel-icon"><img src="assets/icons/buildings/adventurers_hall.png" alt="Hall" onerror="this.parentNode.textContent='⚐'"></div>
+        <div style="flex:1;">
+          <div class="town-panel-name">ADVENTURER'S HALL</div>
+          <div class="town-panel-sub">Where champions gather and contracts are signed</div>
+        </div>
+        <button class="tut-help-btn" onclick="showBuildingTutorial('adventurers_hall')" title="Help">?</button>
+        <button class="ach-close-btn" onclick="closeAdventurersHall()">✕</button>
+      </div>
+      <div class="npc-greeting" id="hall-npc-greeting">
+        <div class="npc-greeting-sprite"><img src="assets/creatures/guild_girl.png" alt="Leona" style="transform:scaleX(-1);" onerror="this.parentNode.textContent='👩'"></div>
+        <div class="npc-greeting-text">
+          <div class="npc-greeting-name">LEONA</div>
+          <div class="npc-greeting-msg" id="hall-npc-msg"></div>
+        </div>
+      </div>
+      <div class="hall-level-row">
+        <span class="vault-level-badge" id="hall-level-badge">HALL Lv.1</span>
+        <div class="vault-xp-wrap"><div class="vault-xp-bar" id="hall-xp-bar" style="width:0%"></div></div>
+        <span class="vault-xp-txt" id="hall-xp-txt"></span>
+      </div>
+      <div class="vault-tabs">
+        <div class="vault-tab active" onclick="switchHallTab('quests')" id="htab-quests">QUESTS</div>
+        <div class="vault-tab" onclick="switchHallTab('expeditions')" id="htab-expeditions">EXPEDITIONS</div>
+        <div class="vault-tab" onclick="switchHallTab('achievements')" id="htab-achievements">ACHIEVEMENTS</div>
+      </div>
+      <div class="town-locked-msg" id="adventurers_hall-locked-msg" style="display:none;"></div>
+      <div id="hall-body-inner" style="flex:1;overflow-y:auto;"></div>
+      <div id="hall-upgrades-footer" class="vault-upgrades-bar" style="display:none;"></div>
     </div>
   </div>
 
@@ -569,20 +616,20 @@
 </div>
 
 <!-- TUTORIAL OVERLAY -->
-<div id="tutorial-overlay" style="display:none;position:fixed;inset:0;z-index:600;background:rgba(0,0,0,.7);align-items:flex-end;justify-content:center;padding-bottom:0;">
-  <div id="tutorial-panel" style="background:#0e0802;border:1px solid #6a4010;border-top-left-radius:12px;border-top-right-radius:12px;width:100%;max-width:660px;padding:18px 20px 20px;position:relative;animation:tut-slidein .25s ease-out;">
-    <div style="display:flex;align-items:flex-start;gap:12px;">
+<div id="tutorial-overlay" style="display:none;position:fixed;inset:0;z-index:600;background:rgba(0,0,0,.7);align-items:center;justify-content:center;">
+  <div id="tutorial-panel" style="background:#0e0802;border:1px solid #6a4010;border-radius:12px;width:100%;max-width:800px;padding:24px 28px 24px;position:relative;animation:tut-slidein .25s ease-out;margin-bottom:10vh;">
+    <div style="display:flex;align-items:flex-start;gap:16px;">
       <div id="tut-icon" style="font-size:32px;flex-shrink:0;line-height:1;"></div>
       <div style="flex:1;min-width:0;">
-        <div id="tut-title" style="font-family:'Cinzel',serif;font-size:13px;color:#d4a843;letter-spacing:1px;margin-bottom:6px;"></div>
-        <div id="tut-body" style="font-size:10px;color:#a08060;line-height:1.7;"></div>
+        <div id="tut-title" style="font-family:'Cinzel',serif;font-size:15px;color:#d4a843;letter-spacing:1.5px;margin-bottom:10px;"></div>
+        <div id="tut-body" style="font-size:12px;color:#a08060;line-height:1.8;"></div>
       </div>
     </div>
-    <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end;align-items:center;">
-      <span id="tut-step" style="font-size:8px;color:#4a3010;flex:1;font-family:'Cinzel',serif;"></span>
-      <button onclick="dismissTutorial()" style="font-family:'Cinzel',serif;font-size:9px;padding:6px 14px;border-radius:4px;border:1px solid #3a2010;background:transparent;color:#5a4020;cursor:pointer;">Dismiss</button>
-      <button onclick="dismissAllTutorials()" style="font-family:'Cinzel',serif;font-size:9px;padding:6px 14px;border-radius:4px;border:1px solid #2a1808;background:transparent;color:#3a2010;cursor:pointer;">Disable All Tips</button>
-      <button id="tut-next-btn" onclick="tutorialNext()" style="font-family:'Cinzel',serif;font-size:9px;padding:6px 18px;border-radius:4px;border:1px solid #c09030;background:rgba(30,18,4,.8);color:#d4a843;cursor:pointer;display:none;">Next →</button>
+    <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end;align-items:center;">
+      <span id="tut-step" style="font-size:9px;color:#4a3010;flex:1;font-family:'Cinzel',serif;"></span>
+      <button onclick="dismissTutorial()" style="font-family:'Cinzel',serif;font-size:10px;padding:8px 16px;border-radius:4px;border:1px solid #3a2010;background:transparent;color:#5a4020;cursor:pointer;">Dismiss</button>
+      <button onclick="dismissAllTutorials()" style="font-family:'Cinzel',serif;font-size:10px;padding:8px 16px;border-radius:4px;border:1px solid #2a1808;background:transparent;color:#3a2010;cursor:pointer;">Disable All Tips</button>
+      <button id="tut-next-btn" onclick="tutorialNext()" style="font-family:'Cinzel',serif;font-size:10px;padding:8px 20px;border-radius:4px;border:1px solid #c09030;background:rgba(30,18,4,.8);color:#d4a843;cursor:pointer;display:none;">Next →</button>
     </div>
   </div>
 </div>
@@ -665,19 +712,15 @@
 
 <div id="gold-toast" style="display:none;position:fixed;inset:0;z-index:170;align-items:center;justify-content:center;">
   <div id="gold-toast-inner" style="background:rgba(10,6,1,.96);border:1px solid #7a5010;border-radius:10px;padding:16px 24px;text-align:center;min-width:240px;max-width:300px;box-shadow:0 0 30px rgba(0,0,0,.8);animation:lu-toast-in .25s ease-out;">
-    <div style="font-family:'Cinzel',serif;font-size:9px;color:#5a4020;letter-spacing:1px;margin-bottom:8px;">ENEMY DEFEATED</div>
-    <div id="gold-toast-amount" style="font-size:26px;color:#d4a843;letter-spacing:2px;font-family:'Cinzel',serif;margin-bottom:2px;">+5 ✦</div>
-    <div style="font-size:8px;color:#5a4020;margin-bottom:12px;">GOLD COLLECTED</div>
-    <div id="gold-toast-next-wrap" style="border-top:1px solid #2a1808;padding-top:10px;margin-bottom:12px;">
-      <div style="font-size:8px;color:#5a4020;font-family:'Cinzel',serif;letter-spacing:.5px;margin-bottom:5px;">NEXT BATTLE</div>
-      <div id="gold-toast-next-icon" style="font-size:22px;margin-bottom:3px;">👺</div>
-      <div id="gold-toast-next" style="font-size:10px;color:#c0a060;font-family:'Cinzel',serif;"></div>
-      <div id="gold-toast-next-hp" style="font-size:8px;color:#5a4020;margin-top:2px;"></div>
-    </div>
-    <div style="height:3px;background:rgba(0,0,0,.4);border-radius:3px;overflow:hidden;">
+    <div style="font-family:'Cinzel',serif;font-size:9px;color:#60a060;letter-spacing:2px;margin-bottom:10px;">✦ ENEMY DEFEATED ✦</div>
+    <div style="font-size:8px;color:#5a4020;letter-spacing:2px;font-family:'Cinzel',serif;margin-bottom:6px;">NEXT ENEMY</div>
+    <div id="gold-toast-next-icon" style="font-size:32px;margin-bottom:4px;">👺</div>
+    <div id="gold-toast-next" style="font-size:12px;color:#d4a843;font-family:'Cinzel',serif;letter-spacing:1px;"></div>
+    <div id="gold-toast-next-hp" style="font-size:9px;color:#806040;margin-top:3px;margin-bottom:12px;"></div>
+    <div style="height:3px;background:rgba(0,0,0,.5);border-radius:3px;overflow:hidden;margin-bottom:6px;">
       <div id="gold-toast-bar" style="height:100%;width:100%;background:#c09030;border-radius:3px;transition:width .1s linear;"></div>
     </div>
-    <div id="gold-toast-lbl" style="font-size:8px;color:#5a4020;font-family:'Cinzel',serif;margin-top:5px;letter-spacing:.3px;">Continuing in 3s...</div>
+    <div id="gold-toast-lbl" style="font-size:8px;color:#5a4020;font-family:'Cinzel',serif;letter-spacing:.3px;">Continuing in 3s...</div>
   </div>
 </div>
 
@@ -846,6 +889,9 @@
   <!-- ── Data: card effects (executeCard, activateInnate, combat helpers) ── -->
   <script src="data/card_effects.js"></script>
 
+  <!-- ── New unified combat system (symmetrical actor-based) ── -->
+  <script src="data/combat.js"></script>
+
   <!-- ── Data: achievements ── -->
   <script src="data/achievements.js"></script>
 
@@ -861,11 +907,13 @@
   <script src="data/creatures/amalgam.js"></script>
   <script src="data/creatures/ashbat.js"></script>
   <script src="data/creatures/bandit.js"></script>
+  <script src="data/creatures/bloom.js"></script>
   <script src="data/creatures/cavegrub.js"></script>
   <script src="data/creatures/corruptionbloom.js"></script>
   <script src="data/creatures/cursedurn.js"></script>
   <script src="data/creatures/dragon.js"></script>
   <script src="data/creatures/drownedsailor.js"></script>
+  <script src="data/creatures/drain_lurker.js"></script>
   <script src="data/creatures/druid.js"></script>
   <script src="data/creatures/dunecrawler.js"></script>
   <script src="data/creatures/embergolem.js"></script>
@@ -899,8 +947,10 @@
   <script src="data/creatures/sharknight.js"></script>
   <script src="data/creatures/siren.js"></script>
   <script src="data/creatures/skeleton.js"></script>
+  <script src="data/creatures/slime.js"></script>
   <script src="data/creatures/snake.js"></script>
   <script src="data/creatures/sporepuff.js"></script>
+  <script src="data/creatures/squanchback.js"></script>
   <script src="data/creatures/temple_guardian.js"></script>
   <script src="data/creatures/thief.js"></script>
   <script src="data/creatures/tidecrab.js"></script>
@@ -916,14 +966,53 @@
   <script src="data/creatures/waxsoldier.js"></script>
   <script src="data/creatures/wisp.js"></script>
   <script src="data/creatures/witch.js"></script>
+  <script src="data/creatures/wolf.js"></script>
   <script src="data/creatures/wretch.js"></script>
   <script src="data/creatures/wyrm.js"></script>
+  <script src="data/creatures/zombie.js"></script>
+  <script src="data/creatures/dojo_tiger.js"></script>
 
   <!-- ── Audio system ── -->
   <script src="audio.js"></script>
 
   <!-- ── Boot: runs after all data is loaded ── -->
   <script src="init.js"></script>
+
+  <!-- ── Build innate effects/triggers registry LAST — after everything ── -->
+  <!-- Fallback: re-reads effect/triggers from creature files if stripped -->
+  <script>
+  (function(){
+    window.INNATE_EFFECTS = {};
+    window.INNATE_TRIGGERS = {};
+    var countE = 0, countT = 0;
+    Object.keys(CREATURES).forEach(function(id){
+      var c = CREATURES[id];
+      if(!c || !c.innate) return;
+      var inn = c.innate;
+      // Check innate.effect
+      if(inn.effect && inn.effect.length){
+        INNATE_EFFECTS[inn.id] = inn.effect.slice();
+        countE++;
+      }
+      // Check _effect backup (set by creature files)
+      if(!INNATE_EFFECTS[inn.id] && c._innateEffect && c._innateEffect.length){
+        INNATE_EFFECTS[inn.id] = c._innateEffect.slice();
+        countE++;
+      }
+      // Check innate.triggers
+      if(inn.triggers && inn.triggers.length){
+        INNATE_TRIGGERS[inn.id] = inn.triggers.slice();
+        countT++;
+      }
+      // Check _triggers backup
+      if(!INNATE_TRIGGERS[inn.id] && c._innateTriggers && c._innateTriggers.length){
+        INNATE_TRIGGERS[inn.id] = c._innateTriggers.slice();
+        countT++;
+      }
+    });
+    console.log('INNATE registry: '+countE+' effects, '+countT+' triggers');
+  })();
+  </script>
 
 </body>
 </html>

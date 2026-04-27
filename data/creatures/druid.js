@@ -20,10 +20,11 @@ CREATURES.druid = {
     active:   true,
     cost:     50,
     cooldown: 8000,
+    effect: [
+      {type: 'churn_all_damage', dmgPerCard: 5}
+    ],
   },
 
-  // Deck is generated from STR. The 5 identity cards below are distributed
-  // evenly (20% each) at STR 10. Extra slots from higher STR are filled in
-  // deckOrder priority: unique cards first (in listed order), then universals.
   deckOrder: ['druid_void_bolt', 'druid_star_shard', 'druid_nova_burst'],
 };
+CREATURES.druid._innateEffect = [{type: 'churn_all_damage', dmgPerCard: 5}];

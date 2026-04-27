@@ -26,7 +26,7 @@ var KEYWORDS = {
   Dodge:     {cls:'dodge',     def:'The next incoming attack is completely evaded. Manabound: purged if mana hits 0.'},
   Haste:     {cls:'haste',     def:'Draw speed increased by X% for the duration.'},
   Frenzy:    {cls:'hastened',  def:'Stacking draw-speed buff. Each stack = +10% draw speed. Duration starts at 3s, shortens by 10% per stack. Collapses entirely when timer expires. Manabound. Drains 3 mana/s.'},
-  Thorns:    {cls:'burn',      def:'While active, each hit reflects X damage back to the attacker.'},
+  Thorns:    {cls:'burn',      def:'While active, each hit from an attack card reflects X damage back to the attacker. Triggers even through Shield. Manabound: purged if mana hits 0.'},
 
   // ── New status mechanics ──
   Volatile:  {cls:'burn',      def:'Stacking. Timer resets on each new stack. At 5+ stacks: detonates for 2× base damage. Below 5 stacks when timer expires: fizzles for 1× base damage. [Stabilize] raises threshold to 10 stacks (10+ = 4× damage).'},
@@ -47,6 +47,7 @@ var KEYWORDS = {
   Crit:      {cls:'hastened',  def:'A strike that deals double damage. Triggered by chance or special conditions.'},
   Echo:      {cls:'echo',      def:'If this card is discarded by any effect — innate, overflow, or another card — its Echo effect triggers.'},
   Manabound: {cls:'drain',     def:'This effect is purged immediately if the creature\'s mana hits 0. Applies to Shield, Dodge, and Frenzy.'},
+  Debuff:    {cls:'cursed',    def:'Any negative status effect on the target (Weaken, Poison, Burn, Slow, etc.). Some effects trigger only when a debuff is present.'},
   Ethereal:  {cls:'echo',      def:'This card vanishes when played or discarded — it does not return to your deck. Created temporarily by special abilities.'},
   Conjured:  {cls:'echo',      def:'This card was created during combat. It circulates normally through your deck — not removed on play or discard. Removed from the game at end of battle. [Echo] on a Conjured card removes all Conjured copies from everywhere.'},
 };
@@ -122,13 +123,13 @@ var CARDS = {
   // Drifting Comet (heavy damage + control — [Suspend] needs defining first)
 
   // ── Cursed Paladin ──
-  paladin_smite: {id:'paladin_smite', name:'Smite', icon:'🔥', type:'attack', unique:true, champ:'paladin', statId:'wis',
-    effect:'Deal 8 damage. Apply WIS [Burn] for 9s.\n[Burn] on enemy: [Crit]: 75%.',
-    effects:[{type:'dmg_if_burning',base:8,critPct:75},{type:'burn_stat',base:0,stat:'wis',div:1,dur:9}]},
+  paladin_smite: {id:'paladin_smite', name:'Smite', icon:'🔥', type:'attack', unique:true, champ:'paladin', statId:'str',
+    effect:'Deal 14 damage. Apply 2 [Burn] for 5s.\n[Burn] on enemy: [Crit]: 75%.',
+    effects:[{type:'dmg_if_burning',base:14,critPct:75},{type:'burn',dpt:2,dur:5}]},
 
   paladin_consecrate: {id:'paladin_consecrate', name:'Consecrate', icon:'🕊️', type:'utility', unique:true, champ:'paladin', statId:'wis',
-    effect:'Apply [Weaken] for 6s.\n[Sorcery] [20]: Apply WIS [Burn] for 9s.',
-    effects:[{type:'weaken',dur:6},{type:'sorcery',cost:20,effect:{type:'burn_stat',base:0,stat:'wis',div:1,dur:9}}]},
+    effect:'Apply [Weaken] for 6s.\n[Sorcery] [20]: Apply 2 [Burn] for 5s.',
+    effects:[{type:'weaken',dur:6},{type:'sorcery',cost:20,effect:{type:'burn',dpt:2,dur:5}}]},
 
   paladin_aegis: {id:'paladin_aegis', name:'Aegis', icon:'🛡️', type:'defense', unique:true, champ:'paladin', statId:'str',
     effect:'Gain STR [Shield] for 6s.\n[Sorcery] [25]: Apply [Weaken] for 4s.',
@@ -138,12 +139,12 @@ var CARDS = {
 
   // ── Faceless Thief ──
   thief_quick_slash: {id:'thief_quick_slash', name:'Quick Slash', icon:'⚡', type:'attack', unique:true, champ:'thief', statId:'agi',
-    effect:'Deal 10 + AGI ÷ 4 damage.\n[Crit]: 15%.',
-    effects:[{type:'dmg_crit',base:10,pct:15},{type:'dmg_stat',base:0,stat:'agi',div:4}]},
+    effect:'Deal 10 + AGI ÷ 4 damage.\n[Crit]: 20%.',
+    effects:[{type:'dmg_crit',base:10,pct:20},{type:'dmg_stat',base:0,stat:'agi',div:4}]},
 
-  thief_poison_dart: {id:'thief_poison_dart', name:'Poison Dart', icon:'🎯', type:'attack', unique:true, champ:'thief', statId:'wis',
-    effect:'Deal 5 damage. Apply 4 [Poison].\n[Sorcery] [20]: Apply 4 additional [Poison].',
-    effects:[{type:'dmg',base:5},{type:'poison',dpt:4,dur:8},{type:'sorcery',cost:20,effect:{type:'poison',dpt:4,dur:8}}]},
+  thief_poison_dart: {id:'thief_poison_dart', name:'Poison Dart', icon:'🎯', type:'attack', unique:true, champ:'thief', statId:'agi',
+    effect:'Deal 10 damage. Apply 1 [Poison].\n[Sorcery] [20]: Apply 1 additional [Poison].',
+    effects:[{type:'dmg',base:10},{type:'poison',dpt:1,dur:8},{type:'sorcery',cost:20,effect:{type:'poison',dpt:1,dur:8}}]},
 
   thief_shadow_step: {id:'thief_shadow_step', name:'Shadow Step', icon:'👣', type:'utility', unique:true, champ:'thief', statId:'agi',
     effect:'Apply [Weaken] for 6s.',
@@ -158,12 +159,12 @@ var CARDS = {
 
   // Shadow Mark ghost card — generated by innate, not in any deck
   ghost_shadow_mark: {id:'ghost_shadow_mark', name:'Shadow Mark', icon:'🌑', type:'utility', unique:false, champ:'thief', statId:'agi',
-    effect:'Apply 6 [Poison].\nNext attack card: +[Crit]: 100%.'},
+    effect:'Apply 3 [Poison].\nNext attack card: +[Crit]: 100%.'},
 
   // ── Giant Rat ──
   rat_gnaw:   {id:'rat_gnaw',   name:'Gnaw',   icon:'🐀', type:'attack',  unique:true, champ:'rat', statId:'agi',
-    effect:'Deal 12 damage. Apply 1 [Poison].',
-    effects:[{type:'dmg',base:12},{type:'poison',dpt:1,dur:8}]},
+    effect:'Deal 10 damage. Apply 2 [Poison].',
+    effects:[{type:'dmg',base:10},{type:'poison',dpt:2,dur:8}]},
   rat_slash:  {id:'rat_slash',  name:'Slash',  icon:'⚡', type:'attack',  unique:true, champ:'rat', statId:'agi',
     effect:'Deal 13 + AGI ÷ 4 damage.\n[Crit]: 15%.',
     effects:[{type:'dmg_crit',base:13,pct:15},{type:'dmg_stat',base:0,stat:'agi',div:4}]},
@@ -172,19 +173,16 @@ var CARDS = {
     effects:[{type:'haste',pct:20,dur:3}]},
 
   // ── Goblin Scavenger ──
-  goblin_filth_toss:    {id:'goblin_filth_toss',    name:'Filth Toss',      icon:'💀', type:'attack',  champ:'goblin', statId:'wis',
-    effect:'Deal 5 damage. Apply [Weaken] for 4s. Apply [Poison] (3/2s) for 6s.',
-    effects:[{type:'dmg',base:5},{type:'weaken',dur:4},{type:'poison',dpt:3,dur:6}]},
-  goblin_crippling_jab: {id:'goblin_crippling_jab', name:'Crippling Jab',  icon:'🗡️', type:'attack',  champ:'goblin', statId:'str',
-    effect:'Deal 7 damage. Apply [Weaken] for 5s.',
-    effects:[{type:'dmg',base:7},{type:'weaken',dur:5}]},
-  goblin_pocket_sand:   {id:'goblin_pocket_sand',   name:'Pocket Sand',    icon:'✨', type:'utility', champ:'goblin', statId:'agi',
-    effect:'Apply [Slow] for 4s.',
-    effects:[{type:'slow_draw',dur:4}]},
-  goblin_toxic_blade:   {id:'goblin_toxic_blade',   name:'Toxic Blade',    icon:'🗡️', type:'attack',  champ:'goblin', statId:'wis',
-    effect:'Deal 8 damage. Apply [Poison] (6/2s) for 6s.',
-    effects:[{type:'dmg',base:8},{type:'poison',dpt:6,dur:6}],
-    unlock:{champion:'goblin',level:5,gold:50}},
+  goblin_jab:        {id:'goblin_jab',        name:'Jab',        icon:'🗡️', type:'attack', unique:true, champ:'goblin', statId:'str',
+    effect:'Deal 10 damage. Apply [Weaken] for 4s.\n[Sorcery] [20]: Gain [Haste] 20% for 3s.',
+    effects:[{type:'dmg',base:10},{type:'weaken',dur:4},{type:'sorcery',cost:20,effect:{type:'haste',pct:20,dur:3}}]},
+  goblin_filth_toss: {id:'goblin_filth_toss', name:'Filth Toss', icon:'💀', type:'attack', unique:true, champ:'goblin', statId:'wis',
+    effect:'Deal 12 damage.\n[Sorcery] [20]: Apply 1 [Poison].',
+    effects:[{type:'dmg',base:12},{type:'sorcery',cost:20,effect:{type:'poison',dpt:1,dur:8}}]},
+  goblin_cheap_shot: {id:'goblin_cheap_shot', name:'Cheap Shot', icon:'👺', type:'attack', unique:true, champ:'goblin', statId:'agi',
+    effect:'Deal 10 damage.\n[Debuff] on enemy: [Crit]: 40%.',
+    effects:[{type:'dmg_if_debuffed',base:10,critPct:40}]},
+  // goblin_toxic_blade removed — consolidated into goblin_jab/filth_toss/cheap_shot
   goblin_festering_strike:{id:'goblin_festering_strike',name:'Festering Strike',icon:'☠️',type:'attack',champ:'goblin',statId:'wis',
     effect:'Deal 4 damage per active debuff on target (min 4).',
     effects:[{type:'dmg_per_debuff',base:4,min:4}],
@@ -210,23 +208,122 @@ var CARDS = {
     unlock:{champion:'smuggler',level:5,gold:50}},
 
   // ── Squanchback ──
-  squanchback_lunge:  {id:'squanchback_lunge',  name:'Lunge',   icon:'👊', type:'attack',  champ:'squanchback', statId:'str',
-    effect:'Deal 14 damage.',
-    effects:[{type:'dmg',base:14}]},
-  squanchback_harden: {id:'squanchback_harden', name:'Harden',  icon:'🛡️', type:'defense', champ:'squanchback', statId:'str',
-    effect:'Gain [Shield] (18) for 5s.',
-    effects:[{type:'shield',amt:18,dur:5}]},
-  squanchback_gnash:  {id:'squanchback_gnash',  name:'Gnash',   icon:'🦷', type:'attack',  champ:'squanchback', statId:'str',
-    effect:'Deal 10 damage. Apply [Weaken] for 4s.',
-    effects:[{type:'dmg',base:10},{type:'weaken',dur:4}]},
-  squanchback_spine_rake:{id:'squanchback_spine_rake',name:'Spine Rake',icon:'🦔',type:'attack',champ:'squanchback',statId:'str',
-    effect:'Deal 8 damage. Apply [Thorns] (10) for 8s.',
-    effects:[{type:'dmg',base:8},{type:'thorns',val:10,dur:8}],
-    unlock:{champion:'squanchback',level:5,gold:50}},
-  squanchback_death_throes:{id:'squanchback_death_throes',name:'Death Throes',icon:'💀',type:'attack',champ:'squanchback',statId:'str',
-    effect:'Deal damage equal to your missing HP ÷ 2.',
-    effects:[{type:'dmg_missing_hp',div:2,min:4}],
-    unlock:{champion:'squanchback',level:5,gold:50}},
+  squanchback_bristle:    {id:'squanchback_bristle',    name:'Bristle',    icon:'🦔', type:'utility', unique:true, champ:'squanchback', statId:'str',
+    effect:'Apply [Thorns] (6) for 6s.',
+    effects:[{type:'thorns',val:6,dur:6}]},
+  squanchback_shell_slam: {id:'squanchback_shell_slam', name:'Shell Slam', icon:'👊', type:'attack',  unique:true, champ:'squanchback', statId:'str',
+    effect:'Deal 10 damage. Gain 12 [Shield] for 5s.',
+    effects:[{type:'dmg',base:10},{type:'shield',amt:12,dur:5}]},
+  squanchback_spine_lash: {id:'squanchback_spine_lash', name:'Spine Lash', icon:'🦷', type:'attack',  unique:true, champ:'squanchback', statId:'str',
+    effect:'Deal 8 damage.\n[Shield] active: deal [Shield] additional damage.',
+    effects:[{type:'dmg_plus_shield',base:8}]},
+  // Spite — ethereal ghost card created by innate (not in any deck)
+  squanchback_spite:      {id:'squanchback_spite',      name:'Spite',      icon:'💢', type:'attack',  unique:false, champ:'squanchback', statId:'str',
+    effect:'Deal missing HP ÷ 4 damage.',
+    effects:[{type:'dmg_missing_hp',div:4}]},
+  // squanchback unlock cards removed — pending redesign
+
+  // ── Slime ──
+  slime_ooze:   {id:'slime_ooze',   name:'Ooze',   icon:'🟢', type:'attack',  unique:true, champ:'slime', statId:'str',
+    effect:'Deal 14 damage. Apply 1 [Poison].',
+    effects:[{type:'dmg',base:14},{type:'poison',dpt:1,dur:8}]},
+  slime_harden: {id:'slime_harden', name:'Harden', icon:'🛡️', type:'defense', unique:true, champ:'slime', statId:'str',
+    effect:'Gain 16 [Shield] for 6s.\n[Sorcery] [15]: Apply [Weaken] for 4s.',
+    effects:[{type:'shield',amt:16,dur:6},{type:'sorcery',cost:15,effect:{type:'weaken',dur:4}}]},
+  slime_spit:   {id:'slime_spit',   name:'Spit',   icon:'💧', type:'attack',  unique:true, champ:'slime', statId:'agi',
+    effect:'Deal 10 damage. Apply [Slow] for 4s.',
+    effects:[{type:'dmg',base:10},{type:'slow_draw',dur:4}]},
+
+  // ── Wolf ──
+  wolf_bite:  {id:'wolf_bite',  name:'Bite',  icon:'🐺', type:'attack',  unique:true, champ:'wolf', statId:'agi',
+    effect:'Deal 14 + AGI ÷ 4 damage. Apply 1 [Poison].',
+    effects:[{type:'dmg_stat',base:14,stat:'agi',div:4},{type:'poison',dpt:1,dur:8}]},
+  wolf_lunge: {id:'wolf_lunge', name:'Lunge', icon:'💨', type:'attack',  unique:true, champ:'wolf', statId:'agi',
+    effect:'Deal 14 damage. Gain [Haste] 15% for 3s.',
+    effects:[{type:'dmg',base:14},{type:'haste',pct:15,dur:3}]},
+  wolf_howl:  {id:'wolf_howl',  name:'Howl',  icon:'🌙', type:'utility', unique:true, champ:'wolf', statId:'agi',
+    effect:'Gain [Haste] 30% for 4s.\n[Sorcery] [15]: Next attack card: +[Crit]: 15%.',
+    effects:[{type:'haste',pct:30,dur:4},{type:'sorcery',cost:15,effect:{type:'crit_bonus',pct:15}}]},
+
+  // ── Swamp Snake ──
+  snake_fang: {id:'snake_fang', name:'Fang', icon:'🐍', type:'attack', unique:true, champ:'snake', statId:'agi',
+    effect:'Deal 14 damage. [Crit]: 15%.',
+    effects:[{type:'dmg_crit',base:14,pct:15}]},
+  snake_coil: {id:'snake_coil', name:'Coil', icon:'🛡️', type:'defense', unique:true, champ:'snake', statId:'agi',
+    effect:'Gain 12 [Shield] for 4s. Apply [Slow] for 4s.',
+    effects:[{type:'shield',amt:12,dur:4},{type:'slow_draw',dur:4}]},
+  snake_spit: {id:'snake_spit', name:'Spit', icon:'💧', type:'attack', unique:true, champ:'snake', statId:'wis',
+    effect:'Deal 10 damage.\n[Sorcery] [20]: Apply 2 additional [Poison].',
+    effects:[{type:'dmg',base:10},{type:'sorcery',cost:20,effect:{type:'poison',dpt:2,dur:8}}]},
+
+  // ── Corrupted Bloom ──
+  bloom_vine_lash: {id:'bloom_vine_lash', name:'Vine Lash', icon:'🌿', type:'attack', unique:true, champ:'bloom', statId:'str',
+    effect:'Deal 10 + hand size × 2 damage.',
+    effects:[{type:'dmg_scaling',base:10,source:'hand_size',check:'self',mult:2}]},
+  bloom_rot_guard: {id:'bloom_rot_guard', name:'Rot Guard', icon:'🛡️', type:'defense', unique:true, champ:'bloom', statId:'str',
+    effect:'Gain 16 [Shield] for 5s.\n[Sorcery] [15]: [Churn] 1.',
+    effects:[{type:'shield',amt:16,dur:5},{type:'sorcery',cost:15,effect:{type:'churn',count:1}}]},
+  bloom_wilt: {id:'bloom_wilt', name:'Wilt', icon:'🥀', type:'attack', unique:true, champ:'bloom', statId:'str',
+    effect:'Deal 6 damage × hand size. Discard entire hand.',
+    effects:[{type:'dmg_hand_discard_all',dmgPerCard:6}]},
+
+  // ── Spore Puff ──
+  sporepuff_spore_shot: {id:'sporepuff_spore_shot', name:'Spore Shot', icon:'🍄', type:'attack', unique:true, champ:'sporepuff', statId:'agi',
+    effect:'Deal 12 damage.\n[Sorcery] [15]: [Churn] 1.',
+    effects:[{type:'dmg',base:12},{type:'sorcery',cost:15,effect:{type:'churn',count:1}}]},
+  sporepuff_puff: {id:'sporepuff_puff', name:'Puff', icon:'💨', type:'utility', unique:true, champ:'sporepuff', statId:'agi',
+    effect:'Apply [Weaken] for 4s.\n[Sorcery] [15]: [Churn] 1.\n[Echo]: Apply 1 [Poison].',
+    effects:[{type:'weaken',dur:4},{type:'sorcery',cost:15,effect:{type:'churn',count:1}}],
+    onDiscard:[{type:'poison',dpt:1,dur:8}]},
+  sporepuff_burst: {id:'sporepuff_burst', name:'Burst', icon:'💥', type:'attack', unique:true, champ:'sporepuff', statId:'agi',
+    effect:'Deal 6 damage × 2 hits.\n[Debuff] on enemy: [Crit]: 25%.',
+    effects:[{type:'dmg_conditional',hits:2,dmg:6,condition:'has_debuff',check:'opponent',on_true:'crit',on_true_val:25}]},
+
+  // ── Mycelid ──
+  mycelid_fungal_slam: {id:'mycelid_fungal_slam', name:'Fungal Slam', icon:'🍄', type:'attack', unique:true, champ:'mycelid', statId:'str',
+    effect:'Deal 14 damage.\n[Sorcery] [20]: Apply 2 [Poison].',
+    effects:[{type:'dmg',base:14},{type:'sorcery',cost:20,effect:{type:'apply_status',status:'poison',target:'opponent',value:2,dur:8}}]},
+  mycelid_spore_guard: {id:'mycelid_spore_guard', name:'Spore Guard', icon:'🛡️', type:'defense', unique:true, champ:'mycelid', statId:'str',
+    effect:'Gain 12 [Shield] for 5s.\n[Sorcery] [15]: Apply 1 [Poison].',
+    effects:[{type:'shield',amt:12,dur:5},{type:'sorcery',cost:15,effect:{type:'apply_status',status:'poison',target:'opponent',value:1,dur:8}}]},
+  mycelid_decompose: {id:'mycelid_decompose', name:'Decompose', icon:'☠️', type:'attack', unique:true, champ:'mycelid', statId:'wis',
+    effect:'Deal 8 damage. Apply WIS ÷ 4 [Poison].',
+    effects:[{type:'dmg',base:8},{type:'apply_status',status:'poison',target:'opponent',value:0,stat:'wis',stat_div:4,dur:8}]},
+
+  // ── Sewer Zombie ──
+  zombie_slam:  {id:'zombie_slam',  name:'Slam',  icon:'🧟', type:'attack',  unique:true, champ:'zombie', statId:'str',
+    effect:'Deal 16 damage.\n[Sorcery] [25]: Heal 8 HP.',
+    effects:[{type:'dmg',base:16},{type:'sorcery',cost:25,effect:{type:'heal',amt:8}}]},
+  zombie_bite:  {id:'zombie_bite',  name:'Bite',  icon:'🦷', type:'attack',  unique:true, champ:'zombie', statId:'str',
+    effect:'Deal 12 damage. Apply [Weaken] for 4s.',
+    effects:[{type:'dmg',base:12},{type:'weaken',dur:4}]},
+  zombie_groan: {id:'zombie_groan', name:'Groan', icon:'🛡️', type:'defense', unique:true, champ:'zombie', statId:'str',
+    effect:'Gain 16 [Shield] for 5s.\n[Sorcery] [20]: Heal 6 HP.',
+    effects:[{type:'shield',amt:16,dur:5},{type:'sorcery',cost:20,effect:{type:'heal',amt:6}}]},
+
+  // ── Drain Lurker ──
+  lurker_lash:  {id:'lurker_lash',  name:'Lash',  icon:'🐊', type:'attack',  unique:true, champ:'drain_lurker', statId:'str',
+    effect:'Deal 14 damage. Gain 10 [Shield] for 5s.',
+    effects:[{type:'dmg',base:14},{type:'shield',amt:10,dur:5}]},
+  lurker_crush: {id:'lurker_crush', name:'Crush', icon:'💥', type:'attack',  unique:true, champ:'drain_lurker', statId:'str',
+    effect:'Deal 12 damage.\n[Sorcery] [20]: Destroy [Shield]. Deal [Shield] additional damage.',
+    effects:[{type:'dmg',base:12},{type:'sorcery',cost:20,effect:{type:'destroy_shield_damage'}}]},
+  lurker_coil:  {id:'lurker_coil',  name:'Coil',  icon:'🛡️', type:'defense', unique:true, champ:'drain_lurker', statId:'str',
+    effect:'Gain 16 [Shield] for 6s. Apply [Slow] for 3s.',
+    effects:[{type:'shield',amt:16,dur:6},{type:'slow_draw',dur:3}]},
+
+  // ── Bandit ──
+  bandit_shiv:       {id:'bandit_shiv',       name:'Shiv',       icon:'🗡️', type:'attack',  unique:true, champ:'bandit', statId:'agi',
+    effect:'Deal 6 damage × 3 hits. [Crit]: 10%.\n[Echo]: Deal 6 damage × 2 hits.',
+    effects:[{type:'dmg_multi_crit',dmg:6,hits:3,pct:10}],
+    onDiscard:[{type:'dmg_multi',dmg:6,hits:2,delay:150}]},
+  bandit_ransack:    {id:'bandit_ransack',    name:'Ransack',    icon:'💰', type:'attack',  unique:true, champ:'bandit', statId:'str',
+    effect:'Deal 8 + discard pile damage.',
+    effects:[{type:'dmg_scaling',base:8,source:'discard_size',check:'self',mult:1}]},
+  bandit_smoke_bomb: {id:'bandit_smoke_bomb', name:'Smoke Bomb', icon:'💨', type:'utility', unique:true, champ:'bandit', statId:'agi',
+    effect:'Apply [Weaken] for 4s. [Churn] 1.\n[Echo]: Draw 1 card.',
+    effects:[{type:'weaken',dur:4},{type:'churn',count:1}],
+    onDiscard:[{type:'draw_cards',count:1}]},
 
   // ── Escaped Experiment ──
   experiment_caustic_throw:   {id:'experiment_caustic_throw',   name:'Caustic Throw',    icon:'🧪', type:'attack',  champ:'escaped_experiment', statId:'agi',
@@ -379,11 +476,8 @@ var CARDS = {
   mc2_pinch:     {id:'mc2_pinch',     name:'Pinch',         icon:'🦀', type:'attack',  unique:true, champ:'mudcrab',     statId:'str', effect:'Deal 8 damage. If enemy is Slowed: reduce next 3 incoming hits by 2 each.', effects:[{type:'dmg',base:8}]},
 
   // Goblin Scout (scouts_alarm)
-  go_slash:      {id:'go_slash',      name:'Slash',         icon:'👺', type:'attack',  unique:true, champ:'goblin',      statId:'agi', effect:'Deal 5 damage. If this is your 3rd+ card this battle: deal 8 instead.', effects:[{type:'dmg_if_debuff',base:5,high:8}]},
 
-  go_rush:       {id:'go_rush',       name:'Rush',          icon:'🏃', type:'utility', unique:true, champ:'goblin',      statId:'agi', effect:'Draw speed +35% for 2s. Gain 15 mana. If [Rally] is active: gain 30 mana instead.', effects:[{type:'draw_speed',pct:35,dur:2}, {type:'mana',amt:15}]},
 
-  go_warcry:     {id:'go_warcry',     name:'War Cry',       icon:'📯', type:'utility', unique:true, champ:'goblin',      statId:'agi', effect:'Deal 4 damage. +20% attack speed for 3s. After 15s this battle: permanently +15% speed.', effects:[{type:'dmg',base:4}, {type:'draw_speed',pct:20,dur:3}]},
 
   // Sewer Roach (skitter)
   sr_scuttle:    {id:'sr_scuttle',    name:'Scuttle',       icon:'🪲', type:'attack',  unique:true, champ:'roach',       statId:'agi', effect:'Deal 3 damage. If you have [Dodge]: deal 6 instead and gain 20 mana.', effects:[{type:'dmg_if_debuff',base:3,high:6}, {type:'mana',amt:20}]},
@@ -755,7 +849,7 @@ var CREATURE_DECKS = {
   // Mud Crab STR 12 = 12: strike×2, brace×2, claw×3, shell×3, pinch×2
   mudcrab:     {cards:['strike','strike','brace','brace','mc2_claw','mc2_claw','mc2_claw','mc2_shell','mc2_shell','mc2_shell','mc2_pinch','mc2_pinch'], alts:[]},
   // Goblin Scout STR 13 = 13: strike×3, brace×2, slash×3, rush×3, warcry×2
-  goblin:      {cards:['strike','strike','strike','brace','brace','go_slash','go_slash','go_slash','go_rush','go_rush','go_rush','go_warcry','go_warcry'], alts:[]},
+  // goblin: now uses deckOrder in creature file — remove from CREATURE_DECKS
   // Sewer Roach STR 8 = 8: strike×2, brace×1, scuttle×2, skitter×2, chitin×1
   roach:       {cards:['strike','strike','brace','sr_scuttle','sr_scuttle','sr_skitter','sr_skitter','sr_chitin'], alts:[]},
   // Bloated Grub STR 14 = 14: strike×3, brace×2, slug×3, seep×3, bloat×3

@@ -16,17 +16,13 @@ CREATURES.goblin = {
   innate: {
     id:       'filthy_persistence',
     name:     'Filthy Persistence',
-    desc:     'All debuffs applied by this creature last 50% longer.',
+    desc:     'Passive: all debuffs applied by this creature last 50% longer.',
     active:   false,
     cost:     0,
     cooldown: 0,
   },
 
-  deck: [
-    'goblin_filth_toss',
-    'goblin_filth_toss',
-    'goblin_crippling_jab',
-    'goblin_crippling_jab',
-    'goblin_pocket_sand',
-  ],
+  // Deck generated from STR + deckOrder (10 cards at base)
+  // 10 ÷ 5 = 2 each
+  deckOrder: ['goblin_jab', 'goblin_filth_toss', 'goblin_cheap_shot'],
 };

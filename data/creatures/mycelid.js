@@ -1,13 +1,33 @@
 // ════════════════════════════════════════════════════
 // CREATURE: MYCELID
-// Drop mycelid.png into assets/creatures/ for a custom sprite.
 // ════════════════════════════════════════════════════
 
-CREATURES.mycelid = {id:'mycelid',name:'MYCELID',icon:'🦠',lore:'The mycelid doesn\'t think as you do. It thinks as the fungal network thinks — distributed, patient, everywhere at once. Your wounds are already inoculated.',baseStats:{str:12,agi:8,wis:8},growth:{str:1.2,agi:0.6,wis:0.8},baseDmg:3,dmgGrowth:0.35,gold:[1,3],
-    cardRewards:['hex_bolt','spore_cloud'],
-    innate:{id:'spreading_spores',name:'Spreading Spores',desc:'Every 3rd card played automatically applies Poison (4 dmg/2s) to the enemy. Play cards — the poison follows.'},
-    openingMove:'mycelid_tendril',
-    deck:[
-      {id:'mycelid_tendril', copies:3, name:'Tendril',    effect:'dmg',            value:2,                                              msg:'lashes with a tendril!'},
-      {id:'mycelid_spore',   copies:1, name:'Spore Cloud', effect:'dmg_and_debuff', value:1,status:'smoke',debuffVal:-0.4,debuffDur:3000, msg:'releases a slowing spore cloud!'},
-    ]};
+CREATURES.mycelid = {
+  id:       'mycelid',
+  name:     'MYCELID',
+  icon:     '🍄',
+  lore:     'The mycelium network extends for miles beneath the swamp floor. The Mycelid is not a creature so much as a node — an expression of the network given shape and purpose. When one falls, the network remembers. The next one arrives angrier.',
+  role:     'Poison Tank / Shield from DoTs',
+  bossOnly: false,
+
+  baseStats: { str:14, agi:8, wis:12 },
+  growth:    { str:2,  agi:0, wis:1 },
+
+  innate: {
+    id:       'mycelium_network',
+    name:     'Mycelium Network',
+    desc:     'Passive: when the opponent takes damage from a DoT tick, gain that amount as [Shield].',
+    active:   false,
+    cost:     0,
+    cooldown: 0,
+    triggers: [
+      { on: 'on_opponent_dot_tick', effect: {type: 'shield_from_dot'} }
+    ],
+  },
+
+  // Deck generated from STR + deckOrder (14 cards at base)
+  // 14 ÷ 5 = 2 each + 4 remainder → Fungal Slam 3, Spore Guard 3, Decompose 3, Strike 3, Brace 2
+  deckOrder: ['mycelid_fungal_slam', 'mycelid_spore_guard', 'mycelid_decompose'],
+};
+// Backup: protect triggers array from being stripped
+CREATURES.mycelid._innateTriggers = [{"on": "on_opponent_dot_tick", "effect": {"type": "shield_from_dot"}}];

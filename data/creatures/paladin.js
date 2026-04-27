@@ -16,10 +16,13 @@ CREATURES.paladin = {
   innate: {
     id:       'cursed_retribution',
     name:     'Cursed Retribution',
-    desc:     'Passive: when taking damage while [Shield] is active (including fully absorbed hits), apply [Burn] (WIS dmg/3s) to the enemy.',
+    desc:     'Passive: when taking damage while [Shield] is active, apply 2 [Burn] for 5s to the enemy.',
     active:   false,
     cost:     0,
     cooldown: 0,
+    triggers: [
+      { on: 'on_hit_while_shielded', target: 'opponent', effect: {type: 'burn', dpt: 2, dur: 5} }
+    ],
   },
 
   // Deck is generated from STR. The 5 identity cards below are distributed
@@ -28,3 +31,5 @@ CREATURES.paladin = {
   // deckOrder defines the priority tiebreaker for odd extra slots.
   deckOrder: ['paladin_smite', 'paladin_aegis', 'paladin_consecrate'],
 };
+// Backup: protect triggers array from being stripped
+CREATURES.paladin._innateTriggers = [{"on": "on_hit_while_shielded", "target": "opponent", "effect": {"type": "burn", "dpt": 2, "dur": 5}}];
