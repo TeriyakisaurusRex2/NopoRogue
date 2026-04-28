@@ -264,7 +264,7 @@ var PERSIST={
       offeredRefresh:0,// timestamp of last refresh
     },
   },
-  bestiary:{ research:{}, researchAcc:0 },
+  bestiary:{ entries:{}, areaCompletions:{} },
   sanctum:{ deckMods:{}, levelFloors:{}, unlockedCards:{} },
   shrineCounters:{ run_count:0, cards_played:0, cards_discarded:0, deaths:0, nodamage_clears:0, clutch_wins:0, fast_wins:0, debuffs_applied:0, area_level:0 },
   soulShards:0,          // gacha currency
@@ -2077,7 +2077,7 @@ function startLoops(){ stopLoops(); tickTimer=setInterval(gameTick,100); schedul
 function stopLoops(){ clearInterval(tickTimer); tickTimer=null; clearTimeout(enemyTimer); enemyTimer=null; clearInterval(_enemyDrawBarTimer); _enemyDrawBarTimer=null; }
 
 // Manabound purge — when a creature's mana hits 0, all manabound
-// statuses are immediately removed. Current manabound: Shield, Dodge, Frenzy.
+// statuses are immediately removed. Manabound: Shield, Dodge, Frenzy, Thorns, Haste.
 function checkManabound(target, mana, effects){
   if(mana > 0) return;
   var purged = false;
@@ -2138,6 +2138,16 @@ function checkManabound(target, mana, effects){
       purged = true;
     }
   }
+  // Haste purge
+  for(var i = effects.length-1; i >= 0; i--){
+    if(effects[i].stat === 'haste' || effects[i].id === 'haste'){
+      var hLabel = effects[i].label || 'Haste';
+      effects.splice(i, 1);
+      removeTagByLabel(target, hLabel);
+      if(target === 'player') addLog('⚡ Haste purged (manabound — mana depleted).', 'sys');
+      purged = true;
+    }
+  }
 }
 
 function gameTick(){
@@ -2167,6 +2177,30 @@ function gameTick(){
   }
   // Enemy innate cooldown tick (player cooldown)
   if(gs._innCooldown>0) gs._innCooldown=Math.max(0,gs._innCooldown-100);
+
+  // ── Hellfire passive: while hand empty, apply Haste 100% ──
+  // Check both player and enemy actors
+  if(gs.actors){
+    ['player','enemy'].forEach(function(side){
+      var actor = gs.actors[side];
+      if(!actor || !actor.creature || !actor.creature.innate) return;
+      if(actor.creature.innate.id !== 'hellfire') return;
+      var handEmpty = actor.hand.length === 0;
+      var hasHellfireHaste = actor.statusEffects.some(function(s){ return s.id === 'hellfire_haste'; });
+      if(handEmpty && !hasHellfireHaste){
+        // Apply massive haste
+        actor.statusEffects.push({id:'hellfire_haste', label:'Hellfire', cls:'buff', stat:'haste', val:1.0, remaining:999999, maxRemaining:999999, desc:'Hellfire: 100% Haste while hand is empty.'});
+        addTag(side, 'buff', '🔥 Hellfire', 0, '', 'Hellfire: 100% Haste while hand is empty.');
+        addLog(actor.creature.name+' — Hellfire! 100% Haste!', 'innate');
+      } else if(!handEmpty && hasHellfireHaste){
+        // Remove hellfire haste
+        for(var i = actor.statusEffects.length - 1; i >= 0; i--){
+          if(actor.statusEffects[i].id === 'hellfire_haste') actor.statusEffects.splice(i, 1);
+        }
+        removeTagByLabel(side, '🔥 Hellfire');
+      }
+    });
+  }
 
   // Enemy active innate AI — route through actorActivateInnate
   if(gs.actors && gs.actors.enemy && typeof actorActivateInnate === 'function'){
@@ -4089,8 +4123,8 @@ var BUILDINGS = {
     unlocked:false,
   },
   bestiary: {
-    id:'bestiary', name:'The Bestiary', icon:'📖', sprite:'bestiary_keeper', buildingIcon:'bestiary',
-    npc:{name:'???', title:'Scholar', greeting:'What have you seen out there?'},
+    id:'bestiary', name:'The Bestiary', icon:'📖', sprite:'hoot', buildingIcon:'bestiary',
+    npc:{name:'Hoot', title:'Archivist', pitch:1.4, greeting:'Oh! You\'re back. Did you... see anything new out there?'},
     desc:'Records of every creature encountered. Claim discovery rewards.',
     unlocked:false,
   },
@@ -4345,6 +4379,266 @@ function refreshArenaPanel(){}
 
 var _hallTab = 'quests';
 
+// ══════════════════════════════════════════════════════════════
+// NPC REACTIVE DIALOGUE SYSTEM
+// ══════════════════════════════════════════════════════════════
+// getNpcGreeting(buildingId) → string
+// Checks conditions in priority order, returns first match.
+// Falls back to random pool if no conditions met.
+// One-shot milestones tracked in PERSIST.seenNpcLines.
+
+var NPC_CONDITIONS = {
+  vault: [
+    // Urgent
+    {id:'mat_at_cap', check:function(){
+      var cap = getVaultMatCap();
+      var groups = Object.keys(MATERIAL_DROPS);
+      for(var g=0;g<groups.length;g++){
+        var entries = MATERIAL_DROPS[groups[g]];
+        for(var e=0;e<entries.length;e++){
+          if((PERSIST.town.materials[entries[e].id]||0) >= cap) return true;
+        }
+      }
+      return false;
+    }, lines:['The shelves are full. Spend some at the Forge before your next run.','No more room. You need to use some of these materials.','Storage is at capacity. The Forge is waiting.']},
+
+    {id:'mat_near_cap', check:function(){
+      var cap = getVaultMatCap();
+      var threshold = Math.floor(cap * 0.8);
+      var nearCount = 0;
+      var groups = Object.keys(MATERIAL_DROPS);
+      for(var g=0;g<groups.length;g++){
+        var entries = MATERIAL_DROPS[groups[g]];
+        for(var e=0;e<entries.length;e++){
+          if((PERSIST.town.materials[entries[e].id]||0) >= threshold) nearCount++;
+        }
+      }
+      return nearCount >= 2;
+    }, lines:['Getting tight on space. The Forge could use some of these.','I may have to start stacking things on the floor.']},
+
+    // Milestones (one-shot)
+    {id:'first_cap_ever', oneShot:true, check:function(){
+      var cap = getVaultMatCap();
+      var groups = Object.keys(MATERIAL_DROPS);
+      for(var g=0;g<groups.length;g++){
+        var entries = MATERIAL_DROPS[groups[g]];
+        for(var e=0;e<entries.length;e++){
+          if((PERSIST.town.materials[entries[e].id]||0) >= cap) return true;
+        }
+      }
+      return false;
+    }, lines:['Full shelves. A good problem. But still a problem.']},
+
+    {id:'first_relic', oneShot:true, check:function(){
+      return Object.keys(PERSIST.town.relics||{}).some(function(k){ return (PERSIST.town.relics[k]||0)>0; });
+    }, lines:['A relic. Handle it carefully. These don\'t come back.']},
+
+    {id:'first_all_areas', oneShot:true, check:function(){
+      var groups = Object.keys(MATERIAL_DROPS);
+      return groups.every(function(g){
+        return MATERIAL_DROPS[g].some(function(e){ return (PERSIST.town.materials[e.id]||0) > 0; });
+      });
+    }, lines:['Every region accounted for. Thorough.']},
+
+    // Cross-building awareness
+    {id:'quest_complete', check:function(){
+      var q = PERSIST.town.quests;
+      if(!q || !q.active || !q.offered) return false;
+      var activeQ = q.offered.find(function(o){ return o.id === q.active.id; });
+      return activeQ && q.active.progress >= activeQ.target;
+    }, lines:['Leona mentioned something about a reward for you.','I think Leona has good news. Check the Hall.']},
+
+    {id:'expedition_returned', check:function(){
+      var ahB = PERSIST.town.buildings.adventurers_hall;
+      if(!ahB || !ahB.expeditionSlots) return false;
+      return ahB.expeditionSlots.some(function(s){
+        return s.champId && s.startTime && Date.now() >= s.startTime + s.totalMs;
+      });
+    }, lines:['One of your champions came back. You should check the Hall.']},
+
+    {id:'forge_complete', check:function(){
+      var fq = (PERSIST.town.buildings.forge && PERSIST.town.buildings.forge.queue) || [];
+      if(fq.length === 0) return false;
+      return Date.now() >= fq[0].startTime + fq[0].totalMs;
+    }, lines:['I think the Forge finished something. Smelled like hot metal.']},
+
+    // Mood
+    {id:'rich', check:function(){ return PERSIST.gold > 5000; },
+     lines:['You have more gold than shelf space. Impressive.','Quite the fortune you are building.']},
+
+    {id:'broke', check:function(){ return PERSIST.gold < 10; },
+     lines:['Lean times. But the shelves are still here.','The Board might have work, if you need gold.']},
+
+    {id:'empty_vault', check:function(){
+      var total = 0;
+      Object.keys(PERSIST.town.materials||{}).forEach(function(k){ total += PERSIST.town.materials[k]||0; });
+      return total === 0;
+    }, lines:['Empty shelves. Go find something to fill them.']},
+  ],
+
+  adventurers_hall: [
+    // Leona's conditions
+    {id:'quest_complete', check:function(){
+      var q = PERSIST.town.quests;
+      if(!q || !q.active || !q.offered) return false;
+      var activeQ = q.offered.find(function(o){ return o.id === q.active.id; });
+      return activeQ && q.active.progress >= activeQ.target;
+    }, lines:['Your quest is done! Come claim your reward! I mean... at your convenience.','Quest complete! I\'ve been waiting to say that. Professionally.']},
+
+    {id:'expedition_returned', check:function(){
+      var ahB = PERSIST.town.buildings.adventurers_hall;
+      if(!ahB || !ahB.expeditionSlots) return false;
+      return ahB.expeditionSlots.some(function(s){
+        return s.champId && s.startTime && Date.now() >= s.startTime + s.totalMs;
+      });
+    }, lines:['An expedition just returned! Check the dispatch board!','Someone\'s back! With loot! I mean... with their report.']},
+
+    {id:'no_active_quest', check:function(){
+      return !PERSIST.town.quests || !PERSIST.town.quests.active;
+    }, lines:['No active quest? The board has some good ones today.','You should pick up a bounty. Not that I\'m pushy.']},
+
+    {id:'mat_at_cap', check:function(){
+      var cap = getVaultMatCap();
+      var groups = Object.keys(MATERIAL_DROPS);
+      for(var g=0;g<groups.length;g++){
+        var entries = MATERIAL_DROPS[groups[g]];
+        for(var e=0;e<entries.length;e++){
+          if((PERSIST.town.materials[entries[e].id]||0) >= cap) return true;
+        }
+      }
+      return false;
+    }, lines:['Shtole mentioned the vault is getting full. Might want to check in with him.']},
+  ],
+
+  bestiary: [
+    // Hoot's conditions
+    {id:'new_entries', check:function(){
+      var be = PERSIST.bestiary && PERSIST.bestiary.entries;
+      if(!be) return false;
+      return Object.keys(be).some(function(k){ return be[k].seen && !be[k].discoveryClaimed; });
+    }, lines:['NEW DATA! I mean... *ahem*... there appear to be new entries to catalogue.','Oh! Oh! You found something new! Let me just... *adjusts glasses*... let me see.','Hoo! New specimens! I mean... new records to file. Calmly.']},
+
+    {id:'milestone_ready', check:function(){
+      var be = PERSIST.bestiary && PERSIST.bestiary.entries;
+      if(!be) return false;
+      return Object.keys(be).some(function(k){
+        var e = be[k]; if(!e.seen) return false;
+        return (e.kills >= 10 && !e.milestone10) || (e.kills >= 50 && !e.milestone50) || (e.kills >= 100 && !e.milestone100);
+      });
+    }, lines:['You have research milestones to claim. The data is... *ruffles feathers*... very exciting.','Some of your field notes are ready for review. If you have a moment.']},
+
+    {id:'all_area_complete', oneShot:true, check:function(){
+      // Check if any area has all creatures discovered
+      var be = PERSIST.bestiary && PERSIST.bestiary.entries;
+      if(!be) return false;
+      var areaCreatures = {};
+      Object.values(CREATURES).forEach(function(c){
+        if(!c.bossOnly && c.id !== 'dojo_tiger'){
+          // Find which area this creature belongs to
+          AREA_DEFS.forEach(function(a){
+            if(a.enemyPool && a.enemyPool.indexOf(c.id) !== -1){
+              if(!areaCreatures[a.id]) areaCreatures[a.id] = [];
+              areaCreatures[a.id].push(c.id);
+            }
+          });
+        }
+      });
+      return Object.keys(areaCreatures).some(function(aId){
+        return areaCreatures[aId].every(function(cId){ return be[cId] && be[cId].seen; });
+      });
+    }, lines:['You\'ve catalogued every creature in an entire region! This is... this is historic! Hoo!']},
+
+    {id:'empty_bestiary', check:function(){
+      var be = PERSIST.bestiary && PERSIST.bestiary.entries;
+      return !be || Object.keys(be).length === 0;
+    }, lines:['The archives are empty. Go explore and bring me something to study.','No entries yet. Every great catalogue starts somewhere.']},
+  ],
+};
+
+// Random fallback pools
+var NPC_RANDOM_LINES = {
+  vault: [
+    'Everything is accounted for.',
+    'Welcome back. Nothing has moved.',
+    'The shelves are in order.',
+    'I have been expecting you.',
+    'All present and correct.',
+    'Take your time. I will wait.',
+    'The materials are sorted. As always.',
+    'You were gone a while. Nothing changed.',
+    'I counted twice. All here.',
+    'Quiet day. Just how I like it.',
+  ],
+  adventurers_hall: LEONA_GREETINGS,
+  bestiary: [
+    'Oh! You\'re back. Did you... see anything new out there?',
+    'Welcome to the archives. Please don\'t touch the... actually, go ahead.',
+    'I\'ve been cross-referencing field notes all day. Hoo, it\'s been productive.',
+    'The collection grows. Slowly. But it grows.',
+    'I reorganised the shelves again. By habitat this time.',
+    'Did you know that Squanchbacks can curl into a perfect sphere? Fascinating.',
+    'I made tea. It went cold. I forgot about it. ...Want some?',
+    'Every creature tells a story. I just... write them down.',
+    'The archives are quiet today. I like quiet. Mostly.',
+    'Hoo. Where were we? Oh, right. Creatures.',
+  ],
+};
+
+var NPC_RARE_LINES = {
+  vault: {chance:0.08, lines:['I didn\'t shteal anything.']},
+  adventurers_hall: {chance:0.08, lines:[LEONA_RARE]},
+  bestiary: {chance:0.08, lines:['Sometimes I dream about creatures I\'ve never seen. Is that weird? ...Don\'t answer that.']},
+};
+
+var NPC_VERY_RARE_LINES = {
+  vault: {chance:0.02, lines:[
+    '...Sometimes I talk to the materials. They don\'t answer. That is normal.',
+    'Do you ever wonder if the shelves judge us? No? ...Me neither.',
+  ]},
+  bestiary: {chance:0.02, lines:[
+    'I once tried to catalogue myself. It got... existential.',
+  ]},
+};
+
+function getNpcGreeting(buildingId){
+  // Check very rare first
+  var vr = NPC_VERY_RARE_LINES[buildingId];
+  if(vr && Math.random() < vr.chance){
+    return vr.lines[Math.floor(Math.random() * vr.lines.length)];
+  }
+
+  // Check rare
+  var rare = NPC_RARE_LINES[buildingId];
+  if(rare && Math.random() < rare.chance){
+    return rare.lines[Math.floor(Math.random() * rare.lines.length)];
+  }
+
+  // Check conditions in priority order
+  var conditions = NPC_CONDITIONS[buildingId] || [];
+  if(!PERSIST.seenNpcLines) PERSIST.seenNpcLines = {};
+
+  for(var i = 0; i < conditions.length; i++){
+    var cond = conditions[i];
+
+    // Skip one-shot lines already seen
+    if(cond.oneShot && PERSIST.seenNpcLines[buildingId + '_' + cond.id]) continue;
+
+    try {
+      if(cond.check()){
+        // Mark one-shot as seen
+        if(cond.oneShot){
+          PERSIST.seenNpcLines[buildingId + '_' + cond.id] = true;
+          savePersist();
+        }
+        return cond.lines[Math.floor(Math.random() * cond.lines.length)];
+      }
+    } catch(e){}
+  }
+
+  // Fallback to random
+  var pool = NPC_RANDOM_LINES[buildingId] || ['...'];
+  return pool[Math.floor(Math.random() * pool.length)];
+}
 var LEONA_GREETINGS = [
   'Welcome back! I mean... good to see you. Professionally.',
   'Oh! You\'re here! I have some great contracts today. Really solid ones.',
@@ -4362,8 +4656,8 @@ var LEONA_RARE = 'I wrote you a recommendation letter. For the quest. Not for...
 function openAdventurersHall(){
   var msgEl = document.getElementById('hall-npc-msg');
   if(msgEl){
-    var msg = (Math.random() < 0.08) ? LEONA_RARE : LEONA_GREETINGS[Math.floor(Math.random() * LEONA_GREETINGS.length)];
-    npcTypewriter(msgEl, msg, {pitch: BUILDINGS.adventurers_hall.npc.pitch || 1.35});
+    var msg = getNpcGreeting('adventurers_hall');
+    npcTypewriter(msgEl, msg, {pitch: BUILDINGS.adventurers_hall.npc.pitch || 1.5});
   }
   // Refresh level bar
   var hallLv = getBuildingLevel('adventurers_hall');

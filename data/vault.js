@@ -137,21 +137,8 @@ var CHEST_LOOT_TABLES={
 function openVaultPanel(){
   var msgEl = document.getElementById('vault-npc-msg');
   if(msgEl){
-    var greetings = [
-      'Everything is accounted for.',
-      'Welcome back. Nothing has moved.',
-      'The shelves are in order.',
-      'I have been expecting you.',
-      'All present and correct.',
-      'Take your time. I will wait.',
-      'The materials are sorted. As always.',
-      'You were gone a while. Nothing changed.',
-      'I counted twice. All here.',
-      'Quiet day. Just how I like it.',
-    ];
-    var rare = 'I didn\'t shteal anything.';
-    var msg = (Math.random() < 0.08) ? rare : greetings[Math.floor(Math.random() * greetings.length)];
-    npcTypewriter(msgEl, msg, {pitch: BUILDINGS.vault.npc.pitch || 0.85});
+    var msg = getNpcGreeting('vault');
+    npcTypewriter(msgEl, msg, {pitch: BUILDINGS.vault.npc.pitch || 0.7});
   }
   refreshVaultPanel();
   document.getElementById('vault-panel-bg').classList.add('show');

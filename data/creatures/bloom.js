@@ -16,18 +16,18 @@ CREATURES.bloom = {
   innate: {
     id:       'corruption_spread',
     name:     'Corruption Spread',
-    desc:     'Passive: when the opponent plays an attack card, [Sorcery] [20]: create a Corrupt Spore ([Weaken] 4s, Ethereal) in own hand.',
+    desc:     'Passive: when the opponent plays an attack card, spend 20 mana to create an Ethereal Corrupt Spore (Weaken 4s) in own hand.',
     active:   false,
     cost:     0,
     cooldown: 0,
     triggers: [
-      { on: 'on_opponent_attack', condition: 'has_mana_20', effect: {type: 'corruption_spread'} }
+      { on: 'on_opponent_attack', condition: 'has_mana_20', effect: {type: 'create_card_in_hand', cardId: 'corrupt_spore', target: 'self', ghost: true, mana_cost: 20} }
     ],
   },
 
-  // Deck generated from STR + deckOrder (16 cards at base)
-  // 16 ÷ 5 = 3 each + 1 remainder → Vine Lash 4, Rot Guard 3, Wilt 3, Strike 3, Brace 3
   deckOrder: ['bloom_vine_lash', 'bloom_rot_guard', 'bloom_wilt'],
 };
-// Backup: protect triggers array from being stripped
-CREATURES.bloom._innateTriggers = [{"on": "on_opponent_attack", "condition": "has_mana_20", "effect": {"type": "corruption_spread"}}];
+CREATURES.bloom._innateTriggers = [
+  { on: 'on_opponent_attack', condition: 'has_mana_20', effect: {type: 'create_card_in_hand', cardId: 'corrupt_spore', target: 'self', ghost: true, mana_cost: 20} }
+];
+

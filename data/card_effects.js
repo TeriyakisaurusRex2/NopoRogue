@@ -449,13 +449,16 @@ var EFFECT_TYPES = {
     fields:[
       {id:'base',   label:'Base Dmg',  type:'number', default:8},
       {id:'source', label:'Scale from',type:'select', default:'discard_size',
-        options:['hand_size','discard_size','missing_hp','shield','missing_mana','cards_played']},
+        options:['hand_size','discard_size','missing_hp','shield','missing_mana','cards_played','stat']},
       {id:'check',  label:'Read from', type:'select', default:'self', options:['self','opponent']},
-      {id:'mult',   label:'Per unit',  type:'number', default:1}
+      {id:'mult',   label:'Per unit',  type:'number', default:1},
+      {id:'stat',   label:'Stat (if source=stat)', type:'select', default:'str', options:['str','agi','wis']},
+      {id:'stat_div', label:'Stat divisor', type:'number', default:1, min:1}
     ],
     effectText: function(v){
       var sourceMap = {hand_size:'hand size',discard_size:'discard pile',missing_hp:'missing HP',
-        shield:'[Shield]',missing_mana:'missing mana',cards_played:'cards played'};
+        shield:'[Shield]',missing_mana:'missing mana',cards_played:'cards played',
+        stat:(v.stat||'STR').toUpperCase()+'÷'+(v.stat_div||1)};
       var src = sourceMap[v.source] || v.source;
       return 'Deal ' + v.base + ' + ' + src + ' × ' + v.mult + ' damage.';
     },
@@ -471,6 +474,11 @@ var EFFECT_TYPES = {
           case 'shield':        sourceVal = who.shield || 0; break;
           case 'missing_mana':  sourceVal = who.maxMana - who.mana; break;
           case 'cards_played':  sourceVal = who.cardsPlayed || 0; break;
+          case 'stat':
+            var statName = v.stat || 'str';
+            var rawStat = who[statName] || ctx[statName] || 0;
+            sourceVal = Math.floor(rawStat / (+v.stat_div || 1));
+            break;
         }
       } else {
         // Fallback for old system
@@ -490,6 +498,328 @@ var EFFECT_TYPES = {
   },
 
   // ── GENERALIZED STATUS APPLICATION ──
+  // ── Cleanse ──
+  // Remove statuses from self or opponent. Generalised purge/dispel.
+  // what: 'shield','all_debuffs','all_buffs','poison','burn','weaken',
+  //        'slow','haste','frenzy','dodge','thorns','all'
+  cleanse: {
+    label:'Cleanse', cat:'utility',
+    desc:'Remove specific status effects from a target.',
+    fields:[
+      {id:'target', label:'Target', type:'select', default:'self', options:['self','opponent']},
+      {id:'what', label:'What to cleanse', type:'select', default:'all_debuffs',
+        options:['shield','all_debuffs','all_buffs','poison','burn','weaken','slow','haste','frenzy','dodge','thorns','all']}
+    ],
+    effectText: function(v){ return 'Cleanse '+(v.what||'all_debuffs').replace(/_/g,' ')+' from '+(v.target||'self')+'.'; },
+    tooltipText: function(v){ return ''; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      // Support 'both' target — cleanse self and opponent
+      if(v.target === 'both'){
+        EFFECT_TYPES.cleanse.run({target:'self', what:v.what}, ctx);
+        EFFECT_TYPES.cleanse.run({target:'opponent', what:v.what}, ctx);
+        return;
+      }
+      var tgt = (v.target === 'opponent') ? ctx.opponent : ctx.actor;
+      if(!tgt) return;
+      var side = tgt.side;
+      var what = v.what || 'all_debuffs';
+      var removed = 0;
+
+      if(what === 'shield'){
+        if(tgt.shield > 0){
+          var amt = tgt.shield;
+          tgt.shield = 0;
+          if(side === 'player') gs.playerShield = 0; else gs.enemyShell = 0;
+          removeTagsByClass(side, 'shield');
+          for(var i = tgt.statusEffects.length - 1; i >= 0; i--){
+            if(tgt.statusEffects[i].id === 'shield') tgt.statusEffects.splice(i, 1);
+          }
+          spawnFloatNum(side, '-🛡'+amt, false, 'block-num');
+          addLog(tgt.creature.name+'\'s Shield stripped! (-'+amt+')', 'debuff');
+          removed++;
+        }
+        return;
+      }
+
+      // Determine which statuses to remove
+      var matchFn;
+      if(what === 'all_debuffs') matchFn = function(s){ return s.cls === 'debuff' || s.dot || s.stat === 'dot_dummy'; };
+      else if(what === 'all_buffs') matchFn = function(s){ return s.cls === 'buff' && s.id !== 'shield'; };
+      else if(what === 'all') matchFn = function(s){ return true; };
+      else matchFn = function(s){ return s.id === what || s.stat === what; };
+
+      for(var j = tgt.statusEffects.length - 1; j >= 0; j--){
+        if(matchFn(tgt.statusEffects[j])){
+          tgt.statusEffects.splice(j, 1);
+          removed++;
+        }
+      }
+
+      if(what === 'all_debuffs' || what === 'all') removeTagsByClass(side, 'debuff');
+      if(what === 'all_buffs' || what === 'all') removeTagsByClass(side, 'buff');
+      if(what !== 'shield' && what !== 'all_debuffs' && what !== 'all_buffs' && what !== 'all'){
+        // Remove specific tag
+        var tags = gs.statusEffects[side];
+        // Tags already removed above via statusEffects splice
+      }
+
+      if(removed > 0){
+        addLog(tgt.creature.name+': '+what.replace(/_/g,' ')+' cleansed! ('+removed+')', what === 'all_buffs' || what === 'shield' ? 'debuff' : 'buff');
+      }
+    }
+  },
+
+  // ── Create Card In Hand ──
+  // Create a specific card in a target's hand. Used by Rummage, Corruption Spread, etc.
+  create_card_in_hand: {
+    label:'Create Card In Hand', cat:'utility',
+    desc:'Create a card in own or opponent\'s hand.',
+    fields:[
+      {id:'cardId', label:'Card ID', type:'text', default:''},
+      {id:'target', label:'Target', type:'select', default:'self', options:['self','opponent']},
+      {id:'ghost', label:'Ethereal', type:'bool', default:true},
+      {id:'mana_cost', label:'Mana cost', type:'number', default:0, min:0, max:100}
+    ],
+    effectText: function(v){ return (v.mana_cost ? '['+v.mana_cost+' mana] ' : '') + 'Create '+(v.ghost?'Ethereal ':'')+' card in '+(v.target||'self')+'\'s hand.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      var cardId = v.cardId;
+      if(!cardId || !CARDS[cardId]) return;
+      var actor = ctx.actor;
+      if(!actor) return;
+      // Mana cost check
+      if(v.mana_cost && v.mana_cost > 0){
+        if(actor.mana < v.mana_cost) return;
+        actor.mana -= v.mana_cost;
+        spawnFloatNum(actor.side, '-'+v.mana_cost+'✦', false, 'mana-num');
+      }
+      var tgt = (v.target === 'opponent') ? ctx.opponent : actor;
+      if(!tgt) return;
+      var newItem = { id: cardId, ghost: !!v.ghost, _new: true, _newDraw: true };
+      tgt.hand.push(newItem);
+      var c = CARDS[cardId];
+      addLog((c.name||cardId)+' added to '+(tgt === actor ? 'hand' : tgt.creature.name+'\'s hand')+'.', 'draw');
+    }
+  },
+
+  // ── Hellbent ──
+  // Wrapper: sub-effect triggers only if this card was the last card
+  // in hand when played (hand size was 1 before removal).
+  // Demon archetype keyword. Often has mutual downsides (hurts both sides).
+  // The card's _wasLastInHand flag is set by playCardForActor.
+  hellbent: {
+    label:'Hellbent', cat:'utility',
+    desc:'Triggers if this was the last card in hand when played.',
+    fields:[
+      {id:'effect', label:'Effect to run', type:'object', default:{}}
+    ],
+    effectText: function(v){ return '[Hellbent]: trigger effect.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      if(!ctx._wasLastInHand) return;
+      if(v.effect && v.effect.type && EFFECT_TYPES[v.effect.type]){
+        EFFECT_TYPES[v.effect.type].run(v.effect, ctx);
+        addLog('Hellbent!', 'innate');
+      }
+    }
+  },
+
+  // ── Mutual Effect (Both) ──
+  // Apply an effect to BOTH self and opponent. Used by demon Hellbent costs.
+  mutual: {
+    label:'Mutual Effect', cat:'utility',
+    desc:'Apply an effect to both self and opponent.',
+    fields:[
+      {id:'effect', label:'Effect', type:'object', default:{}}
+    ],
+    effectText: function(v){ return 'Apply to both sides.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      if(!v.effect || !v.effect.type || !EFFECT_TYPES[v.effect.type]) return;
+      // Run on self
+      var selfCtx = Object.assign({}, ctx);
+      EFFECT_TYPES[v.effect.type].run(v.effect, selfCtx);
+      // Run on opponent (swap actor/opponent)
+      var oppCtx = Object.assign({}, ctx, {actor: ctx.opponent, opponent: ctx.actor});
+      // For target-based effects, flip the target
+      var oppEffect = Object.assign({}, v.effect);
+      if(oppEffect.target === 'self') oppEffect.target = 'opponent';
+      else if(oppEffect.target === 'opponent') oppEffect.target = 'self';
+      EFFECT_TYPES[v.effect.type].run(oppEffect, oppCtx);
+    }
+  },
+
+  // ── Discard Own Cards ──
+  // Discard X random cards from own hand.
+  discard_own: {
+    label:'Discard Own', cat:'utility',
+    desc:'Discard cards from own hand.',
+    fields:[{id:'count', label:'Cards to discard', type:'number', default:1, min:1, max:7}],
+    effectText: function(v){ return 'Discard '+v.count+' card'+(+v.count>1?'s':'')+' from hand.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      var actor = ctx.actor;
+      if(!actor) return;
+      var n = Math.min(+v.count || 1, actor.hand.length);
+      for(var i = 0; i < n; i++){
+        if(actor.hand.length === 0) break;
+        var ri = Math.floor(Math.random() * actor.hand.length);
+        var disc = actor.hand.splice(ri, 1)[0];
+        if(!disc.ghost) actor.discardPile.push(disc.id);
+        var card = CARDS[disc.id];
+        if(card && card.onDiscard && card.onDiscard.length){
+          card.onDiscard.forEach(function(eff){
+            if(EFFECT_TYPES[eff.type]) EFFECT_TYPES[eff.type].run(eff, ctx);
+          });
+          if(typeof spawnEchoFloat === 'function') spawnEchoFloat(disc.id);
+        }
+      }
+      if(n > 0) addLog('Discarded '+n+' card'+(n>1?'s':'')+'.', 'draw');
+    }
+  },
+
+  // ── Hellbent ──
+  // Triggers a sub-effect only if this card is the LAST card in hand
+  // when played (hand size = 1 at time of play, before removal).
+  // Demon archetype keyword. Cards show "Hellbent: [effect]" as third line.
+  hellbent: {
+    label:'Hellbent', cat:'utility',
+    desc:'If this is the last card in hand when played, trigger a bonus effect.',
+    fields:[
+      {id:'effect', label:'Hellbent effect', type:'object', default:{}}
+    ],
+    effectText: function(v){ return 'Hellbent: trigger bonus effect.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      var actor = ctx.actor;
+      if(!actor) return;
+      // Check if hand was size 1 at play time (card just removed, so hand is now 0)
+      // playCardForActor splices the card BEFORE running effects,
+      // so hand.length === 0 means this WAS the last card
+      if(actor.hand.length === 0){
+        if(v.effect && v.effect.type && EFFECT_TYPES[v.effect.type]){
+          addLog('Hellbent!', 'innate');
+          EFFECT_TYPES[v.effect.type].run(v.effect, ctx);
+        }
+      }
+    }
+  },
+
+  // ── Conditional Effect Wrapper ──
+  // Run a sub-effect only if a condition is met. Generalises Hellbent, etc.
+  // Conditions: hand_empty, hand_full, below_50_hp, above_50_hp, has_shield,
+  //   has_debuff, has_burn, has_poison, has_haste, has_frenzy, has_mana_X
+  conditional: {
+    label:'Conditional Effect', cat:'utility',
+    desc:'Run an effect only if a condition is met.',
+    fields:[
+      {id:'condition', label:'Condition', type:'select', default:'hand_empty',
+        options:['hand_empty','hand_full','below_50_hp','above_50_hp','has_shield',
+          'has_debuff','has_burn','has_poison','has_haste','has_frenzy',
+          'no_shield','no_debuff','opponent_has_debuff','opponent_no_shield']},
+      {id:'check', label:'Check who', type:'select', default:'self', options:['self','opponent']},
+      {id:'effect', label:'Effect to run', type:'object', default:{}}
+    ],
+    effectText: function(v){ return 'If '+((v.condition||'').replace(/_/g,' '))+': trigger effect.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      var who = (v.check === 'opponent') ? ctx.opponent : ctx.actor;
+      if(!who) return;
+      var met = false;
+      switch(v.condition){
+        case 'hand_empty':    met = who.hand.length === 0; break;
+        case 'hand_full':     met = who.hand.length >= (HAND_SIZE||7); break;
+        case 'below_50_hp':   met = who.hp < who.maxHp * 0.5; break;
+        case 'above_50_hp':   met = who.hp >= who.maxHp * 0.5; break;
+        case 'has_shield':    met = who.shield > 0; break;
+        case 'no_shield':     met = who.shield <= 0; break;
+        case 'has_debuff':    met = who.statusEffects.some(function(s){return s.cls==='debuff';}); break;
+        case 'no_debuff':     met = !who.statusEffects.some(function(s){return s.cls==='debuff';}); break;
+        case 'has_burn':      met = who.statusEffects.some(function(s){return s.id==='burn';}); break;
+        case 'has_poison':    met = who.statusEffects.some(function(s){return s.id==='poison';}); break;
+        case 'has_haste':     met = who.statusEffects.some(function(s){return s.stat==='haste'||s.id==='haste';}); break;
+        case 'has_frenzy':    met = who.statusEffects.some(function(s){return s.id==='frenzy';}); break;
+        case 'opponent_has_debuff':
+          var opp = (v.check === 'opponent') ? ctx.actor : ctx.opponent;
+          met = opp && opp.statusEffects.some(function(s){return s.cls==='debuff';});
+          break;
+        case 'opponent_no_shield':
+          var opp2 = (v.check === 'opponent') ? ctx.actor : ctx.opponent;
+          met = opp2 && opp2.shield <= 0;
+          break;
+      }
+      if(met && v.effect && v.effect.type && EFFECT_TYPES[v.effect.type]){
+        EFFECT_TYPES[v.effect.type].run(v.effect, ctx);
+      }
+    }
+  },
+
+  // ── Mana Burn ──
+  // Deal damage to opponent's mana. Overflow damages HP.
+  // 20 mana burn vs 12 mana = 0 mana + 8 HP damage.
+  mana_burn: {
+    label:'Mana Burn', cat:'damage',
+    desc:'Burn opponent mana. Overflow deals HP damage.',
+    fields:[
+      {id:'value', label:'Burn amount', type:'number', default:20, min:1, max:100},
+      {id:'stat', label:'Stat scaling', type:'select', default:'none', options:['none','str','agi','wis']},
+      {id:'stat_div', label:'Stat divisor', type:'number', default:4, min:1}
+    ],
+    effectText: function(v){
+      var base = 'Burn '+v.value+' mana.';
+      if(v.stat && v.stat !== 'none') base = 'Burn '+v.value+'+'+v.stat.toUpperCase()+'÷'+v.stat_div+' mana.';
+      return base + ' Overflow damages HP.';
+    },
+    typeHint:'attack',
+    run: function(v,ctx){
+      var target = ctx.opponent;
+      if(!target) return;
+      var burnAmt = +v.value || 20;
+      // Stat scaling
+      if(v.stat && v.stat !== 'none'){
+        var statVal = ctx.actor ? (ctx.actor[v.stat] || ctx[v.stat] || 0) : 0;
+        burnAmt += Math.floor(statVal / (+v.stat_div || 4));
+      }
+      var currentMana = target.mana || 0;
+      var manaBurned = Math.min(currentMana, burnAmt);
+      var overflow = Math.max(0, burnAmt - currentMana);
+
+      // Burn the mana
+      target.mana = Math.max(0, target.mana - burnAmt);
+      if(target.side === 'player') gs.mana = target.mana;
+      else gs.enemyMana = target.mana;
+
+      if(manaBurned > 0){
+        spawnFloatNum(target.side, '-'+manaBurned+'✦', false, 'mana-num');
+        addLog(target.creature.name+': '+manaBurned+' mana burned!', 'debuff');
+      }
+
+      // Overflow damages HP
+      if(overflow > 0){
+        dealDamage(target, overflow);
+        addLog('Mana burn overflow: '+overflow+' damage!', 'dmg');
+      }
+    }
+  },
+  // Used by on_pre_damage triggers. Caps incoming damage to a % of max HP.
+  // Example: Ironclad — no single hit can exceed 20% max HP.
+  dmg_cap_pct: {
+    label:'Damage Cap (%HP)', cat:'utility',
+    desc:'Cap incoming attack damage to a percentage of max HP.',
+    fields:[{id:'pct', label:'Max % of HP', type:'number', default:20, min:5, max:50}],
+    effectText:  function(v){ return 'Incoming attack damage capped at '+v.pct+'% of max HP.'; },
+    tooltipText: function(v){ return 'No single hit can deal more than '+v.pct+'% of max HP. DoTs bypass this.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      if(typeof ctx._incomingDmg !== 'number') return;
+      var maxDmg = Math.floor(ctx.actor.maxHp * (+v.pct / 100));
+      if(ctx._incomingDmg > maxDmg){
+        ctx._modifiedDmg = maxDmg;
+      }
+    }
+  },
+
   // Replaces: poison, burn, weaken, slow_draw, haste, thorns, dodge, frenzy
   //
   // Fields:
@@ -686,56 +1016,8 @@ var EFFECT_TYPES = {
   },
 
   // ── Multi-hit with crit ONLY when opponent is debuffed ──
-  dmg_multi_crit_if_debuffed: {
-    label:'Multi-hit (Crit if debuffed)', cat:'damage',
-    desc:'Multi-hit damage. Crit chance only applies if opponent has a debuff.',
-    fields:[
-      {id:'hits', label:'Hits',       type:'number', default:2, min:2, max:6},
-      {id:'dmg',  label:'Dmg / hit',  type:'number', default:6, min:1, max:50},
-      {id:'pct',  label:'Crit %',     type:'number', default:25, min:1, max:50}
-    ],
-    effectText:  function(v){ return 'Deal '+v.dmg+' damage × '+v.hits+' hits. [Debuff] on enemy: [Crit]: '+v.pct+'%.'; },
-    tooltipText: function(v){ return 'Each hit rolls crit independently. Crit only activates if opponent has any debuff.'; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var hits=+v.hits, dmg=+v.dmg, pct=+v.pct/100;
-      var total=0, crits=0;
-      var target=getTargetSide(ctx);
-      // Check opponent for debuffs
-      var oppEffects = ctx.opponent ? ctx.opponent.statusEffects : (ctx.isEnemy ? gs.statusEffects.player : gs.statusEffects.enemy);
-      var hasDebuff = oppEffects.some(function(s){ return s.cls==='debuff'; });
-      for(var i=0;i<hits;i++){
-        var d=ctx.pdmg(dmg);
-        var isCrit = ctx.markedCrit || (hasDebuff && Math.random()<pct);
-        if(isCrit){ d=Math.round(d*2); crits++; }
-        total+=d;
-        dealCardDamage(d, ctx);
-      }
-      if(crits>0) spawnFloatNum(target,'CRIT ×'+crits+'!',false,'crit-num');
-      addLog(ctx.cardName+'! '+hits+' hits, '+total+' total dmg'+(crits>0?' ('+crits+' crits)':'')+(hasDebuff?'':' (no debuff — no crit)')+'.','dmg');
-    }
-  },
 
   // ── Damage scaling with discard pile size ──
-  dmg_discard_scaling: {
-    label:'Discard Pile Damage', cat:'damage',
-    desc:'Deal base damage plus bonus from discard pile size.',
-    fields:[
-      {id:'base', label:'Base Dmg',   type:'number', default:8, min:1, max:50},
-      {id:'mult', label:'Per card',   type:'number', default:1, min:1, max:5}
-    ],
-    effectText:  function(v){ return 'Deal '+v.base+' + discard pile × '+v.mult+' damage.'; },
-    tooltipText: function(v){ return 'More cards in discard = more damage.'; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var discSize;
-      if(ctx.actor) discSize=ctx.actor.discardPile.length;
-      else discSize=ctx.isEnemy?(gs.enemyDiscardPile||[]).length:(gs.discardPile||[]).length;
-      var d=ctx.pdmg(+v.base + discSize * (+v.mult));
-      dealCardDamage(d,ctx);
-      addLog(ctx.cardName+'! '+d+' dmg ('+discSize+' in discard).','dmg');
-    }
-  },
 
   dmg_if_debuff: {
     label:'Damage (bonus if debuffed)', cat:'damage',
@@ -756,26 +1038,6 @@ var EFFECT_TYPES = {
     }
   },
 
-  dmg_if_hp_low: {
-    label:'Damage (bonus at low HP)', cat:'damage',
-    desc:'Deal more damage when your HP is low.',
-    fields:[
-      {id:'base',      label:'Normal Dmg',   type:'number', default:5,  min:1, max:100},
-      {id:'high',      label:'Low HP Dmg',   type:'number', default:10, min:1, max:200},
-      {id:'threshold', label:'HP % trigger', type:'number', default:25, min:5, max:50}
-    ],
-    effectText:  function(v){ return 'Deal '+v.base+' damage. Below '+v.threshold+'% HP: deal '+v.high+' instead.'; },
-    tooltipText: function(v){ return ''; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var selfHp=ctx.actor?ctx.actor.hp:gs.playerHp;
-      var selfMaxHp=ctx.actor?ctx.actor.maxHp:gs.playerMaxHp;
-      var low=selfHp<selfMaxHp*(+v.threshold/100);
-      var d=ctx.pdmg(low?+v.high:+v.base);
-      dealCardDamage(d,ctx);
-      addLog(ctx.cardName+'! '+d+' dmg.','dmg');
-    }
-  },
 
   dmg_crit: {
     label:'Damage with Crit Chance', cat:'damage',
@@ -966,167 +1228,20 @@ var EFFECT_TYPES = {
   },
 
   // ── Volatile ──
-  volatile_apply: {
-    label:'Apply [Volatile] stacks', cat:'debuff',
-    desc:'Apply N Volatile stacks to the target.',
-    fields:[{id:'stacks', label:'Stacks', type:'number', default:1, min:1, max:5}],
-    effectText:  function(v){ return 'Apply '+v.stacks+' [Volatile] stack'+(+v.stacks>1?'s':'')+'.'; },
-    tooltipText: function(v){ return 'Volatile: at 5+ stacks detonates for 2× damage. Fizzles below 5.'; },
-    typeHint:'attack',
-    run: function(v,ctx){ _applyVolatile(+v.stacks); addLog(ctx.cardName+'! +'+v.stacks+' [Volatile].','debuff'); }
-  },
 
-  volatile_double: {
-    label:'Double [Volatile] stacks', cat:'debuff',
-    desc:'Double the current Volatile stack count on the target.',
-    fields:[],
-    effectText:  function(v){ return 'Double current [Volatile] stacks.'; },
-    tooltipText: function(v){ return 'Doubles existing Volatile stacks.'; },
-    typeHint:'utility',
-    run: function(v,ctx){
-      if(!gs._volatile) return;
-      var add=gs._volatile.stacks;
-      _applyVolatile(add);
-      addLog(ctx.cardName+'! [Volatile] doubled to '+gs._volatile.stacks+'.','debuff');
-    }
-  },
 
-  stabilize: {
-    label:'[Stabilize]', cat:'utility',
-    desc:'Raise Volatile detonation threshold to 10 stacks (10+ = 4× damage).',
-    fields:[],
-    effectText:  function(v){ return '[Stabilize].'; },
-    tooltipText: function(v){ return 'Stabilize: raises Volatile threshold to 10 stacks. 10+ = 4× damage.'; },
-    typeHint:'utility',
-    run: function(v,ctx){
-      if(gs._volatile) gs._volatile.stabilized=true;
-      else gs._volatile={stacks:0,timer:null,stabilized:true};
-      addLog(ctx.cardName+'! [Stabilize] — Volatile threshold raised to 10.','buff');
-    }
-  },
 
   // ── Poison self ──
-  poison_self: {
-    label:'Apply [Poison] to self', cat:'debuff',
-    desc:'Apply Poison stacks to this creature (self).',
-    fields:[
-      {id:'dpt',    label:'Dmg/tick',    type:'number', default:2, min:1, max:20},
-      {id:'dur',    label:'Duration (s)',type:'number', default:8, min:1, max:20},
-      {id:'stacks', label:'Stacks',      type:'number', default:1, min:1, max:6}
-    ],
-    effectText:  function(v){ return 'Apply '+v.stacks+' [Poison] to self.'; },
-    tooltipText: function(v){ return ''; },
-    typeHint:'utility',
-    run: function(v,ctx){
-      if(ctx.isEnemy) _applyPoisonSelfEnemy(+v.dpt,+v.dur*1000,+v.stacks||1);
-      else _applyPoisonSelf(+v.dpt,+v.dur*1000,+v.stacks||1);
-      addLog(ctx.cardName+'! Self-[Poison].','debuff');
-    }
-  },
 
   // ── Poison both ──
-  poison_both: {
-    label:'Apply [Poison] to self and target', cat:'debuff',
-    desc:'Apply Poison to both this creature and the opponent simultaneously.',
-    fields:[
-      {id:'dpt',    label:'Dmg/tick',    type:'number', default:4, min:1, max:20},
-      {id:'dur',    label:'Duration (s)',type:'number', default:8, min:1, max:20},
-      {id:'stacks', label:'Stacks each', type:'number', default:2, min:1, max:6}
-    ],
-    effectText:  function(v){ return 'Apply '+v.stacks+' [Poison] to self and target.'; },
-    tooltipText: function(v){ return ''; },
-    typeHint:'debuff',
-    run: function(v,ctx){
-      if(ctx.isEnemy){
-        _applyPoisonToPlayer(+v.dpt, +v.dur*1000);
-        _applyPoisonSelfEnemy(+v.dpt, +v.dur*1000, +v.stacks||2);
-      } else {
-        _applyPoison(+v.dpt, +v.dur*1000);
-        _applyPoisonSelf(+v.dpt, +v.dur*1000, +v.stacks||2);
-      }
-      addLog(ctx.cardName+'! [Poison] to both.','debuff');
-    }
-  },
 
   // ── Dmg per poison stacks on enemy ──
-  dmg_per_poison_on_enemy: {
-    label:'Damage per Poison on target', cat:'damage',
-    desc:'Deal damage equal to N × enemy Poison stacks.',
-    fields:[
-      {id:'base', label:'Dmg per stack', type:'number', default:4, min:1, max:20},
-      {id:'min',  label:'Minimum dmg',   type:'number', default:4, min:1, max:20}
-    ],
-    effectText:  function(v){ return 'Deal '+v.base+' damage per [Poison] stack on target (min '+v.min+').'; },
-    tooltipText: function(v){ return ''; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var stacks=ctx.isEnemy?_getSelfPoisonStacks():_getEnemyPoisonStacks();
-      var d=ctx.pdmg(Math.max(+v.min, stacks*(+v.base)));
-      dealCardDamage(d, ctx);
-      addLog(ctx.cardName+'! '+d+' dmg ('+stacks+' Poison stacks).','dmg');
-    }
-  },
 
   // ── Shed poison ──
-  shed_poison: {
-    label:'Transfer all [Poison] to target', cat:'utility',
-    desc:'Move all self Poison stacks to the opponent.',
-    fields:[],
-    effectText:  function(v){ return 'Transfer all [Poison] stacks from self to target.'; },
-    tooltipText: function(v){ return 'Shed: transfers all Poison from self to opponent.'; },
-    typeHint:'utility',
-    run: function(v,ctx){
-      if(ctx.isEnemy) _shedPoisonEnemy(); else _shedPoison();
-      addLog(ctx.cardName+'! [Shed] — Poison transferred.','debuff');
-    }
-  },
 
   // ── Sacrifice HP ──
-  sacrifice_hp: {
-    label:'[Sacrifice] HP for effect', cat:'utility',
-    desc:'Pay X HP to trigger a nested effect.',
-    fields:[
-      {id:'cost',   label:'HP cost',     type:'number', default:10, min:1, max:50},
-      {id:'effect', label:'Effect obj',  type:'json',   default:'{}'}
-    ],
-    effectText:  function(v){ return '[Sacrifice] ['+v.cost+' HP]: '+((v.effect&&v.effect.type)||'effect')+'.'; },
-    tooltipText: function(v){ return 'Sacrifice: pay '+v.cost+' HP to trigger this.'; },
-    typeHint:'utility',
-    run: function(v,ctx){
-      if(ctx.isEnemy){
-        if(gs.enemyHp<=+v.cost) return;
-        gs.enemyHp-=+v.cost;
-        updateAll();
-        addLog('[Sacrifice] enemy -'+v.cost+' HP.','debuff');
-      } else {
-        if(gs.playerHp<=+v.cost) return;
-        gs.playerHp-=+v.cost;
-        updateAll();
-        addLog('[Sacrifice] -'+v.cost+' HP.','debuff');
-      }
-      if(v.effect&&v.effect.type&&EFFECT_TYPES[v.effect.type])
-        EFFECT_TYPES[v.effect.type].run(v.effect,ctx);
-    }
-  },
 
   // ── Sacrifice poison stacks ──
-  sacrifice_poison_stacks: {
-    label:'[Sacrifice] Poison stacks for effect', cat:'utility',
-    desc:'Pay X self Poison stacks to trigger a nested effect.',
-    fields:[
-      {id:'cost',   label:'Stack cost', type:'number', default:3, min:1, max:10},
-      {id:'effect', label:'Effect obj', type:'json',   default:'{}'}
-    ],
-    effectText:  function(v){ return '[Sacrifice] ['+v.cost+' Poison stacks]: '+((v.effect&&v.effect.type)||'effect')+'.'; },
-    tooltipText: function(v){ return 'Sacrifice: pay '+v.cost+' Poison stacks to trigger this.'; },
-    typeHint:'utility',
-    run: function(v,ctx){
-      if(!_consumeSelfPoison(+v.cost)) return;
-      addLog('[Sacrifice] -'+v.cost+' Poison stacks.','debuff');
-      if(v.effect&&v.effect.type&&EFFECT_TYPES[v.effect.type])
-        EFFECT_TYPES[v.effect.type].run(v.effect,ctx);
-    }
-  },
 
   // ── Sorcery wrapper ──
   sorcery: {
@@ -1165,21 +1280,6 @@ var EFFECT_TYPES = {
   },
 
   // ── Hellbent wrapper ──
-  hellbent: {
-    label:'[Hellbent] conditional', cat:'utility',
-    desc:'Only triggers if you have no cards in hand.',
-    fields:[{id:'effect', label:'Effect obj', type:'json', default:'{}'}],
-    effectText:  function(v){ return '[Hellbent]: '+((v.effect&&v.effect.type)||'effect')+'.'; },
-    tooltipText: function(v){ return 'Hellbent: only triggers with no cards in hand.'; },
-    typeHint:'utility',
-    run: function(v,ctx){
-      var handLen=ctx.isEnemy?gs.enemyHand.length:gs.hand.length;
-      if(handLen>0) return;
-      addLog('[Hellbent] triggered!','innate');
-      if(v.effect&&v.effect.type&&EFFECT_TYPES[v.effect.type])
-        EFFECT_TYPES[v.effect.type].run(v.effect,ctx);
-    }
-  },
 
   // ── Refresh (shuffle discard into draw) ──
   refresh: {
@@ -1319,24 +1419,6 @@ var EFFECT_TYPES = {
   },
 
   // ── Shield from discard pile ──
-  shield_from_discard: {
-    label:'Shield from discard pile size', cat:'buff',
-    desc:'Gain Shield equal to discard pile size × multiplier.',
-    fields:[{id:'mult', label:'Multiplier', type:'number', default:2, min:1, max:8}],
-    effectText:  function(v){ return 'Gain [Shield] equal to discard pile × '+v.mult+'.'; },
-    tooltipText: function(v){ return 'Shield scales with how many cards you\'ve played.'; },
-    typeHint:'defense',
-    run: function(v,ctx){
-      var pile=ctx.isEnemy?gs.enemyDiscardPile:gs.discardPile;
-      var amt=(pile.length)*(+v.mult);
-      if(ctx.isEnemy){
-        if(amt>0){ gs.enemyShell+=amt; setTimeout(function(){ if(!gs) return; gs.enemyShell=Math.max(0,gs.enemyShell-amt); },4000); }
-      } else {
-        if(amt>0) _applyShield(amt,4000);
-      }
-      addLog(ctx.cardName+'! Shield +'+(amt||0)+' ('+pile.length+' in discard).','buff');
-    }
-  },
 
   // ── Damage based on missing mana ──
   dmg_missing_mana: {
@@ -1358,25 +1440,6 @@ var EFFECT_TYPES = {
   },
 
   // ── Damage based on STR difference ──
-  dmg_str_diff: {
-    label:'Damage from STR difference', cat:'damage',
-    desc:'Deal damage based on opponent STR minus own STR.',
-    fields:[
-      {id:'mult', label:'Multiplier', type:'number', default:2, min:1, max:5},
-      {id:'min',  label:'Min damage', type:'number', default:4, min:1, max:20}
-    ],
-    effectText:  function(v){ return 'Deal (opponent STR − own STR) × '+v.mult+' damage (min '+v.min+').'; },
-    tooltipText: function(v){ return 'Hits harder against high-STR targets.'; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var ownStr=ctx.isEnemy?ctx.str:gs.stats.str;
-      var oppStr=ctx.isEnemy?gs.stats.str:(gs.enemyStats?gs.enemyStats.str:gs.stats.str);
-      var diff=Math.max(0, oppStr-ownStr);
-      var d=ctx.pdmg(Math.max(+v.min, diff*(+v.mult)));
-      dealCardDamage(d, ctx);
-      addLog(ctx.cardName+'! '+d+' dmg (STR diff '+diff+').','dmg');
-    }
-  },
 
   // ── Damage based on missing HP ──
   dmg_missing_hp: {
@@ -1398,72 +1461,12 @@ var EFFECT_TYPES = {
   },
 
   // ── Damage per active second of Slow on target ──
-  dmg_per_slow_seconds: {
-    label:'Damage per Slow seconds remaining', cat:'damage',
-    desc:'Deal damage based on Slow duration remaining on target.',
-    fields:[
-      {id:'base', label:'Dmg per second', type:'number', default:6, min:1, max:20},
-      {id:'min',  label:'Min damage',     type:'number', default:6, min:1, max:20}
-    ],
-    effectText:  function(v){ return 'Deal '+v.base+' damage per active second of [Slow] remaining (min '+v.min+').'; },
-    tooltipText: function(v){ return 'More powerful when Slow is freshly applied.'; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var tgt=ctx.isEnemy?'player':'enemy';
-      var slowStatus=gs.statusEffects[tgt].find(function(s){return s.stat==='slow_draw';});
-      var secs=slowStatus?slowStatus.remaining/1000:0;
-      var d=ctx.pdmg(Math.max(+v.min, Math.floor(secs*(+v.base))));
-      dealCardDamage(d, ctx);
-      addLog(ctx.cardName+'! '+d+' dmg ('+secs.toFixed(1)+'s Slow remaining).','dmg');
-    }
-  },
 
   // ── Drain enemy mana (direct steal, not temporary) ──
-  drain_enemy_mana: {
-    label:'Drain enemy mana', cat:'utility',
-    desc:'Directly remove X mana from the enemy.',
-    fields:[{id:'amt', label:'Mana drained', type:'number', default:15, min:5, max:60}],
-    effectText:  function(v){ return '[Drain] '+v.amt+' mana.'; },
-    tooltipText: function(v){ return 'Drain: removes '+v.amt+' mana from enemy directly.'; },
-    typeHint:'utility',
-    run: function(v,ctx){
-      if(ctx.isEnemy){ gs.mana=Math.max(0,gs.mana-(+v.amt)); addLog(ctx.cardName+'! -'+v.amt+' mana.','mana'); }
-      else { gs.enemyMana=Math.max(0,(gs.enemyMana||0)-(+v.amt)); addLog(ctx.cardName+'! Enemy -'+v.amt+' mana.','mana'); }
-      updateAll();
-    }
-  },
 
   // ── Heal self ──
-  heal_self: {
-    label:'Heal self', cat:'buff',
-    desc:'Restore X HP to this creature.',
-    fields:[{id:'amt', label:'HP healed', type:'number', default:10, min:1, max:50}],
-    effectText:  function(v){ return 'Heal '+v.amt+' HP.'; },
-    tooltipText: function(v){ return 'Restores '+v.amt+' HP.'; },
-    typeHint:'utility',
-    run: function(v,ctx){
-      if(ctx.isEnemy){
-        gs.enemyHp=Math.min(gs.enemyMaxHp, gs.enemyHp+(+v.amt));
-        spawnFloatNum('enemy','+'+(+v.amt),false,'heal-num');
-        flashHpBar('enemy','hp-flash-green');
-      } else {
-        gs.playerHp=Math.min(gs.playerMaxHp, gs.playerHp+(+v.amt));
-      }
-      updateAll();
-      addLog(ctx.cardName+'! Healed '+v.amt+' HP.','buff');
-    }
-  },
 
   // ── Suspend (pause timers) ──
-  suspend: {
-    label:'[Suspend] timers', cat:'utility',
-    desc:'Pause all active buff and debuff timers for X seconds.',
-    fields:[{id:'dur', label:'Duration (s)', type:'number', default:2, min:1, max:6}],
-    effectText:  function(v){ return '[Suspend] ('+v.dur+').'; },
-    tooltipText: function(v){ return 'Suspend: pause all buff/debuff timers for '+v.dur+'s.'; },
-    typeHint:'utility',
-    run: function(v,ctx){ _suspendTimers(+v.dur); addLog('[Suspend] ('+v.dur+'s).','buff'); }
-  },
 
   // ── Draw speed once (reduce next draw delay) ──
   draw_speed_once: {
@@ -1554,31 +1557,7 @@ var EFFECT_TYPES = {
     }
   },
 
-  cursed: {
-    label:'Apply [Cursed]', cat:'debuff',
-    desc:'Reduce enemy damage output.',
-    fields:[{id:'dur', label:'Duration (s)', type:'number', default:5, min:1, max:20}],
-    effectText:  function(v){ return 'Apply Weaken for '+v.dur+'s.'; },
-    tooltipText: function(v){ return 'Weaken: enemy deals 15% less damage.'; },
-    typeHint:'debuff',
-    run: function(v,ctx){
-      applyStatus('enemy','debuff','Cursed',-0.15,'dmg',(+v.dur)*1000,'Cursed: enemy dmg -15%.');
-      addLog(ctx.cardName+'! Cursed '+v.dur+'s.','debuff');
-    }
-  },
 
-  marked: {
-    label:'Apply [Marked]', cat:'debuff',
-    desc:'Enemy takes +50% damage from all sources.',
-    fields:[{id:'dur', label:'Duration (s)', type:'number', default:4, min:1, max:15}],
-    effectText:  function(v){ return 'Apply Vulnerable for '+v.dur+'s.'; },
-    tooltipText: function(v){ return 'Vulnerable: enemy takes 50% more damage from all sources.'; },
-    typeHint:'debuff',
-    run: function(v,ctx){
-      applyStatus('enemy','debuff','Marked',0.5,'death_mark',(+v.dur)*1000,'Marked: +50% dmg taken.');
-      addLog(ctx.cardName+'! Marked '+v.dur+'s.','debuff');
-    }
-  },
 
   poison: {
     label:'Apply [Poison]', cat:'debuff',
@@ -1877,32 +1856,7 @@ var EFFECT_TYPES = {
 
   // ── UTILITY ─────────────────────────────────────────
 
-  stun: {
-    label:'Stun Enemy', cat:'utility',
-    desc:'Prevent the enemy from acting briefly.',
-    fields:[{id:'dur', label:'Duration (ms)', type:'number', default:800, min:200, max:3000}],
-    effectText:  function(v){ return 'Stun enemy for '+(+v.dur/1000).toFixed(1)+'s.'; },
-    tooltipText: function(v){ return ''; },
-    typeHint:'utility',
-    run: function(v,ctx){
-      stunEnemy(+v.dur);
-      addLog(ctx.cardName+'! Enemy stunned '+(+v.dur/1000).toFixed(1)+'s.','innate');
-    }
-  },
 
-  drain_mana: {
-    label:'Drain Own Mana', cat:'utility',
-    desc:'Spend a portion of your own mana as a cost.',
-    fields:[{id:'pct', label:'% of max mana', type:'number', default:30, min:10, max:100}],
-    effectText:  function(v){ return 'Drain '+v.pct+'% max mana.'; },
-    tooltipText: function(v){ return 'Drain: removes mana from your bar.'; },
-    typeHint:'utility',
-    run: function(v,ctx){
-      var cost=Math.round(gs.maxMana*(+v.pct/100));
-      gs.mana=Math.max(0,gs.mana-cost);
-      addLog(ctx.cardName+'! -'+cost+' mana.','mana');
-    }
-  },
 
   draw_cards: {
     label:'Draw Cards', cat:'utility',
@@ -1930,22 +1884,6 @@ var EFFECT_TYPES = {
   // ── Hand Size Scaling effects ────────────────────────────────
 
   // Damage scales with hand size (Vine Lash)
-  dmg_hand_scaling: {
-    label:'Hand Size Damage', cat:'damage',
-    desc:'Deal base damage plus bonus per card in hand.',
-    fields:[
-      {id:'base', label:'Base Dmg', type:'number', default:10},
-      {id:'perCard', label:'Per card', type:'number', default:2}
-    ],
-    effectText: function(v){ return 'Deal '+v.base+' + hand size × '+v.perCard+' damage.'; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var handLen = ctx.actor ? ctx.actor.hand.length : (ctx.isEnemy ? gs.enemyHand.length : gs.hand.length);
-      var d = ctx.pdmg(+v.base + handLen * (+v.perCard));
-      dealCardDamage(d, ctx);
-      addLog(ctx.cardName+'! '+d+' dmg ('+handLen+' cards in hand).','dmg');
-    }
-  },
 
   // Deal damage per card in hand then discard entire hand (Wilt)
   dmg_hand_discard_all: {
@@ -1984,34 +1922,6 @@ var EFFECT_TYPES = {
   },
 
   // Corruption Spread: create an Ethereal Corrupt Spore in own hand (Bloom innate)
-  corruption_spread: {
-    label:'Corruption Spread', cat:'utility',
-    desc:'Spend 20 mana to create a Corrupt Spore (Weaken 4s, Ethereal) in own hand.',
-    fields:[],
-    effectText: function(v){ return 'Create Corrupt Spore (Ethereal) in hand.'; },
-    typeHint:'utility',
-    run: function(v,ctx){
-      var actor = ctx.actor;
-      if(!actor) return;
-      // Mana check (this is a Sorcery-like cost on the innate trigger)
-      if(actor.mana < 20) return;
-      actor.mana -= 20;
-      // Create Ethereal Corrupt Spore in hand
-      // Register the card if not already in CARDS
-      if(!CARDS['corrupt_spore']){
-        CARDS['corrupt_spore'] = {
-          id:'corrupt_spore', name:'Corrupt Spore', icon:'🌺', type:'utility',
-          unique:false, champ:'bloom', statId:null,
-          effect:'Apply [Weaken] for 4s.\n[Ethereal]',
-          effects:[{type:'weaken',dur:4}]
-        };
-      }
-      actor.hand.push({id:'corrupt_spore', ghost:true, _new:true, _newDraw:true, _drawLock:Date.now()+200});
-      spawnFloatNum(getSelfSide(ctx), '-20✦', false, 'mana-num');
-      addLog('Corruption Spread! Corrupt Spore added to hand.','innate');
-      if(actor.side === 'player') renderHand();
-    }
-  },
 
   // ── Shield / Damage utility effects ──────────────────────────
 
@@ -2301,292 +2211,27 @@ var EFFECT_TYPES = {
   },
 
   // ── Drain a percentage of own max mana ──
-  drain_self_pct: {
-    label:'Drain own mana (% of max)', cat:'utility',
-    desc:'Remove a percentage of this creature\'s own max mana.',
-    fields:[{id:'pct', label:'% of max mana', type:'number', default:80, min:10, max:100}],
-    effectText:  function(v){ return '[Drain] '+v.pct+'% of max mana.'; },
-    tooltipText: function(v){ return 'Drain: removes '+v.pct+'% of your max mana.'; },
-    typeHint:'utility',
-    run: function(v,ctx){
-      var pool=ctx.isEnemy?gs.enemyMana:gs.mana;
-      var maxPool=ctx.isEnemy?gs.enemyMaxMana:gs.maxMana;
-      var cost=Math.round(maxPool*(+v.pct/100));
-      if(ctx.isEnemy) gs.enemyMana=Math.max(0,gs.enemyMana-cost);
-      else gs.mana=Math.max(0,gs.mana-cost);
-      updateAll();
-      addLog(ctx.cardName+'! -'+cost+' mana ('+v.pct+'% of max).','mana');
-    }
-  },
 
   // ── Gain mana ──
-  mana_gain: {
-    label:'Gain mana', cat:'buff',
-    desc:'Immediately gain X mana.',
-    fields:[{id:'amt', label:'Mana gained', type:'number', default:50, min:5, max:200}],
-    effectText:  function(v){ return 'Gain '+v.amt+' mana.'; },
-    tooltipText: function(v){ return 'Gain '+v.amt+' mana immediately.'; },
-    typeHint:'utility',
-    run: function(v,ctx){
-      if(ctx.isEnemy) gs.enemyMana=Math.min(gs.enemyMaxMana,(gs.enemyMana||0)+(+v.amt));
-      else gs.mana=Math.min(gs.maxMana,gs.mana+(+v.amt));
-      updateAll();
-      addLog(ctx.cardName+'! +'+v.amt+' mana.','mana');
-    }
-  },
 
-  steal_mana: {
-    label:'Steal Enemy Mana', cat:'utility',
-    desc:'Temporarily reduce enemy mana pool.',
-    fields:[
-      {id:'amt', label:'Mana stolen', type:'number', default:20, min:5,  max:100},
-      {id:'dur', label:'Duration (s)',type:'number', default:3,  min:1,  max:10}
-    ],
-    effectText:  function(v){ return 'Steal '+v.amt+' mana for '+v.dur+'s.'; },
-    tooltipText: function(v){ return 'Temporarily reduces enemy mana pool.'; },
-    typeHint:'utility',
-    run: function(v,ctx){
-      var ms=gs.statusEffects.enemy.find(function(s){return s.id==='mana_drain';});
-      if(ms){ ms.val=+v.amt; ms.remaining=(+v.dur)*1000; }
-      else gs.statusEffects.enemy.push({id:'mana_drain',label:'Mana Drained',cls:'debuff',
-        stat:'mana_drain',val:+v.amt,remaining:(+v.dur)*1000,maxRemaining:(+v.dur)*1000});
-      addTag('enemy','debuff','Mana Drained',0,'mana_drain','Enemy mana reduced by '+v.amt+' for '+v.dur+'s.');
-      addLog(ctx.cardName+'! Enemy -'+v.amt+' mana.','mana');
-    }
-  },
 
-  discard_hand: {
-    label:'Discard from Hand', cat:'utility',
-    desc:'Discard N random cards from your own hand (downside on powerful cards).',
-    fields:[{id:'count', label:'Cards discarded', type:'number', default:1, min:1, max:4}],
-    effectText:  function(v){ return 'Discard '+v.count+' card'+(+v.count>1?'s':'')+' at random.'; },
-    tooltipText: function(v){ return 'Discarded cards return to your deck.'; },
-    typeHint:'utility',
-    run: function(v,ctx){
-      var n=Math.min(+v.count,gs.hand.length);
-      for(var i=0;i<n;i++){
-        if(!gs.hand.length) break;
-        var ri=Math.floor(Math.random()*gs.hand.length);
-        var disc=gs.hand.splice(ri,1)[0];
-        var dc=CARDS[disc.id];
-        if(!disc.ghost){ gs.discardPile.push(disc.id); handleCardDiscard(disc.id); spawnCardFloat(disc.id, 'discard'); }
-        addLog('Discarded '+(dc?dc.name:disc.id)+'.','draw');
-      }
-      renderHand(); renderPiles();
-      addLog(ctx.cardName+'! Discarded '+n+' card'+(n>1?'s':'')+'.','innate');
-    }
-  },
 
-  holy_flame: {
-    label:'Trigger Holy Flame', cat:'utility',
-    desc:'Triggers Holy Flame (Paladin innate — applies Burn on debuffs/buffs).',
-    fields:[],
-    effectText:  function(v){ return 'Trigger Holy Flame.'; },
-    tooltipText: function(v){ return 'Holy Flame: Paladin innate. Applying debuffs or buffs also applies stacking Burn.'; },
-    typeHint:'attack',
-    run: function(v,ctx){ triggerHolyFlame(); }
-  },
 
   // ── CONDITIONAL DAMAGE ─────────────────────────────
 
-  dmg_if_shielded: {
-    label:'Damage (bonus if Shielded)', cat:'damage',
-    desc:'Deal more damage while your own Shield is active.',
-    fields:[
-      {id:'base', label:'Normal Dmg', type:'number', default:5,  min:1, max:100},
-      {id:'high', label:'Shielded Dmg', type:'number', default:12, min:1, max:200}
-    ],
-    effectText:  function(v){ return 'Deal '+v.base+' damage. If you have Shield: deal '+v.high+'.'; },
-    tooltipText: function(v){ return 'Shield: absorbs direct damage before HP. DoTs bypass it.'; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var shielded=gs.playerShield>0;
-      var d=ctx.pdmg(shielded?+v.high:+v.base);
-      dealCardDamage(d, ctx);
-      addLog(ctx.cardName+'! '+d+' dmg'+(shielded?' (shield bonus!)':'')+'.','dmg');
-    }
-  },
 
-  dmg_if_slowed: {
-    label:'Damage (bonus if enemy Slowed)', cat:'damage',
-    desc:'Deal more damage if the enemy is currently Slowed.',
-    fields:[
-      {id:'base', label:'Normal Dmg', type:'number', default:8,  min:1, max:100},
-      {id:'high', label:'Slowed Dmg', type:'number', default:16, min:1, max:200}
-    ],
-    effectText:  function(v){ return 'Deal '+v.base+' damage. If enemy is Slowed: deal '+v.high+'.'; },
-    tooltipText: function(v){ return 'Slow: reduces enemy attack speed by 40%.'; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var slowed=gs.statusEffects.enemy.some(function(s){return s.stat==='atkspeed'&&s.val<0;});
-      var d=ctx.pdmg(slowed?+v.high:+v.base);
-      dealCardDamage(d, ctx);
-      addLog(ctx.cardName+'! '+d+' dmg'+(slowed?' (slow bonus!)':'')+'.','dmg');
-    }
-  },
 
-  dmg_if_poison: {
-    label:'Damage (bonus if Poison active)', cat:'damage',
-    desc:'Deal more damage if Poison is already applied to the enemy.',
-    fields:[
-      {id:'base', label:'Normal Dmg',  type:'number', default:6,  min:1, max:100},
-      {id:'high', label:'Poison Dmg',  type:'number', default:14, min:1, max:200}
-    ],
-    effectText:  function(v){ return 'Deal '+v.base+' damage. If enemy has Poison: deal '+v.high+'.'; },
-    tooltipText: function(v){ return 'Poison: stacking DoT. Deals damage every 2s, bypasses Shield.'; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var poisoned=gs.statusEffects.enemy.some(function(s){return s.id==='poison'&&s.dpt>0;});
-      var d=ctx.pdmg(poisoned?+v.high:+v.base);
-      dealCardDamage(d, ctx);
-      addLog(ctx.cardName+'! '+d+' dmg'+(poisoned?' (poison bonus!)':'')+'.','dmg');
-    }
-  },
 
-  dmg_if_burn: {
-    label:'Damage (bonus if Burn active)', cat:'damage',
-    desc:'Deal more damage if Burn is already applied to the enemy.',
-    fields:[
-      {id:'base', label:'Normal Dmg', type:'number', default:6,  min:1, max:100},
-      {id:'high', label:'Burn Dmg',   type:'number', default:14, min:1, max:200}
-    ],
-    effectText:  function(v){ return 'Deal '+v.base+' damage. If enemy has Burn: deal '+v.high+'.'; },
-    tooltipText: function(v){ return 'Burn: '+v.dpt+' dmg every 3s. Bypasses Shield. Refreshes on reapplication.'; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var burning=gs.statusEffects.enemy.some(function(s){return s.id==='burn'&&s.dpt>0;});
-      var d=ctx.pdmg(burning?+v.high:+v.base);
-      dealCardDamage(d, ctx);
-      addLog(ctx.cardName+'! '+d+' dmg'+(burning?' (burn bonus!)':'')+'.','dmg');
-    }
-  },
 
-  dmg_if_full_hand: {
-    label:'Damage (bonus at full hand)', cat:'damage',
-    desc:'Deal more damage when holding the maximum number of cards.',
-    fields:[
-      {id:'base', label:'Normal Dmg',    type:'number', default:8,  min:1, max:100},
-      {id:'high', label:'Full Hand Dmg', type:'number', default:18, min:1, max:200}
-    ],
-    effectText:  function(v){ return 'Deal '+v.base+' damage. Full hand: deal '+v.high+' instead.'; },
-    tooltipText: function(v){ return 'Rewards holding cards — pairs well with discard-synergy builds.'; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var full=gs.hand.length>=HAND_SIZE;
-      var d=ctx.pdmg(full?+v.high:+v.base);
-      dealCardDamage(d, ctx);
-      addLog(ctx.cardName+'! '+d+' dmg'+(full?' (full hand bonus!)':'')+'.','dmg');
-    }
-  },
 
-  dmg_first_card: {
-    label:'Damage (bonus if first card)', cat:'damage',
-    desc:'Deal more damage if this is the first card played this battle.',
-    fields:[
-      {id:'base',   label:'Normal Dmg', type:'number', default:5,  min:1, max:100},
-      {id:'opener', label:'Opener Dmg', type:'number', default:14, min:1, max:200}
-    ],
-    effectText:  function(v){ return 'Deal '+v.base+' damage. If first card this battle: deal '+v.opener+' instead.'; },
-    tooltipText: function(v){ return 'Opening plays hit harder — set up debuffs before this or use it to open combos.'; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var isFirst=!gs.lastPlayerCard||gs.lastPlayerCard===ctx.cardName;
-      // Use cards_played counter from shrine tracking as the reliable first-card check
-      var cardsPlayed=PERSIST&&PERSIST.shrineCounters&&PERSIST.shrineCounters.cards_played||0;
-      var opener=cardsPlayed<=1;
-      var d=ctx.pdmg(opener?+v.opener:+v.base);
-      dealCardDamage(d, ctx);
-      addLog(ctx.cardName+'! '+d+' dmg'+(opener?' (opener bonus!)':'')+'.','dmg');
-    }
-  },
 
   // ── CONDITIONAL UTILITY ─────────────────────────────
 
-  mana_if_debuffed: {
-    label:'Mana (bonus if enemy debuffed)', cat:'buff',
-    desc:'Gain mana — more if the enemy has active debuffs.',
-    fields:[
-      {id:'base', label:'Base Mana',  type:'number', default:20, min:5, max:150},
-      {id:'high', label:'Bonus Mana', type:'number', default:45, min:5, max:200}
-    ],
-    effectText:  function(v){ return 'Gain '+v.base+' mana. If enemy is debuffed: gain '+v.high+' instead.'; },
-    tooltipText: function(v){ return ''; },
-    typeHint:'utility',
-    run: function(v,ctx){
-      var oppEff3=ctx.opponent?ctx.opponent.statusEffects:gs.statusEffects.enemy;
-      var hasD=oppEff3.some(function(x){return x.cls==='debuff';});
-      var amt=hasD?+v.high:+v.base;
-      gs.mana=Math.min(gs.maxMana,gs.mana+amt);
-      addLog(ctx.cardName+'! +'+amt+' mana'+(hasD?' (debuff bonus!)':'')+'.','mana');
-    }
-  },
 
-  bonus_effect_if_slowed: {
-    label:'Apply [Slow] (extend if already Slowed)', cat:'debuff',
-    desc:'Apply Slow — if enemy is already Slowed, extend the duration instead.',
-    fields:[
-      {id:'dur',     label:'Duration (s)',  type:'number', default:4, min:1, max:15},
-      {id:'ext_dur', label:'Extended (s)',  type:'number', default:8, min:1, max:20}
-    ],
-    effectText:  function(v){ return 'Apply Slow for '+v.dur+'s. Already Slowed: extend to '+v.ext_dur+'s.'; },
-    tooltipText: function(v){ return 'Slow: reduces enemy attack speed by 40%.'; },
-    typeHint:'debuff',
-    run: function(v,ctx){
-      var existing=gs.statusEffects.enemy.find(function(s){return s.stat==='atkspeed'&&s.val<0;});
-      var dur=(existing?+v.ext_dur:+v.dur)*1000;
-      if(existing){ existing.remaining=Math.max(existing.remaining,dur); addLog(ctx.cardName+'! Slow extended to '+v.ext_dur+'s.','debuff'); }
-      else{ applyStatus('enemy','debuff','Slow',-0.4,'atkspeed',dur,'Slow: atk speed -40%.'); addLog(ctx.cardName+'! Slowed '+v.dur+'s.','debuff'); }
-    }
-  },
 
   // ── ESCALATION ──────────────────────────────────────
 
-  draw_speed_permanent: {
-    label:'Draw Speed (permanent, stacking)', cat:'buff',
-    desc:'Permanently reduce your draw interval — gets faster each time this card is played.',
-    fields:[
-      {id:'pct',     label:'Per-play %', type:'number', default:3,  min:1, max:10,
-       hint:'Stacks each play. Max caps at 30%.'},
-      {id:'max_pct', label:'Max %',      type:'number', default:30, min:5, max:50}
-    ],
-    effectText:  function(v){ return 'Draw interval -'+v.pct+'% permanently (stacks, max '+v.max_pct+'%).'; },
-    tooltipText: function(v){ return 'Each time this is played your deck cycles faster — stacks up to '+v.max_pct+'%.'; },
-    typeHint:'utility',
-    run: function(v,ctx){
-      var key='_permDrawStacks_'+ctx.cardName.replace(/\s/g,'');
-      if(!gs[key]) gs[key]=0;
-      var maxStacks=Math.round(+v.max_pct/+v.pct);
-      if(gs[key]<maxStacks){
-        gs[key]++;
-        gs.drawIntervalBase=Math.max(300,(gs.drawIntervalBase||2000)*(1-(+v.pct/100)));
-        addLog(ctx.cardName+'! Draw interval -'+v.pct+'% (×'+gs[key]+').','buff');
-      } else {
-        addLog(ctx.cardName+'! Draw speed maxed out.','buff');
-      }
-    }
-  },
 
-  dmg_scaling_played: {
-    label:'Damage (scales with times played)', cat:'damage',
-    desc:'Deals more damage each time it has been played this battle.',
-    fields:[
-      {id:'base',    label:'Base Dmg',    type:'number', default:6, min:1, max:50},
-      {id:'per_play',label:'+ per play',  type:'number', default:3, min:1, max:20},
-      {id:'max_bonus',label:'Max bonus',  type:'number', default:18, min:5, max:100}
-    ],
-    effectText:  function(v){ return 'Deal '+v.base+'+'+v.per_play+' dmg per prior play this battle (max +'+v.max_bonus+').'; },
-    tooltipText: function(v){ return 'Rewards building a deck that draws this card repeatedly.'; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var key='_playCount_'+ctx.cardName.replace(/\s/g,'');
-      gs[key]=(gs[key]||0);
-      var bonus=Math.min(gs[key]*(+v.per_play),+v.max_bonus);
-      var d=ctx.pdmg(+v.base+bonus);
-      gs[key]++;
-      dealCardDamage(d, ctx);
-      addLog(ctx.cardName+'! '+d+' dmg (played '+gs[key]+'×).','dmg');
-    }
-  },
 
 
 }; // end EFFECT_TYPES

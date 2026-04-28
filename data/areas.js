@@ -7,13 +7,17 @@ var AREA_DEFS=[
    lore:'The first tunnels beneath the old city. Water runs brown here, fed by something upstream that nobody has gone to investigate. The rats are larger than they should be, and they move with a coordinated purpose that unsettles even seasoned scouts.\n\nGoblins have claimed sections of the upper tunnels. They seem as surprised to see travellers as travellers are to see them.',
    enemyPool:['rat','goblin','squanchback','drain_lurker','zombie'],           bg:'#0a0d06', loot:{always:'key_sewers',      bonus:null,          bonusChance:0}},
 
-  {id:'pale_road',    name:'The Pale Road',            icon:'🗡️',materialGroup:'road', levelRange:[1,3], theme:'the old road out of town — bandits and beasts',
+  {id:'pale_road',    name:'The Pale Road',            icon:'🗡️',materialGroup:'forest', levelRange:[1,3], theme:'the old road out of town — bandits and beasts',
    lore:'The road that leads away from the city has not been maintained in years. Merchant caravans stopped running when the wolves moved in. Then came the bandits, drawn to the abandoned wagons. Now the road belongs to neither — just whatever is hungry enough to stay.\n\nSlimes have begun pooling in the ditches. Nobody knows where they come from.',
    enemyPool:['slime','wolf','bandit'],           bg:'#0d0a06', loot:{always:'key_pale_road',   bonus:null,          bonusChance:0}},
 
   {id:'swamp',       name:'Bogmire Swamp',            icon:'🌿',materialGroup:'wetlands', levelRange:[1,3], theme:'fetid waters, toxic fog, things that grow wrong',
    lore:'The swamp has no clear boundary — it simply begins where the road softens and ends where solid ground returns, if it returns. Locals avoid the eastern edge entirely. They say the fog moves against the wind.\n\nThe mushrooms here communicate. The flowers here corrupt. The snakes here are patient.',
    enemyPool:['snake','bloom','sporepuff','mycelid'],  bg:'#060e06', loot:{always:'key_bog',         bonus:null,          bonusChance:0}},
+
+  {id:'ransacked_temple', name:'The Ransacked Temple',  icon:'🏛️',materialGroup:'ruins', levelRange:[2,5], theme:'shattered sanctum, corrupted guardians, infernal invaders',
+   lore:'The Sanctum of Light stood for centuries. Then something came from below. The paladins fought. They lost. Now iron sentinels still patrol empty halls, raiders pick through the wreckage, and infernal beasts roam where prayers once echoed.\n\nThe temple is not dead. It is occupied.',
+   enemyPool:['iron_sentinel','raider','infernal_beast'], bg:'#120608', loot:{always:'key_temple', bonus:null, bonusChance:0}},
 
   {id:'dojo',        name:'The Dojo',                  icon:'🥋',materialGroup:'dojo', levelRange:[1,99], theme:'debug arena — fight the Dojo Tiger', singleEnemy:true,
    lore:'A timeless training ground. The Dojo Tiger fights however you configure it. Swap its innate and deck in dojo_tiger.js to test any ability.',
