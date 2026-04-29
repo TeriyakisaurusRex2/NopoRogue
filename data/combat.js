@@ -72,6 +72,9 @@ function createActor(creatureId, level, side) {
     conjuredCount: 0,
     shadowMarkActive: false,
     nextCardCrit: false,
+
+    // Card modification system
+    _cardMods: [],
   };
 }
 
@@ -139,6 +142,22 @@ function dealDamage(target, dmg, options) {
 
   // Apply damage to HP
   dmg = Math.max(0, dmg);
+
+  // Fire on_pre_damage triggers (can modify dmg before HP reduction)
+  if (dmg > 0 && !options.isDot && !options.isThorns) {
+    var preDmgCtx = {
+      actor: target,
+      opponent: source,
+      pdmg: function(b) { return Math.max(1, b); },
+      _incomingDmg: dmg
+    };
+    fireInnateTriggers(target, 'on_pre_damage', preDmgCtx);
+    // Check if triggers modified the damage
+    if (typeof preDmgCtx._modifiedDmg === 'number') {
+      dmg = Math.max(0, preDmgCtx._modifiedDmg);
+    }
+  }
+
   target.hp = Math.max(0, target.hp - dmg);
 
   // Undying: survive lethal damage once
@@ -663,7 +682,8 @@ function playCardForActor(actor, cardIndex) {
   // Draw lock check
   if (item._drawLock && Date.now() < item._drawLock) return;
 
-  // Remove from hand
+  // Remove from hand — check if this was the last card (Hellbent)
+  var wasLastInHand = actor.hand.length === 1;
   actor.hand.splice(cardIndex, 1);
 
   // Play animation (player only — enemy cards don't need visual ghosts)
@@ -702,6 +722,8 @@ function playCardForActor(actor, cardIndex) {
     isEnemy: actor.side === 'enemy',
     // Damage helper
     pdmg: function(base) { return Math.max(1, Math.round(base)); },
+    // Hellbent flag
+    _wasLastInHand: wasLastInHand,
   };
 
   // Log
@@ -726,14 +748,33 @@ function playCardForActor(actor, cardIndex) {
     }
   }
 
-  // Execute card effects through EFFECT_TYPES
-  if (card.effects && card.effects.length) {
-    card.effects.forEach(function(eff) {
+  // Execute card effects through EFFECT_TYPES (with mod resolution)
+  var resolved = resolveCardEffects(actor, item.id);
+  var resolvedEffects = resolved.effects.concat(resolved.appendedEffects);
+
+  // Apply crit from mods
+  if(resolved.crit > 0){
+    ctx.critBonus = (ctx.critBonus || 0) + resolved.crit;
+  }
+
+  if (resolvedEffects.length) {
+    resolvedEffects.forEach(function(eff) {
       var def = EFFECT_TYPES[eff.type];
       if (!def) { addLog('Unknown effect: ' + eff.type, 'sys'); return; }
       def.run(eff, ctx);
     });
   }
+
+  // Execute legacy _bonusEffects (from old modify_hand, kept for compatibility)
+  if (item._bonusEffects && item._bonusEffects.length) {
+    item._bonusEffects.forEach(function(eff) {
+      var def = EFFECT_TYPES[eff.type];
+      if (def) def.run(eff, ctx);
+    });
+  }
+
+  // Consume next_play mods after card is played
+  consumeNextPlayMods(actor, item.id);
 
   // Fire post-play innate triggers (rewards like Frenzy)
   fireInnateTriggers(actor, 'on_card', ctx);
@@ -802,6 +843,15 @@ function playCardForActor(actor, cardIndex) {
     renderHand(); renderPiles();
   }
   updateAll();
+
+  // Fire on_hand_empty triggers if hand is now empty
+  if (actor.hand.length === 0) {
+    fireInnateTriggers(actor, 'on_hand_empty', {
+      actor: actor,
+      opponent: opponent,
+      pdmg: function(b) { return Math.max(1, b); }
+    });
+  }
 }
 
 

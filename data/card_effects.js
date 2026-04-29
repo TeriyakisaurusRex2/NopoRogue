@@ -313,8 +313,377 @@ function getSelfSide(ctx){
   return ctx.isEnemy ? 'enemy' : 'player';
 }
 
-var EFFECT_TYPES = {
+// ══════════════════════════════════════════════════════════════
+// CARD MOD RESOLUTION — resolve a card's effects with active mods
+// ══════════════════════════════════════════════════════════════
 
+function _cardMatchesFilter(cardId, card, filter){
+  if(!filter) return false;
+  if(filter.all) return true;
+  if(filter.id) return cardId === filter.id;
+  if(filter.type) return card && card.type === filter.type;
+  if(filter.tag === 'universal') return cardId === 'strike' || cardId === 'brace';
+  if(filter.tag) return card && card.tags && card.tags.indexOf(filter.tag) !== -1;
+  return false;
+}
+
+function getCardMods(actor, cardId){
+  if(!actor || !actor._cardMods) return [];
+  var card = CARDS[cardId];
+  var matching = [];
+  for(var i = 0; i < actor._cardMods.length; i++){
+    if(_cardMatchesFilter(cardId, card, actor._cardMods[i].filter)) matching.push(actor._cardMods[i]);
+  }
+  return matching;
+}
+
+// Resolve card effects + all applicable mods → {effects, crit, appendedEffects}
+function resolveCardEffects(actor, cardId){
+  var card = CARDS[cardId];
+  if(!card) return {effects:[], crit:0, appendedEffects:[]};
+  var mods = getCardMods(actor, cardId);
+  if(mods.length === 0) return {effects:card.effects||[], crit:0, appendedEffects:[]};
+
+  var resolved = JSON.parse(JSON.stringify(card.effects || []));
+  var totalCrit = 0;
+  var appended = [];
+
+  for(var mi = 0; mi < mods.length; mi++){
+    var changes = mods[mi].changes;
+    for(var ci = 0; ci < changes.length; ci++){
+      var ch = changes[ci];
+      if(ch.field === 'crit'){
+        totalCrit += (+ch.delta || 0);
+      } else if(ch.append_effect){
+        appended.push(JSON.parse(JSON.stringify(ch.append_effect)));
+      } else if(ch.append_sorcery){
+        appended.push({type:'sorcery', cost:ch.append_sorcery.cost, effect:ch.append_sorcery.effect});
+      } else if(ch.field && ch.delta !== undefined){
+        var fmatch = ch.field.match(/^effects\[(\d+)\]\.(\w+)$/);
+        if(fmatch){
+          var idx = +fmatch[1];
+          var prop = fmatch[2];
+          if(resolved[idx] && resolved[idx][prop] !== undefined){
+            resolved[idx][prop] = (+resolved[idx][prop]) + (+ch.delta);
+          }
+        }
+      }
+    }
+  }
+  return {effects: resolved, crit: totalCrit, appendedEffects: appended};
+}
+
+function consumeNextPlayMods(actor, cardId){
+  if(!actor || !actor._cardMods) return;
+  var card = CARDS[cardId];
+  for(var i = actor._cardMods.length - 1; i >= 0; i--){
+    var mod = actor._cardMods[i];
+    if(mod.scope === 'next_play' && _cardMatchesFilter(cardId, card, mod.filter)){
+      actor._cardMods.splice(i, 1);
+    }
+  }
+  if(actor.side === 'player' && typeof renderHand === 'function') renderHand();
+}
+
+function removeModsBySource(actor, source){
+  if(!actor || !actor._cardMods) return;
+  for(var i = actor._cardMods.length - 1; i >= 0; i--){
+    if(actor._cardMods[i].source === source) actor._cardMods.splice(i, 1);
+  }
+}
+
+function clearBattleMods(actor){
+  if(!actor || !actor._cardMods) return;
+  for(var i = actor._cardMods.length - 1; i >= 0; i--){
+    if(actor._cardMods[i].scope !== 'permanent') actor._cardMods.splice(i, 1);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// CARD TEXT GENERATION — dynamic text from effects + mods + state
+// ══════════════════════════════════════════════════════════════
+
+var EFFECT_DISPLAY = {
+  dmg_conditional: {cat:'damage',   order:0},
+  dmg_scaling:     {cat:'damage',   order:0},
+  dmg_cap_pct:     {cat:'damage',   order:1},
+  mana_burn:       {cat:'mana_burn',order:2},
+  apply_status:    {cat:'status',   order:3},
+  cleanse:         {cat:'status',   order:4},
+  heal:            {cat:'status',   order:3},
+  churn:           {cat:'card_act', order:5},
+  churn_all_damage:{cat:'card_act', order:5},
+  discard_own:     {cat:'card_act', order:5},
+  discard_random:  {cat:'card_act', order:5},
+  draw_cards:      {cat:'card_act', order:5},
+  create_card_in_hand:{cat:'card_create',order:6},
+  conjure_copy:    {cat:'card_create',order:6},
+  purge_conjured:  {cat:'card_act', order:5},
+  modify_cards:    {cat:'modifier', order:7},
+  copy_last_card:  {cat:'card_act', order:5},
+  convert_oldest_to:{cat:'card_act',order:5},
+  sorcery:         {cat:'keyword',  order:11},
+  hellbent:        {cat:'keyword',  order:10},
+  // echo:         {cat:'keyword',  order:9},  // future
+};
+
+// Generate a single effect's display text with live values
+function _effectLiveText(eff, actor, opponent){
+  if(!eff || !eff.type) return '';
+  var sv = function(v){ return '<span class="stat-val">'+v+'</span>'; };
+
+  switch(eff.type){
+    case 'dmg_conditional': {
+      var base = +eff.base || 0;
+      if(eff.stat && actor){
+        var statVal = actor[eff.stat] || 0;
+        base += Math.floor(statVal / (+eff.stat_div || 1));
+      }
+      var hits = +eff.hits || 1;
+      var txt = 'Deal '+sv(hits > 1 ? base : base)+' damage';
+      if(hits > 1) txt += ' × '+sv(hits)+' hits';
+      // Condition text
+      if(eff.condition){
+        var condMet = false;
+        if(actor){
+          if(eff.condition === 'below_50_hp') condMet = actor.hp < actor.maxHp * 0.5;
+          else if(eff.condition === 'has_debuff') condMet = opponent && opponent.statusEffects && opponent.statusEffects.some(function(s){return s.cls==='debuff';});
+          else if(eff.condition === 'has_burn') condMet = opponent && opponent.statusEffects && opponent.statusEffects.some(function(s){return s.id==='burn';});
+        }
+        var condLabel = (eff.condition||'').replace(/_/g,' ');
+        var bonusVal = +eff.on_true_val || 0;
+        if(eff.on_true === 'bonus_dmg'){
+          if(condMet) txt = 'Deal '+sv(base + bonusVal)+' damage'+(hits>1?' × '+sv(hits)+' hits':'') + ' ⚡';
+          else txt += '. If '+condLabel+': '+sv(base + bonusVal);
+        } else if(eff.on_true === 'crit'){
+          txt += '. If '+condLabel+': [Crit] '+sv(bonusVal)+'%';
+        }
+      }
+      return txt+'.';
+    }
+
+    case 'dmg_scaling': {
+      var base = +eff.base || 0;
+      var mult = +eff.mult || 1;
+      var sourceVal = 0;
+      var sourceLabel = '';
+      var who = (eff.check === 'opponent') ? opponent : actor;
+      if(who){
+        switch(eff.source){
+          case 'hand_size':    sourceVal = who.hand ? who.hand.length : 0; sourceLabel = 'cards in hand'; break;
+          case 'discard_size': sourceVal = who.discardPile ? who.discardPile.length : 0; sourceLabel = 'discarded'; break;
+          case 'missing_hp':   sourceVal = (who.maxHp||0) - (who.hp||0); sourceLabel = 'missing HP'; break;
+          case 'shield':       sourceVal = who.shield || 0; sourceLabel = 'Shield'; break;
+          case 'missing_mana': sourceVal = (who.maxMana||0) - (who.mana||0); sourceLabel = 'missing mana'; break;
+          case 'cards_played': sourceVal = who.cardsPlayed || 0; sourceLabel = 'cards played'; break;
+          case 'stat':
+            var sn = eff.stat || 'str';
+            sourceVal = Math.floor((who[sn]||0) / (+eff.stat_div||1));
+            sourceLabel = sn.toUpperCase()+'÷'+(eff.stat_div||1);
+            break;
+        }
+      }
+      var total = base + (sourceVal * mult);
+      return 'Deal '+sv(total)+' damage.';
+    }
+
+    case 'mana_burn': {
+      var val = +eff.value || 0;
+      if(eff.stat && eff.stat !== 'none' && actor){
+        val += Math.floor((actor[eff.stat]||0) / (+eff.stat_div||4));
+      }
+      return 'Mana Burn '+sv(val)+'.';
+    }
+
+    case 'apply_status': {
+      var val = +eff.value || 0;
+      if(eff.stat && actor){
+        val += Math.floor((actor[eff.stat]||0) / (+eff.stat_div||1));
+      }
+      var status = eff.status || '';
+      var dur = eff.dur ? ' '+eff.dur+'s' : '';
+      var tgt = eff.target === 'opponent' ? '' : ''; // context makes it clear
+      
+      // Format based on status type
+      if(status === 'shield') return 'Gain '+sv(val)+' [Shield]'+dur+'.';
+      if(status === 'haste') return '[Haste] '+sv(Math.round((+eff.value||0)*100))+'%'+dur+'.';
+      if(status === 'poison') return 'Apply '+sv(val)+' [Poison]'+dur+'.';
+      if(status === 'burn') return 'Apply '+sv(val)+' [Burn]'+dur+'.';
+      if(status === 'weaken') return '[Weaken]'+dur+'.';
+      if(status === 'slow') return '[Slow]'+dur+'.';
+      if(status === 'thorns') return '[Thorns] '+sv(val)+dur+'.';
+      if(status === 'dodge') return '[Dodge]'+dur+'.';
+      if(status === 'frenzy') return '[Frenzy] '+sv(val)+dur+'.';
+      return status.charAt(0).toUpperCase()+status.slice(1)+' '+sv(val)+dur+'.';
+    }
+
+    case 'cleanse': {
+      var what = (eff.what||'all_debuffs').replace(/_/g,' ');
+      var tgt = eff.target === 'both' ? '(both)' : eff.target === 'opponent' ? '(enemy)' : '';
+      return 'Cleanse '+what+' '+tgt+'.';
+    }
+
+    case 'heal': return 'Heal '+sv(+eff.amt||0)+' HP.';
+
+    case 'churn': return 'Churn '+sv(+eff.count||1)+'.';
+
+    case 'churn_all_damage': {
+      var handSize = actor && actor.hand ? actor.hand.length : '?';
+      var perCard = +eff.dmgPerCard || 0;
+      var total = (typeof handSize === 'number') ? handSize * perCard : '?';
+      return 'Churn '+sv(handSize)+'. Deal '+sv(total)+' damage.';
+    }
+
+    case 'discard_own': {
+      var cnt = eff.count === 'all' ? (actor && actor.hand ? actor.hand.length : 'all') : (+eff.count||1);
+      return 'Discard '+sv(cnt)+'.';
+    }
+
+    case 'discard_random': return 'Discard '+sv(+eff.count||1)+' random.';
+
+    case 'draw_cards': return 'Draw '+sv(+eff.count||1)+'.';
+
+    case 'create_card_in_hand': {
+      var card = CARDS[eff.cardId];
+      var name = card ? card.name : eff.cardId;
+      var tgt = eff.target === 'opponent' ? 'opponent\'s hand' : 'hand';
+      return 'Create '+(eff.ghost?'Ethereal ':'')+name+' in '+tgt+'.';
+    }
+
+    case 'conjure_copy': return 'Conjure a copy of this card.';
+    case 'purge_conjured': return 'Purge all conjured cards.';
+    case 'copy_last_card': return 'Copy last played card.';
+    case 'convert_oldest_to': return 'Convert oldest card.';
+
+    case 'modify_cards': {
+      var filt = eff.filter || {};
+      var what = filt.type || filt.id || filt.tag || 'cards';
+      var changes = eff.changes || [];
+      var parts = [];
+      changes.forEach(function(ch){
+        if(ch.field === 'crit') parts.push('+[Crit] '+sv(ch.delta)+'%');
+        else if(ch.append_effect) parts.push('+ effect');
+        else if(ch.append_sorcery) parts.push('+ Sorcery '+ch.append_sorcery.cost);
+        else if(ch.delta) parts.push(ch.field+' +'+sv(ch.delta));
+      });
+      return 'Modify '+what+': '+parts.join(', ')+'.';
+    }
+
+    case 'dmg_cap_pct': return 'Max hit: '+sv(eff.pct)+'% HP.';
+
+    case 'sorcery': {
+      var inner = '';
+      if(eff.effect) inner = _effectLiveText(eff.effect, actor, opponent);
+      if(eff.effects) inner = eff.effects.map(function(e){ return _effectLiveText(e, actor, opponent); }).join(' ');
+      var costDisplay = eff.cost === 'all' ? 'all mana' : sv(+eff.cost||0);
+      return '[Sorcery] '+costDisplay+': '+inner;
+    }
+
+    case 'hellbent': {
+      var inner = eff.effect ? _effectLiveText(eff.effect, actor, opponent) : '';
+      return '[Hellbent]: '+inner;
+    }
+
+    default: return eff.type + '.';
+  }
+}
+
+// Generate full card display text from effects array
+// Returns array of {layer, html} objects
+function generateCardText(actor, cardId, item){
+  var resolved = resolveCardEffects(actor, cardId);
+  var allEffects = resolved.effects.concat(resolved.appendedEffects);
+  var opponent = actor ? getOpponent(actor) : null;
+
+  // Separate effects into layers
+  var layers = {
+    normal: [],   // order 0-7
+    echo: [],     // order 9
+    hellbent: [],  // order 10
+    sorcery: [],  // order 11
+  };
+
+  allEffects.forEach(function(eff){
+    if(!eff || !eff.type) return;
+    if(eff.type === 'sorcery') layers.sorcery.push(eff);
+    else if(eff.type === 'hellbent') layers.hellbent.push(eff);
+    // future: else if(eff.type === 'echo') layers.echo.push(eff);
+    else layers.normal.push(eff);
+  });
+
+  // Sort sorceries by cost descending (most expensive first)
+  layers.sorcery.sort(function(a,b){ return (+b.cost||0) - (+a.cost||0); });
+
+  // Sort normal effects by display order
+  layers.normal.sort(function(a,b){
+    var da = EFFECT_DISPLAY[a.type] || {order:99};
+    var db = EFFECT_DISPLAY[b.type] || {order:99};
+    return da.order - db.order;
+  });
+
+  // Build display lines per layer
+  var sections = [];
+
+  // Normal layer
+  if(layers.normal.length){
+    var lines = [];
+    var critDelta = resolved.crit || 0;
+    // Check for base crit on item
+    if(item && item.critBonus) critDelta += item.critBonus;
+    var hasDmg = layers.normal.some(function(e){ return e.type==='dmg_conditional'||e.type==='dmg_scaling'||e.type==='churn_all_damage'; });
+
+    layers.normal.forEach(function(eff){
+      var txt = _effectLiveText(eff, actor, opponent);
+      if(txt) lines.push(txt);
+    });
+
+    // Append crit to damage line (inline)
+    if(critDelta > 0 && hasDmg && lines.length > 0){
+      lines[0] = lines[0].replace(/\.$/, '') + ' [Crit]: <span class="stat-val">'+critDelta+'%</span>.';
+    }
+    sections.push({layer:'normal', html:lines.join('<br>')});
+  }
+
+  // Echo layer (future)
+  // Check onDiscard on the card definition as legacy support
+  var card = CARDS[cardId];
+  if(card && card.onDiscard && card.onDiscard.length){
+    var echoLines = card.onDiscard.map(function(eff){
+      return _effectLiveText(eff, actor, opponent);
+    }).filter(Boolean);
+    if(echoLines.length){
+      sections.push({layer:'echo', html:'[Echo]: '+echoLines.join(' ')});
+    }
+  }
+
+  // Hellbent layer
+  if(layers.hellbent.length){
+    var hLines = layers.hellbent.map(function(eff){
+      return _effectLiveText(eff, actor, opponent);
+    }).filter(Boolean);
+    if(hLines.length) sections.push({layer:'hellbent', html:hLines.join(' ')});
+  }
+
+  // Sorcery layer(s)
+  if(layers.sorcery.length){
+    var sLines = layers.sorcery.map(function(eff){
+      return _effectLiveText(eff, actor, opponent);
+    }).filter(Boolean);
+    if(sLines.length) sections.push({layer:'sorcery', html:sLines.join('<br>')});
+  }
+
+  return sections;
+}
+
+// Convenience: generate full HTML for card effect area
+function generateCardTextHTML(actor, cardId, item){
+  var sections = generateCardText(actor, cardId, item);
+  return sections.map(function(s){ return s.html; }).join('<div class="card-layer-sep"></div>');
+}
+
+// ══════════════════════════════════════════════════════════════
+
+var EFFECT_TYPES = {
   // ══════════════════════════════════════════════════════════
   // GENERALIZED EFFECT TYPES — use these for all new cards
   // ══════════════════════════════════════════════════════════
@@ -627,41 +996,21 @@ var EFFECT_TYPES = {
 
   // ── Mutual Effect (Both) ──
   // Apply an effect to BOTH self and opponent. Used by demon Hellbent costs.
-  mutual: {
-    label:'Mutual Effect', cat:'utility',
-    desc:'Apply an effect to both self and opponent.',
-    fields:[
-      {id:'effect', label:'Effect', type:'object', default:{}}
-    ],
-    effectText: function(v){ return 'Apply to both sides.'; },
-    typeHint:'utility',
-    run: function(v,ctx){
-      if(!v.effect || !v.effect.type || !EFFECT_TYPES[v.effect.type]) return;
-      // Run on self
-      var selfCtx = Object.assign({}, ctx);
-      EFFECT_TYPES[v.effect.type].run(v.effect, selfCtx);
-      // Run on opponent (swap actor/opponent)
-      var oppCtx = Object.assign({}, ctx, {actor: ctx.opponent, opponent: ctx.actor});
-      // For target-based effects, flip the target
-      var oppEffect = Object.assign({}, v.effect);
-      if(oppEffect.target === 'self') oppEffect.target = 'opponent';
-      else if(oppEffect.target === 'opponent') oppEffect.target = 'self';
-      EFFECT_TYPES[v.effect.type].run(oppEffect, oppCtx);
-    }
-  },
 
   // ── Discard Own Cards ──
   // Discard X random cards from own hand.
   discard_own: {
     label:'Discard Own', cat:'utility',
     desc:'Discard cards from own hand.',
-    fields:[{id:'count', label:'Cards to discard', type:'number', default:1, min:1, max:7}],
-    effectText: function(v){ return 'Discard '+v.count+' card'+(+v.count>1?'s':'')+' from hand.'; },
+    fields:[{id:'count', label:'Cards to discard (number or "all")', type:'text', default:'1'}],
+    effectText: function(v){ return 'Discard '+(v.count==='all'?'entire hand':v.count+' card'+(+v.count>1?'s':''))+'.'; },
     typeHint:'utility',
     run: function(v,ctx){
       var actor = ctx.actor;
       if(!actor) return;
-      var n = Math.min(+v.count || 1, actor.hand.length);
+      var n = (v.count === 'all') ? actor.hand.length : Math.min(+v.count || 1, actor.hand.length);
+      // Store hand size before discard for other effects to reference
+      ctx._discardedCount = n;
       for(var i = 0; i < n; i++){
         if(actor.hand.length === 0) break;
         var ri = Math.floor(Math.random() * actor.hand.length);
@@ -710,50 +1059,6 @@ var EFFECT_TYPES = {
   // Run a sub-effect only if a condition is met. Generalises Hellbent, etc.
   // Conditions: hand_empty, hand_full, below_50_hp, above_50_hp, has_shield,
   //   has_debuff, has_burn, has_poison, has_haste, has_frenzy, has_mana_X
-  conditional: {
-    label:'Conditional Effect', cat:'utility',
-    desc:'Run an effect only if a condition is met.',
-    fields:[
-      {id:'condition', label:'Condition', type:'select', default:'hand_empty',
-        options:['hand_empty','hand_full','below_50_hp','above_50_hp','has_shield',
-          'has_debuff','has_burn','has_poison','has_haste','has_frenzy',
-          'no_shield','no_debuff','opponent_has_debuff','opponent_no_shield']},
-      {id:'check', label:'Check who', type:'select', default:'self', options:['self','opponent']},
-      {id:'effect', label:'Effect to run', type:'object', default:{}}
-    ],
-    effectText: function(v){ return 'If '+((v.condition||'').replace(/_/g,' '))+': trigger effect.'; },
-    typeHint:'utility',
-    run: function(v,ctx){
-      var who = (v.check === 'opponent') ? ctx.opponent : ctx.actor;
-      if(!who) return;
-      var met = false;
-      switch(v.condition){
-        case 'hand_empty':    met = who.hand.length === 0; break;
-        case 'hand_full':     met = who.hand.length >= (HAND_SIZE||7); break;
-        case 'below_50_hp':   met = who.hp < who.maxHp * 0.5; break;
-        case 'above_50_hp':   met = who.hp >= who.maxHp * 0.5; break;
-        case 'has_shield':    met = who.shield > 0; break;
-        case 'no_shield':     met = who.shield <= 0; break;
-        case 'has_debuff':    met = who.statusEffects.some(function(s){return s.cls==='debuff';}); break;
-        case 'no_debuff':     met = !who.statusEffects.some(function(s){return s.cls==='debuff';}); break;
-        case 'has_burn':      met = who.statusEffects.some(function(s){return s.id==='burn';}); break;
-        case 'has_poison':    met = who.statusEffects.some(function(s){return s.id==='poison';}); break;
-        case 'has_haste':     met = who.statusEffects.some(function(s){return s.stat==='haste'||s.id==='haste';}); break;
-        case 'has_frenzy':    met = who.statusEffects.some(function(s){return s.id==='frenzy';}); break;
-        case 'opponent_has_debuff':
-          var opp = (v.check === 'opponent') ? ctx.actor : ctx.opponent;
-          met = opp && opp.statusEffects.some(function(s){return s.cls==='debuff';});
-          break;
-        case 'opponent_no_shield':
-          var opp2 = (v.check === 'opponent') ? ctx.actor : ctx.opponent;
-          met = opp2 && opp2.shield <= 0;
-          break;
-      }
-      if(met && v.effect && v.effect.type && EFFECT_TYPES[v.effect.type]){
-        EFFECT_TYPES[v.effect.type].run(v.effect, ctx);
-      }
-    }
-  },
 
   // ── Mana Burn ──
   // Deal damage to opponent's mana. Overflow damages HP.
@@ -833,7 +1138,7 @@ var EFFECT_TYPES = {
     desc:'Apply a status effect to self or opponent.',
     fields:[
       {id:'status',   label:'Status',     type:'select', default:'poison',
-        options:['poison','burn','weaken','slow','haste','thorns','dodge','frenzy']},
+        options:['poison','burn','weaken','slow','haste','thorns','dodge','frenzy','shield']},
       {id:'target',   label:'Target',     type:'select', default:'opponent', options:['opponent','self']},
       {id:'value',    label:'Value',      type:'number', default:2},
       {id:'stat',     label:'Stat scale', type:'select', default:'none', options:['none','str','agi','wis']},
@@ -920,6 +1225,32 @@ var EFFECT_TYPES = {
         case 'frenzy':
           if (EFFECT_TYPES.frenzy) EFFECT_TYPES.frenzy.run({stacks: val}, ctx);
           break;
+
+        case 'shield':
+          if (targetActor) {
+            targetActor.shield = (targetActor.shield || 0) + val;
+            if(targetActor.side === 'player') gs.playerShield = targetActor.shield;
+            else gs.enemyShell = targetActor.shield;
+          } else {
+            if(targetSide === 'player') gs.playerShield = (gs.playerShield||0) + val;
+            else gs.enemyShell = (gs.enemyShell||0) + val;
+          }
+          // Push status with id:'shield' so tickStatuses can find and expire it
+          var shieldList = gs.statusEffects[targetSide];
+          // Replace existing shield status if present (refresh duration)
+          var existingShield = -1;
+          for(var si = 0; si < shieldList.length; si++){
+            if(shieldList[si].id === 'shield'){ existingShield = si; break; }
+          }
+          if(existingShield !== -1){
+            shieldList[existingShield].remaining = dur;
+            shieldList[existingShield].maxRemaining = dur;
+          } else {
+            shieldList.push({id:'shield', label:'Shield ('+val+')', cls:'shield', val:val, stat:'shield', remaining:dur, maxRemaining:dur, desc:'Shield: absorbs '+val+' damage.'});
+            addTag(targetSide, 'shield', 'Shield ('+val+')', null, null, 'Shield: absorbs '+val+' damage.');
+          }
+          addLog((ctx.cardName||'Shield')+': +'+val+' Shield '+v.dur+'s.', 'buff');
+          break;
       }
     }
   },
@@ -931,301 +1262,39 @@ var EFFECT_TYPES = {
 
   // ── DAMAGE ──────────────────────────────────────────
 
-  dmg: {
-    label:'Flat Damage', cat:'damage',
-    desc:'Deal a fixed amount of damage.',
-    fields:[{id:'base', label:'Damage', type:'number', default:10, min:1, max:200}],
-    effectText:  function(v){ return 'Deal '+v.base+' damage.'; },
-    tooltipText: function(v){ return ''; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var d=ctx.pdmg(+v.base);
-      dealCardDamage(d, ctx);
-      addLog(ctx.cardName+'! '+d+' dmg.','dmg');
-    }
-  },
 
-  dmg_stat: {
-    label:'Stat-scaling Damage', cat:'damage',
-    desc:'Damage scales with STR, AGI, or WIS.',
-    fields:[
-      {id:'base', label:'Base Dmg',  type:'number', default:5,   min:0, max:100},
-      {id:'stat', label:'Stat',      type:'select',  default:'str', options:['str','agi','wis']},
-      {id:'div',  label:'Divisor',   type:'number', default:4,   min:1, max:20,
-       hint:'base + STAT÷div. Lower = stronger scaling.'}
-    ],
-    effectText:  function(v){ return 'Deal '+v.base+'+'+v.stat.toUpperCase()+'/'+v.div+' damage.'; },
-    tooltipText: function(v){ return ''; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var d=ctx.pdmg(+v.base+Math.floor((ctx[v.stat]||0)/+v.div));
-      dealCardDamage(d,ctx);
-      addLog(ctx.cardName+'! '+d+' dmg.','dmg');
-    }
-  },
 
-  dmg_multi: {
-    label:'Multi-hit', cat:'damage',
-    desc:'Deal damage in several rapid hits.',
-    fields:[
-      {id:'hits',  label:'Hits',       type:'number', default:3, min:2, max:8},
-      {id:'dmg',   label:'Dmg / hit',  type:'number', default:5, min:1, max:50},
-      {id:'delay', label:'Delay (ms)', type:'number', default:200, min:50, max:600}
-    ],
-    effectText:  function(v){ return 'Deal '+v.dmg+' damage '+v.hits+' times.'; },
-    tooltipText: function(v){ return ''; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var hits=+v.hits, dmg=+v.dmg, delay=+v.delay;
-      var isE=ctx.isEnemy;
-      for(var i=0;i<hits;i++){
-        (function(d){ setTimeout(function(){
-          if(gs&&gs.running){ var dd=ctx.pdmg(dmg); dealCardDamage(dd, ctx); updateAll(); }
-        }, d*delay); })(i);
-      }
-      addLog(ctx.cardName+'! '+hits+'×'+dmg+' dmg.','dmg');
-    }
-  },
 
   // ── Multi-hit with independent crit rolls per hit ──
-  dmg_multi_crit: {
-    label:'Multi-hit with Crit', cat:'damage',
-    desc:'Deal damage in several hits. Each hit rolls crit independently.',
-    fields:[
-      {id:'hits', label:'Hits',       type:'number', default:3, min:2, max:6},
-      {id:'dmg',  label:'Dmg / hit',  type:'number', default:6, min:1, max:50},
-      {id:'pct',  label:'Crit %',     type:'number', default:10, min:1, max:50}
-    ],
-    effectText:  function(v){ return 'Deal '+v.dmg+' damage × '+v.hits+' hits. [Crit]: '+v.pct+'%.'; },
-    tooltipText: function(v){ return 'Each hit rolls crit independently.'; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var hits=+v.hits, dmg=+v.dmg, pct=+v.pct/100;
-      var total=0, crits=0;
-      var target=getTargetSide(ctx);
-      for(var i=0;i<hits;i++){
-        var d=ctx.pdmg(dmg);
-        var isCrit=ctx.markedCrit||Math.random()<pct;
-        if(isCrit){ d=Math.round(d*2); crits++; }
-        total+=d;
-        dealCardDamage(d, ctx);
-      }
-      if(crits>0) spawnFloatNum(target,'CRIT ×'+crits+'!',false,'crit-num');
-      addLog(ctx.cardName+'! '+hits+' hits, '+total+' total dmg'+(crits>0?' ('+crits+' crits)':'')+'.','dmg');
-    }
-  },
 
   // ── Multi-hit with crit ONLY when opponent is debuffed ──
 
   // ── Damage scaling with discard pile size ──
 
-  dmg_if_debuff: {
-    label:'Damage (bonus if debuffed)', cat:'damage',
-    desc:'Deal more damage if enemy has any active debuff.',
-    fields:[
-      {id:'base', label:'Normal Dmg', type:'number', default:12},
-      {id:'high', label:'Bonus Dmg',  type:'number', default:30}
-    ],
-    effectText:  function(v){ return 'Deal '+v.base+' damage. If enemy is debuffed: deal '+v.high+' instead.'; },
-    tooltipText: function(v){ return ''; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var oppEff3=ctx.opponent?ctx.opponent.statusEffects:gs.statusEffects.enemy;
-      var hasD=oppEff3.some(function(x){return x.cls==='debuff';});
-      var d=ctx.pdmg(hasD?+v.high:+v.base);
-      dealCardDamage(d,ctx);
-      addLog(ctx.cardName+'! '+d+' dmg'+(hasD?' (debuff bonus!)':'')+'.','dmg');
-    }
-  },
 
 
-  dmg_crit: {
-    label:'Damage with Crit Chance', cat:'damage',
-    desc:'Damage with a percentage chance to deal double.',
-    fields:[
-      {id:'base', label:'Damage',        type:'number', default:10, min:1, max:200},
-      {id:'pct',  label:'Crit chance %', type:'number', default:15, min:1, max:50}
-    ],
-    effectText:  function(v){ return 'Deal '+v.base+' damage. '+v.pct+'% chance to [Crit]: deal double.'; },
-    tooltipText: function(v){ return '[Crit]: a lucky strike that deals double damage.'; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var isCrit=ctx.markedCrit||Math.random()<(+v.pct/100);
-      var d=ctx.pdmg(+v.base);
-      var target=getTargetSide(ctx);
-      if(isCrit){ d=Math.round(d*2); spawnFloatNum(target,'CRIT!',false,'crit-num'); }
-      dealCardDamage(d,ctx);
-      addLog(ctx.cardName+'! '+d+' dmg'+(isCrit?' CRIT!':'')+'.','dmg');
-    }
-  },
 
   // Damage with crit chance conditional on enemy having Burn active.
   // Used by Smite: [Burn] on enemy: [Crit]: 75%.
-  dmg_if_burning: {
-    label:'Damage (Crit if enemy Burning)', cat:'damage',
-    desc:'Deal damage. If enemy has [Burn]: crit chance applies.',
-    fields:[
-      {id:'base',    label:'Damage',       type:'number', default:8,  min:1, max:200},
-      {id:'critPct', label:'Crit % if Burning', type:'number', default:75, min:1, max:100}
-    ],
-    effectText:  function(v){ return 'Deal '+v.base+' damage.\n[Burn] on enemy: [Crit]: '+v.critPct+'%.'; },
-    tooltipText: function(v){ return '[Crit] fires only when the enemy has Burn active.'; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var oppEffects = ctx.opponent ? ctx.opponent.statusEffects : gs.statusEffects.enemy;
-      var enemyBurning = oppEffects.some(function(s){ return s.id==='burn'; });
-      var isCrit = ctx.markedCrit || (enemyBurning && Math.random() < (+v.critPct/100));
-      var d = ctx.pdmg(+v.base);
-      var target=getTargetSide(ctx);
-      if(isCrit){ d=Math.round(d*2); spawnFloatNum(target,'CRIT!',false,'crit-num'); }
-      dealCardDamage(d,ctx);
-      addLog(ctx.cardName+'! '+d+' dmg'+(isCrit?' CRIT!':'')+'.','dmg');
-    }
-  },
 
   // Damage with crit chance conditional on enemy having ANY debuff active.
   // Used by Cheap Shot: [Debuff] on enemy: [Crit]: 40%.
-  dmg_if_debuffed: {
-    label:'Damage (Crit if enemy Debuffed)', cat:'damage',
-    desc:'Deal damage. If enemy has any debuff: crit chance applies.',
-    fields:[
-      {id:'base',    label:'Damage',       type:'number', default:10, min:1, max:200},
-      {id:'critPct', label:'Crit % if Debuffed', type:'number', default:40, min:1, max:100}
-    ],
-    effectText:  function(v){ return 'Deal '+v.base+' damage.\n[Debuff] on enemy: [Crit]: '+v.critPct+'%.'; },
-    tooltipText: function(v){ return '[Crit] fires only when the enemy has any debuff active.'; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var oppEffects2 = ctx.opponent ? ctx.opponent.statusEffects : gs.statusEffects.enemy;
-      var hasDebuff = oppEffects2.some(function(s){ return s.cls==='debuff'; });
-      var isCrit = ctx.markedCrit || (hasDebuff && Math.random() < (+v.critPct/100));
-      var d = ctx.pdmg(+v.base);
-      var target=getTargetSide(ctx);
-      if(isCrit){ d=Math.round(d*2); spawnFloatNum(target,'CRIT!',false,'crit-num'); }
-      dealCardDamage(d,ctx);
-      addLog(ctx.cardName+'! '+d+' dmg'+(isCrit?' CRIT!':'')+'.','dmg');
-    }
-  },
 
   // ── Damage + Shield value ──
   // Spine Lash: Deal base damage. If Shield active, deal current Shield value as additional damage.
-  dmg_plus_shield: {
-    label:'Damage + Shield bonus', cat:'damage',
-    desc:'Deal base damage. If Shield is active, deal additional damage equal to current Shield value.',
-    fields:[{id:'base', label:'Base Damage', type:'number', default:8, min:1, max:200}],
-    effectText:  function(v){ return 'Deal '+v.base+' damage.\n[Shield] active: deal [Shield] additional damage.'; },
-    tooltipText: function(v){ return 'Bonus damage equals current Shield HP.'; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var base = ctx.pdmg(+v.base);
-      var shieldBonus = 0;
-      if(ctx.actor){
-        shieldBonus = ctx.actor.shield || 0;
-      } else if(ctx.isEnemy){
-        shieldBonus = gs.enemyShell || 0;
-      } else {
-        shieldBonus = gs.playerShield || 0;
-      }
-      var d = base + shieldBonus;
-      dealCardDamage(d, ctx);
-      if(shieldBonus > 0){
-        addLog(ctx.cardName+'! '+base+' + '+shieldBonus+' (Shield) = '+d+' dmg.','dmg');
-      } else {
-        addLog(ctx.cardName+'! '+d+' dmg.','dmg');
-      }
-    }
-  },
 
   // ── Damage from missing HP ──
   // Spite: Deal damage equal to missing HP ÷ divisor.
-  dmg_missing_hp: {
-    label:'Damage from missing HP', cat:'damage',
-    desc:'Deal damage equal to missing HP divided by a value.',
-    fields:[{id:'div', label:'Divisor', type:'number', default:4, min:1, max:10}],
-    effectText:  function(v){ return 'Deal missing HP ÷ '+v.div+' damage.'; },
-    tooltipText: function(v){ return 'The lower your HP, the harder this hits.'; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var missing, max;
-      if(ctx.actor){
-        missing = ctx.actor.maxHp - ctx.actor.hp;
-        max = ctx.actor.maxHp;
-      } else if(ctx.isEnemy){
-        missing = gs.enemyMaxHp - gs.enemyHp;
-        max = gs.enemyMaxHp;
-      } else {
-        missing = gs.playerMaxHp - gs.playerHp;
-        max = gs.playerMaxHp;
-      }
-      var d = Math.max(1, Math.floor(missing / (+v.div || 4)));
-      dealCardDamage(d, ctx);
-      addLog(ctx.cardName+'! '+d+' dmg ('+missing+' missing HP ÷ '+v.div+').','dmg');
-    }
-  },
 
   // ── DEBUFFS ─────────────────────────────────────────
 
   // Updated: Slow is now a fixed +600ms draw interval increase (non-stacking, refreshes)
-  slow_draw: {
-    label:'Apply [Slow]', cat:'debuff',
-    desc:'Increase enemy draw interval by 600ms. Non-stacking, refreshes duration.',
-    fields:[{id:'dur', label:'Duration (s)', type:'number', default:4, min:1, max:15}],
-    effectText:  function(v){ return 'Apply [Slow] for '+v.dur+'s.'; },
-    tooltipText: function(v){ return 'Slow: draw interval +600ms. Non-stacking.'; },
-    typeHint:'debuff',
-    run: function(v,ctx){
-      var tgt=ctx.isEnemy?'player':'enemy';
-      applyStatus(tgt,'debuff','Slow',600,'slow_draw',(+v.dur)*1000,'Slow: draw interval +600ms.');
-      addLog(ctx.cardName+'! [Slow] applied.','debuff');
-    }
-  },
 
   // Keep legacy slow as alias for backwards compat with existing cards
-  slow: {
-    label:'Apply [Slow] (legacy)', cat:'debuff',
-    desc:'Legacy slow — maps to slow_draw.',
-    fields:[{id:'dur', label:'Duration (s)', type:'number', default:4, min:1, max:15}],
-    effectText:  function(v){ return 'Apply [Slow] for '+v.dur+'s.'; },
-    tooltipText: function(v){ return 'Slow: draw interval +600ms.'; },
-    typeHint:'debuff',
-    run: function(v,ctx){
-      applyStatus('enemy','debuff','Slow',600,'slow_draw',(+v.dur)*1000,'Slow: draw interval +600ms.');
-      addLog(ctx.cardName+'! [Slow] applied.','debuff');
-    }
-  },
 
   // ── Weaken (renamed from cursed for clarity) ──
-  weaken: {
-    label:'Apply [Weaken]', cat:'debuff',
-    desc:'Reduce target damage output by 15%.',
-    fields:[{id:'dur', label:'Duration (s)', type:'number', default:4, min:1, max:20}],
-    effectText:  function(v){ return 'Apply [Weaken] for '+v.dur+'s.'; },
-    tooltipText: function(v){ return 'Weaken: target deals 15% less damage.'; },
-    typeHint:'debuff',
-    run: function(v,ctx){
-      var tgt=ctx.isEnemy?'player':'enemy';
-      applyStatus(tgt,'debuff','Weaken',-0.15,'dmg',(+v.dur)*1000,'Weaken: target dmg -15%.');
-      addLog(ctx.cardName+'! [Weaken] '+v.dur+'s.','debuff');
-    }
-  },
 
   // ── Thorns ──
-  thorns: {
-    label:'Apply [Thorns]', cat:'buff',
-    desc:'Reflect X damage back to attacker on each hit.',
-    fields:[
-      {id:'val', label:'Reflect dmg', type:'number', default:8,  min:1, max:50},
-      {id:'dur', label:'Duration (s)',type:'number', default:6,  min:1, max:20}
-    ],
-    effectText:  function(v){ return 'Apply [Thorns] ('+v.val+') for '+v.dur+'s.'; },
-    tooltipText: function(v){ return 'Thorns: each hit dealt to this creature reflects '+v.val+' damage back. Non-stacking.'; },
-    typeHint:'defense',
-    run: function(v,ctx){
-      var tgt=ctx.isEnemy?'enemy':'player';
-      applyStatus(tgt,'buff','Thorns',+v.val,'thorns',(+v.dur)*1000,'Thorns: reflects '+v.val+' dmg per hit.');
-      addLog(ctx.cardName+'! [Thorns] ('+v.val+') for '+v.dur+'s.','buff');
-    }
-  },
 
   // ── Volatile ──
 
@@ -1263,50 +1332,39 @@ var EFFECT_TYPES = {
         pool = ctx.isEnemy ? gs.enemyMana : gs.mana;
         selfSide = ctx.isEnemy ? 'enemy' : 'player';
       }
-      if(pool<+v.cost) return;
-      if(ctx.actor){
-        ctx.actor.mana-=+v.cost;
-      } else if(ctx.isEnemy){
-        gs.enemyMana-=+v.cost;
+      // Support cost:'all' — spend all current mana (must have at least 1)
+      var cost;
+      if(v.cost === 'all'){
+        cost = pool;
+        if(cost <= 0) return;
       } else {
-        gs.mana-=+v.cost;
+        cost = +v.cost;
+        if(pool < cost) return;
       }
-      spawnFloatNum(selfSide,'-'+v.cost+'✦',false,'mana-num');
+      if(ctx.actor){
+        ctx.actor.mana -= cost;
+      } else if(ctx.isEnemy){
+        gs.enemyMana -= cost;
+      } else {
+        gs.mana -= cost;
+      }
+      spawnFloatNum(selfSide,'-'+cost+'✦',false,'mana-num');
       updateAll();
-      addLog('[Sorcery] ['+v.cost+'] fired.','mana');
+      addLog('[Sorcery] ['+cost+'] fired.','mana');
       if(v.effect&&v.effect.type&&EFFECT_TYPES[v.effect.type])
         EFFECT_TYPES[v.effect.type].run(v.effect,ctx);
+      // Support effects array (multiple effects from one sorcery)
+      if(v.effects&&v.effects.length){
+        v.effects.forEach(function(eff){
+          if(eff.type&&EFFECT_TYPES[eff.type]) EFFECT_TYPES[eff.type].run(eff,ctx);
+        });
+      }
     }
   },
 
   // ── Hellbent wrapper ──
 
   // ── Refresh (shuffle discard into draw) ──
-  refresh: {
-    label:'[Refresh]', cat:'utility',
-    desc:'Shuffle discard pile into draw pile.',
-    fields:[],
-    effectText:  function(v){ return '[Refresh].'; },
-    tooltipText: function(v){ return 'Refresh: shuffle your discard pile into your draw pile.'; },
-    typeHint:'utility',
-    run: function(v,ctx){
-      if(ctx.isEnemy){
-        gs.enemyDrawPool=gs.enemyDrawPool.concat(gs.enemyDiscardPile.splice(0));
-        for(var i=gs.enemyDrawPool.length-1;i>0;i--){
-          var j=Math.floor(Math.random()*(i+1));
-          var tmp=gs.enemyDrawPool[i]; gs.enemyDrawPool[i]=gs.enemyDrawPool[j]; gs.enemyDrawPool[j]=tmp;
-        }
-      } else {
-        gs.drawPile=gs.drawPile.concat(gs.discardPile.splice(0));
-        for(var i=gs.drawPile.length-1;i>0;i--){
-          var j=Math.floor(Math.random()*(i+1));
-          var tmp=gs.drawPile[i]; gs.drawPile[i]=gs.drawPile[j]; gs.drawPile[j]=tmp;
-        }
-        renderPiles();
-      }
-      addLog('[Refresh] — discard shuffled back into deck.','draw');
-    }
-  },
 
   // ── Churn ──
   churn: {
@@ -1421,44 +1479,10 @@ var EFFECT_TYPES = {
   // ── Shield from discard pile ──
 
   // ── Damage based on missing mana ──
-  dmg_missing_mana: {
-    label:'Damage from missing mana', cat:'damage',
-    desc:'Deal damage based on how much mana you are missing.',
-    fields:[
-      {id:'div', label:'Divisor',    type:'number', default:3, min:1, max:10},
-      {id:'min', label:'Min damage', type:'number', default:5, min:1, max:20}
-    ],
-    effectText:  function(v){ return 'Deal damage equal to missing mana ÷ '+v.div+' (min '+v.min+').'; },
-    tooltipText: function(v){ return 'More powerful when your mana has been drained.'; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var missing=ctx.isEnemy?(gs.enemyMaxMana-gs.enemyMana):(gs.maxMana-gs.mana);
-      var d=ctx.pdmg(Math.max(+v.min, Math.floor(missing/(+v.div))));
-      dealCardDamage(d, ctx);
-      addLog(ctx.cardName+'! '+d+' dmg ('+missing+' missing mana).','dmg');
-    }
-  },
 
   // ── Damage based on STR difference ──
 
   // ── Damage based on missing HP ──
-  dmg_missing_hp: {
-    label:'Damage from missing HP', cat:'damage',
-    desc:'Deal damage based on how much HP this creature is missing.',
-    fields:[
-      {id:'div', label:'Divisor',    type:'number', default:2, min:1, max:10},
-      {id:'min', label:'Min damage', type:'number', default:4, min:1, max:20}
-    ],
-    effectText:  function(v){ return 'Deal damage equal to missing HP ÷ '+v.div+' (min '+v.min+').'; },
-    tooltipText: function(v){ return 'More powerful when near death.'; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var missing=ctx.isEnemy?(gs.enemyMaxHp-gs.enemyHp):(gs.playerMaxHp-gs.playerHp);
-      var d=ctx.pdmg(Math.max(+v.min, Math.floor(missing/(+v.div))));
-      dealCardDamage(d, ctx);
-      addLog(ctx.cardName+'! '+d+' dmg ('+missing+' missing HP).','dmg');
-    }
-  },
 
   // ── Damage per active second of Slow on target ──
 
@@ -1469,360 +1493,26 @@ var EFFECT_TYPES = {
   // ── Suspend (pause timers) ──
 
   // ── Draw speed once (reduce next draw delay) ──
-  draw_speed_once: {
-    label:'Reduce next draw delay', cat:'buff',
-    desc:'Reduce the next draw delay by a fixed amount in ms.',
-    fields:[{id:'amt', label:'Reduction (ms)', type:'number', default:1500, min:100, max:3000}],
-    effectText:  function(v){ return 'Reduce next draw delay by '+(v.amt/1000).toFixed(1)+'s.'; },
-    tooltipText: function(v){ return 'Accelerates the next card draw.'; },
-    typeHint:'utility',
-    run: function(v,ctx){
-      gs._nextDrawBonus=(gs._nextDrawBonus||0)+(+v.amt);
-      addLog(ctx.cardName+'! Next draw '+(+v.amt/1000).toFixed(1)+'s faster.','buff');
-    }
-  },
 
-  haste: {
-    label:'Apply [Haste]', cat:'buff',
-    desc:'Increase draw speed by X% for a duration.',
-    fields:[
-      {id:'pct', label:'Speed %',    type:'number', default:20, min:5,  max:100},
-      {id:'dur', label:'Duration (s)',type:'number', default:3,  min:1,  max:15}
-    ],
-    effectText:  function(v){ return 'Gain [Haste] '+v.pct+'% for '+v.dur+'s.'; },
-    tooltipText: function(v){ return 'Haste: draw speed +'+v.pct+'% for '+v.dur+'s.'; },
-    typeHint:'buff',
-    run: function(v,ctx){
-      var pct=+v.pct/100, dur=(+v.dur)*1000;
-      if(ctx.isEnemy){
-        applyStatus('enemy','buff','Haste',pct,'atkspeed',dur,'Haste: +'+v.pct+'% draw speed for '+v.dur+'s.');
-      } else {
-        gs.drawSpeedBonus=(gs.drawSpeedBonus||1)*(1+pct);
-        gs.drawSpeedBonusTimer=Math.max(gs.drawSpeedBonusTimer||0, dur);
-        addTag('player','buff','Haste (+'+v.pct+'%)',null,null,'Haste: draw speed +'+v.pct+'% for '+v.dur+'s.');
-        setTimeout(function(){
-          if(!gs) return;
-          gs.drawSpeedBonus=Math.max(1.0, gs.drawSpeedBonus/(1+pct));
-          removeTagByLabel('player','Haste (+'+v.pct+'%)');
-        }, dur);
-      }
-      addLog(ctx.cardName+'! [Haste] +'+v.pct+'% for '+v.dur+'s.','buff');
-    }
-  },
 
   // ── Crit Bonus — add +[Crit] to next attack card ──
-  crit_bonus: {
-    label:'Crit Bonus', cat:'buff',
-    desc:'Add crit chance to the next attack card played.',
-    fields:[{id:'pct', label:'Crit %', type:'number', default:15, min:1, max:100}],
-    effectText:  function(v){ return 'Next attack card: +[Crit]: '+v.pct+'%.'; },
-    tooltipText: function(v){ return 'Adds crit chance to the next attack card.'; },
-    typeHint:'utility',
-    run: function(v,ctx){
-      var pct=+v.pct;
-      if(ctx.isEnemy){
-        gs._enemyCritBonus = (gs._enemyCritBonus||0) + pct;
-        addLog('[Sorcery] Next attack: +[Crit]: '+pct+'%.','buff');
-      } else {
-        for(var i=0;i<gs.hand.length;i++){
-          var c=CARDS[gs.hand[i].id];
-          if(c&&c.type==='attack'&&!gs.hand[i].ghost){
-            gs.hand[i].critBonus=(gs.hand[i].critBonus||0)+pct;
-          }
-        }
-        gs._pendingCritBonus = pct;
-        addLog('Attack cards gain +[Crit]: '+pct+'%.','buff');
-        renderHand();
-      }
-    }
-  },
 
   // ── Per-debuff damage ──
-  dmg_per_debuff: {
-    label:'Damage per active debuff on target', cat:'damage',
-    desc:'Deal base damage plus N per active debuff on enemy.',
-    fields:[
-      {id:'base', label:'Base dmg',     type:'number', default:4, min:1, max:20},
-      {id:'min',  label:'Min damage',   type:'number', default:4, min:1, max:20}
-    ],
-    effectText:  function(v){ return 'Deal '+v.base+' damage per active debuff on target (min '+v.min+').'; },
-    tooltipText: function(v){ return 'More powerful when enemy is heavily debuffed.'; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var tgt=ctx.isEnemy?'player':'enemy';
-      var debuffs=gs.statusEffects[tgt].filter(function(s){return s.cls==='debuff';}).length;
-      var d=ctx.pdmg(Math.max(+v.min, debuffs*(+v.base)));
-      dealCardDamage(d, ctx);
-      addLog(ctx.cardName+'! '+d+' dmg ('+debuffs+' debuffs).','dmg');
-    }
-  },
 
 
 
-  poison: {
-    label:'Apply [Poison]', cat:'debuff',
-    desc:'Apply or stack Poison DoT. Ticks every 2s, bypasses Shield.',
-    fields:[
-      {id:'dpt', label:'Dmg per 2s',  type:'number', default:6, min:1, max:40},
-      {id:'dur', label:'Duration (s)', type:'number', default:8, min:2, max:20}
-    ],
-    effectText:  function(v){ return 'Apply '+v.dpt+' Poison for '+v.dur+'s.'; },
-    tooltipText: function(v){ return 'Poison: stacking DoT. Deals damage every 2s, bypasses Shield.'; },
-    typeHint:'debuff',
-    run: function(v,ctx){
-      if(ctx.isEnemy) _applyPoisonToPlayer(+v.dpt,(+v.dur)*1000);
-      else _applyPoison(+v.dpt,(+v.dur)*1000);
-      addLog(ctx.cardName+'! Poison +'+v.dpt+'/s.','debuff');
-    }
-  },
 
-  poison_stat: {
-    label:'Apply [Poison] (stat-scaling)', cat:'debuff',
-    desc:'Poison amount scales with a stat.',
-    fields:[
-      {id:'base', label:'Base dpt',  type:'number', default:2,   min:0, max:20},
-      {id:'stat', label:'Stat',      type:'select',  default:'wis', options:['str','agi','wis']},
-      {id:'div',  label:'Divisor',   type:'number', default:4,   min:1, max:10},
-      {id:'dur',  label:'Dur (s)',   type:'number', default:8,   min:2, max:20}
-    ],
-    effectText:  function(v){ return 'Apply '+(v.base?v.base+'+':'')+v.stat.toUpperCase()+'/'+v.div+' Poison for '+v.dur+'s.'; },
-    tooltipText: function(v){ return 'Poison: stacking DoT. Deals damage every 2s, bypasses Shield.'; },
-    typeHint:'debuff',
-    run: function(v,ctx){
-      var dpt=+v.base+Math.floor((ctx[v.stat]||0)/+v.div);
-      _applyPoison(dpt,(+v.dur)*1000);
-      addLog(ctx.cardName+'! Poison +'+dpt+'/s.','debuff');
-    }
-  },
 
-  burn: {
-    label:'Apply [Burn]', cat:'debuff',
-    desc:'Apply or stack Burn DoT. Ticks every 3s, bypasses Shield.',
-    fields:[
-      {id:'dpt', label:'Dmg per 3s',  type:'number', default:3, min:1, max:40},
-      {id:'dur', label:'Duration (s)', type:'number', default:9, min:3, max:30}
-    ],
-    effectText:  function(v){ return 'Apply '+v.dpt+' Burn for '+v.dur+'s.'; },
-    tooltipText: function(v){ return 'Burn: '+v.dpt+' dmg every 3s. Bypasses Shield. Refreshes on reapplication.'; },
-    typeHint:'debuff',
-    run: function(v,ctx){
-      _applyBurn(+v.dpt,(+v.dur)*1000);
-      addLog(ctx.cardName+'! Burn +'+v.dpt+'/s.','debuff');
-    }
-  },
 
-  burn_stat: {
-    label:'Apply [Burn] (stat-scaling)', cat:'debuff',
-    desc:'Burn amount scales with a stat.',
-    fields:[
-      {id:'base', label:'Base dpt',  type:'number', default:2,   min:0, max:20},
-      {id:'stat', label:'Stat',      type:'select',  default:'wis', options:['str','agi','wis']},
-      {id:'div',  label:'Divisor',   type:'number', default:3,   min:1, max:10},
-      {id:'dur',  label:'Dur (s)',   type:'number', default:9,   min:3, max:30}
-    ],
-    effectText:  function(v){ return 'Apply '+(v.base?v.base+'+':'')+v.stat.toUpperCase()+'/'+v.div+' Burn for '+v.dur+'s.'; },
-    tooltipText: function(v){ return 'Burn: '+v.dpt+' dmg every 3s. Bypasses Shield. Refreshes on reapplication.'; },
-    typeHint:'debuff',
-    run: function(v,ctx){
-      var dpt=+v.base+Math.floor((ctx[v.stat]||0)/+v.div);
-      _applyBurn(dpt,(+v.dur)*1000);
-      addLog(ctx.cardName+'! Burn +'+dpt+'/s.','debuff');
-    }
-  },
 
-  poison_detonate: {
-    label:'Detonate [Poison]', cat:'debuff',
-    desc:'Burst all current Poison as instant damage (bypasses Shield).',
-    fields:[
-      {id:'reapply', label:'Reapply after?', type:'select', default:'no', options:['no','yes']},
-      {id:'rdpt',    label:'Reapply dpt',    type:'number', default:4, min:1, max:20}
-    ],
-    effectText:  function(v){ return 'Detonate all [Poison] as instant damage.'+(v.reapply==='yes'?' Reapply ('+v.rdpt+'/s).':''); },
-    tooltipText: function(v){ return '[Poison] detonation bypasses [Shield].'; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var pe=gs.statusEffects.enemy.find(function(s){return s.id==='poison';});
-      if(pe&&pe.dpt>0){
-        var burst=pe.dpt;
-        gs.statusEffects.enemy.splice(gs.statusEffects.enemy.indexOf(pe),1);
-        removeTagByLabel('enemy',pe.label);
-        gs.enemyHp=Math.max(0,gs.enemyHp-burst);
-        spawnFloatNum('enemy','VENOM! -'+burst,burst>=30,'crit-num');
-        flashHpBar('enemy','hp-flash-red'); updateAll(); checkEnd();
-        addLog(ctx.cardName+'! Poison detonated — '+burst+' instant dmg!','innate');
-        if(v.reapply==='yes') _applyPoison(+v.rdpt,8000);
-      } else {
-        addLog(ctx.cardName+' — no Poison to detonate.','dmg');
-      }
-    }
-  },
 
-  burn_detonate: {
-    label:'Detonate [Burn]', cat:'debuff',
-    desc:'Burst all current Burn as instant damage, then optionally reapply.',
-    fields:[
-      {id:'reapply', label:'Reapply after?', type:'select', default:'yes', options:['no','yes']},
-      {id:'rdpt',    label:'Reapply dpt',    type:'number', default:4, min:1, max:20}
-    ],
-    effectText:  function(v){ return 'Detonate all [Burn] as instant damage.'+(v.reapply==='yes'?' Reapply ('+v.rdpt+'/s).':''); },
-    tooltipText: function(v){ return '[Burn] detonation bypasses [Shield].'; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var be=gs.statusEffects.enemy.find(function(s){return s.id==='burn';});
-      if(be&&be.dpt>0){
-        var burst=be.dpt*3;
-        gs.enemyHp=Math.max(0,gs.enemyHp-burst);
-        spawnFloatNum('enemy','-'+burst,true,'crit-num');
-        flashHpBar('enemy','hp-flash-red'); updateAll(); checkEnd();
-        gs.statusEffects.enemy=gs.statusEffects.enemy.filter(function(s){return s.id!=='burn';});
-        removeTagByLabel('enemy',be.label);
-        addLog(ctx.cardName+'! Burn detonated — '+burst+' instant dmg!','innate');
-        if(v.reapply==='yes') _applyBurn(+v.rdpt,9000);
-      } else {
-        addLog(ctx.cardName+' — no Burn to detonate.','dmg');
-      }
-    }
-  },
 
   // ── BUFFS ───────────────────────────────────────────
 
-  mana: {
-    label:'Gain Mana', cat:'buff',
-    desc:'Restore mana immediately.',
-    fields:[{id:'amt', label:'Mana', type:'number', default:25, min:5, max:200}],
-    effectText:  function(v){ return 'Gain '+v.amt+' mana.'; },
-    tooltipText: function(v){ return ''; },
-    typeHint:'utility',
-    run: function(v,ctx){
-      gs.mana=Math.min(gs.maxMana,gs.mana+(+v.amt));
-      addLog(ctx.cardName+'! +'+v.amt+' mana.','mana');
-    }
-  },
 
-  draw_speed: {
-    label:'Draw Speed Boost', cat:'buff',
-    desc:'Temporarily increase card draw rate.',
-    fields:[
-      {id:'pct', label:'Boost %', type:'number', default:30, min:5,  max:100},
-      {id:'dur', label:'Dur (s)', type:'number', default:3,  min:1,  max:15}
-    ],
-    effectText:  function(v){ return 'Draw speed +'+v.pct+'% for '+v.dur+'s.'; },
-    tooltipText: function(v){ return ''; },
-    typeHint:'utility',
-    run: function(v,ctx){
-      gs.drawSpeedBonus=(gs.drawSpeedBonus||1)+(+v.pct/100);
-      gs.drawSpeedBonusTimer=Math.max(gs.drawSpeedBonusTimer||0,(+v.dur)*1000);
-      addLog(ctx.cardName+'! Draw speed +'+v.pct+'% for '+v.dur+'s.','buff');
-    }
-  },
 
-  shield: {
-    label:'Apply [Shield]', cat:'buff',
-    desc:'Absorb incoming direct damage. DoTs bypass it.',
-    fields:[
-      {id:'amt',       label:'Shield HP',  type:'number', default:20, min:5, max:200},
-      {id:'dur',       label:'Dur (s)',    type:'number', default:5,  min:2, max:20},
-      {id:'onexpiry',  label:'On expiry',  type:'select', default:'nothing',
-       options:['nothing','gain_mana','deal_dmg']},
-      {id:'expiry_val',label:'Expiry val', type:'number', default:30, min:1, max:200}
-    ],
-    effectText: function(v){
-      var exp=v.onexpiry==='gain_mana'?' On expiry: gain '+v.expiry_val+' mana.'
-             :v.onexpiry==='deal_dmg' ?' On expiry: deal '+v.expiry_val+' damage.':'';
-      return 'Apply [Shield] ('+v.amt+') for '+v.dur+'s.'+exp;
-    },
-    tooltipText: function(v){ return 'Shield: absorbs direct damage before HP. DoTs bypass it.'; },
-    typeHint:'defense',
-    run: function(v,ctx){
-      var amt=+v.amt, dur=(+v.dur)*1000, ev=+v.expiry_val;
-      if(ctx.isEnemy){
-        // Enemy shielding itself — use status effect for timer tracking
-        gs.enemyShell+=amt;
-        var existing=gs.statusEffects.enemy.find(function(s){return s.id==='shield';});
-        if(existing){
-          existing.remaining=Math.max(existing.remaining, dur);
-          existing.maxRemaining=Math.max(existing.maxRemaining, dur);
-          existing.label='Shield ('+gs.enemyShell+')';
-          removeTagsByClass('enemy','shield');
-        } else {
-          gs.statusEffects.enemy.push({
-            id:'shield',label:'Shield ('+gs.enemyShell+')',cls:'shield',stat:'shield',
-            remaining:dur,maxRemaining:dur,
-            desc:'Shield: absorbs '+gs.enemyShell+' direct damage.'
-          });
-        }
-        addTag('enemy','shield','Shield ('+gs.enemyShell+')',null,'shield','Shield: absorbs '+gs.enemyShell+' direct damage.');
-        addLog(ctx.cardName+'! Enemy Shield +'+amt+' for '+v.dur+'s.','buff');
-      } else {
-        _applyShield(amt, dur, function(){
-          if(v.onexpiry==='gain_mana'){ gs.mana=Math.min(gs.maxMana,gs.mana+ev); addLog('Shield expired — +'+ev+' mana.','mana'); }
-          else if(v.onexpiry==='deal_dmg'){ dealDamageToEnemy(ev); addLog('Shield expired — '+ev+' dmg burst!','dmg'); }
-        });
-        addLog(ctx.cardName+'! Shield +'+amt+' for '+v.dur+'s.','buff');
-      }
-    }
-  },
 
-  shield_stat: {
-    label:'Apply [Shield] (STR-scaling)', cat:'buff',
-    desc:'Shield amount scales with STR.',
-    fields:[
-      {id:'mult',      label:'STR multiplier',type:'number', default:1,   min:0.5, max:5, hint:'shield = STR × mult'},
-      {id:'dur',       label:'Dur (s)',        type:'number', default:5,   min:2, max:20},
-      {id:'onexpiry',  label:'On expiry',      type:'select', default:'nothing',
-       options:['nothing','gain_mana','deal_dmg']},
-      {id:'expiry_val',label:'Expiry val',     type:'number', default:20, min:1, max:200}
-    ],
-    effectText: function(v){
-      var exp=v.onexpiry==='gain_mana'?' On expiry: gain '+v.expiry_val+' mana.'
-             :v.onexpiry==='deal_dmg' ?' On expiry: deal '+v.expiry_val+' damage.':'';
-      return 'Apply [Shield] (STR\u00d7'+v.mult+') for '+v.dur+'s.'+exp;
-    },
-    tooltipText: function(v){ return 'Shield: absorbs direct damage before HP. DoTs bypass it.'; },
-    typeHint:'defense',
-    run: function(v,ctx){
-      var amt=Math.round(ctx.str*(+v.mult)), dur=(+v.dur)*1000, ev=+v.expiry_val;
-      if(ctx.isEnemy){
-        // Enemy shielding itself — use status effect for timer tracking
-        gs.enemyShell+=amt;
-        var existing=gs.statusEffects.enemy.find(function(s){return s.id==='shield';});
-        if(existing){
-          existing.remaining=Math.max(existing.remaining, dur);
-          existing.maxRemaining=Math.max(existing.maxRemaining, dur);
-          existing.label='Shield ('+gs.enemyShell+')';
-          removeTagsByClass('enemy','shield');
-        } else {
-          gs.statusEffects.enemy.push({
-            id:'shield',label:'Shield ('+gs.enemyShell+')',cls:'shield',stat:'shield',
-            remaining:dur,maxRemaining:dur,
-            desc:'Shield: absorbs '+gs.enemyShell+' direct damage.'
-          });
-        }
-        addTag('enemy','shield','Shield ('+gs.enemyShell+')',null,'shield','Shield: absorbs '+gs.enemyShell+' direct damage.');
-        addLog(ctx.cardName+'! Enemy Shield +'+amt+' for '+v.dur+'s.','buff');
-      } else {
-        _applyShield(amt, dur, function(){
-          if(v.onexpiry==='gain_mana'){ gs.mana=Math.min(gs.maxMana,gs.mana+ev); addLog('Shield expired — +'+ev+' mana.','mana'); }
-          else if(v.onexpiry==='deal_dmg'){ dealDamageToEnemy(ev); addLog('Shield expired — '+ev+' dmg burst!','dmg'); }
-        });
-        addLog(ctx.cardName+'! Shield +'+amt+' for '+v.dur+'s.','buff');
-      }
-    }
-  },
 
-  dodge: {
-    label:'Gain [Dodge]', cat:'buff',
-    desc:'Next incoming attack is completely evaded.',
-    fields:[],
-    effectText:  function(v){ return 'Gain Dodge.'; },
-    tooltipText: function(v){ return 'Dodge: next incoming attack is completely evaded.'; },
-    typeHint:'utility',
-    run: function(v,ctx){
-      gs.playerDodge=true;
-      addTag('player','buff','Dodge',null,null,'Next incoming attack will be evaded.');
-      addLog(ctx.cardName+'! Dodge ready.','buff');
-    }
-  },
 
   heal: {
     label:'Heal HP', cat:'buff',
@@ -1886,106 +1576,14 @@ var EFFECT_TYPES = {
   // Damage scales with hand size (Vine Lash)
 
   // Deal damage per card in hand then discard entire hand (Wilt)
-  dmg_hand_discard_all: {
-    label:'Hand Burst + Discard All', cat:'damage',
-    desc:'Deal damage per card in hand, then discard entire hand.',
-    fields:[{id:'dmgPerCard', label:'Dmg per card', type:'number', default:6}],
-    effectText: function(v){ return 'Deal '+v.dmgPerCard+' damage × hand size. Discard entire hand.'; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var actor = ctx.actor;
-      var handLen, d;
-      if(actor){
-        handLen = actor.hand.length;
-        d = ctx.pdmg(handLen * (+v.dmgPerCard));
-        dealCardDamage(d, ctx);
-        addLog(ctx.cardName+'! '+handLen+' cards × '+v.dmgPerCard+' = '+d+' dmg!','dmg');
-        // Discard entire hand
-        while(actor.hand.length > 0){
-          var item = actor.hand.shift();
-          if(!item.ghost){
-            actor.discardPile.push(item.id);
-          }
-          spawnCardFloat(item.id, 'discard');
-        }
-        if(actor.side === 'player'){ renderHand(); renderPiles(); }
-      } else {
-        handLen = ctx.isEnemy ? gs.enemyHand.length : gs.hand.length;
-        d = ctx.pdmg(handLen * (+v.dmgPerCard));
-        dealCardDamage(d, ctx);
-        addLog(ctx.cardName+'! '+handLen+' cards × '+v.dmgPerCard+' = '+d+' dmg!','dmg');
-        // Fallback discard
-        if(ctx.isEnemy){ gs.enemyHand.length = 0; }
-        else { while(gs.hand.length > 0){ var disc = gs.hand.shift(); if(!disc.ghost) gs.discardPile.push(disc.id); } renderHand(); renderPiles(); }
-      }
-    }
-  },
 
   // Corruption Spread: create an Ethereal Corrupt Spore in own hand (Bloom innate)
 
   // ── Shield / Damage utility effects ──────────────────────────
 
   // Gain Shield equal to a percentage of current HP (Hunker)
-  shield_pct_hp: {
-    label:'Shield from HP %', cat:'buff',
-    desc:'Gain Shield equal to a percentage of current HP.',
-    fields:[
-      {id:'pct', label:'HP %', type:'number', default:20, min:5, max:50},
-      {id:'dur', label:'Duration (s)', type:'number', default:6, min:2, max:15}
-    ],
-    effectText: function(v){ return 'Gain '+v.pct+'% current HP as [Shield] for '+v.dur+'s.'; },
-    typeHint:'utility',
-    run: function(v,ctx){
-      var hp = ctx.actor ? ctx.actor.hp : (ctx.isEnemy ? gs.enemyHp : gs.playerHp);
-      var amt = Math.max(1, Math.round(hp * (+v.pct / 100)));
-      var dur = (+v.dur) * 1000;
-      if(ctx.actor && typeof actorApplyShield === 'function'){
-        actorApplyShield(ctx.actor, amt, dur);
-      } else if(ctx.isEnemy){
-        gs.enemyShell += amt;
-        addTag('enemy','shield','Shield ('+amt+')',null,'shield','Shield: absorbs '+amt+' damage.');
-        setTimeout(function(){ if(gs) gs.enemyShell = Math.max(0, gs.enemyShell - amt); }, dur);
-      } else {
-        _applyShield(amt, dur);
-      }
-      addLog(ctx.cardName+'! Shield +'+amt+' ('+v.pct+'% HP) for '+v.dur+'s.','buff');
-    }
-  },
 
   // Destroy own Shield and deal the destroyed amount as damage (Crush Sorcery)
-  destroy_shield_damage: {
-    label:'Destroy Shield → Damage', cat:'damage',
-    desc:'Destroy your own Shield. Deal the destroyed amount as damage to opponent.',
-    fields:[],
-    effectText: function(v){ return 'Destroy own [Shield]. Deal destroyed amount as additional damage.'; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var shieldVal;
-      if(ctx.actor){
-        shieldVal = ctx.actor.shield || 0;
-        ctx.actor.shield = 0;
-        // Remove shield status
-        for(var i = ctx.actor.statusEffects.length - 1; i >= 0; i--){
-          if(ctx.actor.statusEffects[i].id === 'shield') ctx.actor.statusEffects.splice(i, 1);
-        }
-        removeTagsByClass(ctx.actor.side, 'shield');
-      } else if(ctx.isEnemy){
-        shieldVal = gs.enemyShell || 0;
-        gs.enemyShell = 0;
-        removeTagsByClass('enemy', 'shield');
-      } else {
-        shieldVal = gs.playerShield || 0;
-        gs.playerShield = 0;
-        removeTagsByClass('player', 'shield');
-      }
-      if(shieldVal > 0){
-        dealCardDamage(shieldVal, ctx);
-        addLog('Shield destroyed! +'+shieldVal+' bonus damage.','dmg');
-      } else {
-        addLog('No Shield to destroy.','sys');
-      }
-    }
-  },
 
   // ── Innate utility effects ─────────────────────────────────
 
@@ -2079,29 +1677,98 @@ var EFFECT_TYPES = {
   },
 
   // Mark all attack cards in hand with +Crit (Shadow Mark)
-  mark_attack_cards_crit: {
-    label:'Mark Attack Cards Crit', cat:'buff',
-    desc:'All attack cards in hand gain +Crit.',
-    fields:[{id:'pct', label:'Crit %', type:'number', default:100}],
-    effectText: function(v){ return 'All attack cards: +[Crit]: '+v.pct+'%.'; },
+  // ══════════════════════════════════════════════════════════════
+  // CARD MODIFICATION SYSTEM
+  // ══════════════════════════════════════════════════════════════
+  // actor._cardMods = [] — list of active modification rules
+  //
+  // Each mod: {
+  //   id:       unique string (auto-generated)
+  //   source:   what created it ('shadow_mark', 'shtole_scale', relic ID)
+  //   filter:   {type:'attack'} | {id:'shtoles_treasure'} | {tag:'universal'} | {all:true}
+  //   where:    'hand' | 'deck' | 'discard' | 'all'
+  //   scope:    'next_play' | 'battle' | 'permanent'
+  //   changes:  [
+  //     {field:'effects[0].base', delta:5}          — modify existing value
+  //     {field:'crit', delta:100}                    — add crit
+  //     {append_effect: {type:'draw_cards',count:1}} — new effect line
+  //     {append_sorcery: {cost:5, effect:{...}}}     — new sorcery line
+  //   ]
+  // }
+  //
+  // Usage:
+  //   {type:'modify_cards', source:'shadow_mark', filter:{type:'attack'},
+  //    where:'all', scope:'next_play', changes:[{field:'crit', delta:100}]}
+  //
+  //   {type:'modify_cards', source:'shtole_scale', filter:{id:'shtoles_treasure'},
+  //    where:'all', scope:'battle', changes:[{field:'effects[0].base', delta:5}],
+  //    stack:'increment'}
+  //
+  modify_cards: {
+    label:'Modify Cards', cat:'utility',
+    desc:'Add a modification rule to cards matching a filter.',
+    fields:[
+      {id:'source',  label:'Source ID',   type:'text',   default:''},
+      {id:'filter',  label:'Filter',      type:'object', default:{type:'attack'}},
+      {id:'where',   label:'Where',       type:'select', default:'all', options:['hand','deck','discard','all']},
+      {id:'scope',   label:'Scope',       type:'select', default:'next_play', options:['next_play','battle','permanent']},
+      {id:'changes', label:'Changes',     type:'array',  default:[]},
+      {id:'stack',   label:'Stack mode',  type:'select', default:'add', options:['add','increment']}
+    ],
+    effectText: function(v){ return 'Modify '+(v.filter&&v.filter.type||v.filter&&v.filter.id||'cards')+' ('+v.scope+').'; },
     typeHint:'utility',
     run: function(v,ctx){
       var actor = ctx.actor;
       if(!actor) return;
-      var pct = +v.pct || 100;
-      actor.shadowMarkActive = true;
-      for(var i = 0; i < actor.hand.length; i++){
-        var c = CARDS[actor.hand[i].id];
-        if(c && c.type === 'attack' && !actor.hand[i].ghost){
-          actor.hand[i].critBonus = pct;
+      if(!actor._cardMods) actor._cardMods = [];
+
+      var source = v.source || 'unknown';
+      var changes = v.changes || [];
+      if(changes.length === 0) return;
+
+      // Stack mode: 'increment' finds existing mod with same source and increases deltas
+      if(v.stack === 'increment'){
+        var existing = null;
+        for(var i = 0; i < actor._cardMods.length; i++){
+          if(actor._cardMods[i].source === source){
+            existing = actor._cardMods[i];
+            break;
+          }
         }
+        if(existing){
+          // Increment each change's delta
+          for(var ci = 0; ci < changes.length; ci++){
+            var ch = changes[ci];
+            if(ch.delta === undefined) continue;
+            var found = false;
+            for(var ei = 0; ei < existing.changes.length; ei++){
+              if(existing.changes[ei].field === ch.field){
+                existing.changes[ei].delta += ch.delta;
+                found = true;
+                break;
+              }
+            }
+            if(!found) existing.changes.push({field:ch.field, delta:ch.delta});
+          }
+          addLog('Card mod \''+source+'\' increased.', 'buff');
+          if(actor.side === 'player' && typeof renderHand === 'function') renderHand();
+          return;
+        }
+        // No existing mod — fall through to create new
       }
-      actorApplyStatus(actor, {
-        id:'shadow_mark', label:'Shadow Mark', cls:'buff', stat:'shadow_mark',
-        remaining:30000, maxRemaining:30000,
-        desc:'Shadow Mark: next attack card played crits.'
-      });
-      if(actor.side === 'player') renderHand();
+
+      var mod = {
+        id: source + '_' + Date.now() + '_' + Math.floor(Math.random()*1000),
+        source: source,
+        filter: v.filter || {all:true},
+        where: v.where || 'all',
+        scope: v.scope || 'next_play',
+        changes: changes.slice(),
+      };
+
+      actor._cardMods.push(mod);
+      addLog('Card mod \''+source+'\' applied.', 'buff');
+      if(actor.side === 'player' && typeof renderHand === 'function') renderHand();
     }
   },
 
@@ -2192,23 +1859,6 @@ var EFFECT_TYPES = {
   },
 
   // ── Damage per card in hand ──
-  dmg_per_hand_card: {
-    label:'Damage per card in hand', cat:'damage',
-    desc:'Deal base damage multiplied by current hand size.',
-    fields:[
-      {id:'base', label:'Dmg per card', type:'number', default:15, min:1, max:50},
-      {id:'min',  label:'Minimum dmg',  type:'number', default:15, min:1, max:50}
-    ],
-    effectText:  function(v){ return 'Deal '+v.base+' damage per card in hand (min '+v.min+').'; },
-    tooltipText: function(v){ return 'More powerful with a full hand.'; },
-    typeHint:'attack',
-    run: function(v,ctx){
-      var hc=ctx.isEnemy?gs.enemyHand.length:gs.hand.length;
-      var d=ctx.pdmg(Math.max(+v.min, hc*(+v.base)));
-      dealCardDamage(d, ctx);
-      addLog(ctx.cardName+'! '+d+' dmg ('+hc+' cards in hand).','dmg');
-    }
-  },
 
   // ── Drain a percentage of own max mana ──
 

@@ -16,20 +16,21 @@ CREATURES.thief = {
   innate: {
     id:       'shadow_mark',
     name:     'Shadow Mark',
-    desc:     'Apply 3 [Poison]. Next attack card: +[Crit]: 100%.',
+    desc:     'Apply 3 [Poison]. All attack cards: +[Crit]: 100% (next play).',
     active:   true,
     cost:     35,
     cooldown: 2000,
     effect: [
-      {type: 'poison', dpt: 3, dur: 8},
-      {type: 'mark_attack_cards_crit', pct: 100}
+      {type: 'apply_status', status: 'poison', target: 'opponent', value: 3, dur: 8},
+      {type: 'modify_cards', source: 'shadow_mark', filter: {type:'attack'}, where: 'all', scope: 'next_play',
+       changes: [{field:'crit', delta:100}]}
     ],
   },
 
-  // Deck is generated from STR. The 5 identity cards below are distributed
-  // evenly (20% each) at STR 10. Extra slots from higher STR are filled in
-  // deckOrder priority: unique cards first (in listed order), then universals.
   deckOrder: ['thief_quick_slash', 'thief_poison_dart', 'thief_shadow_step'],
 };
-// Backup: protect effect array from being stripped
-CREATURES.thief._innateEffect = [{"type": "poison", "dpt": 3, "dur": 8}, {"type": "mark_attack_cards_crit", "pct": 100}];
+CREATURES.thief._innateEffect = [
+  {type: 'apply_status', status: 'poison', target: 'opponent', value: 3, dur: 8},
+  {type: 'modify_cards', source: 'shadow_mark', filter: {type:'attack'}, where: 'all', scope: 'next_play',
+   changes: [{field:'crit', delta:100}]}
+];

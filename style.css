@@ -263,6 +263,7 @@ body:has(#game-screen.active) #root{max-width:100%;}
 .card.conjured-card{border-color:rgba(60,160,160,.5);background:linear-gradient(170deg,#081815,#041210);box-shadow:0 0 8px rgba(60,160,160,.15);}
 .card.conjured-card:hover{border-color:rgba(100,200,200,.7);}
 .card-line-sep{height:1px;margin:3px 4px;background:rgba(180,140,60,.2);border-radius:1px;}
+.card-layer-sep{height:2px;margin:5px 4px;background:rgba(180,140,60,.4);border-radius:1px;}
 @keyframes cardDraw{from{opacity:0;transform:translateY(40px) scale(0.8);}to{opacity:1;transform:translateY(0) scale(1);}}
 .card.card-play{animation:cardPlay .25s ease-in forwards;pointer-events:none;}
 @keyframes cardPlay{0%{opacity:1;transform:translateY(0) scale(1);}100%{opacity:0;transform:translateY(-60px) scale(0.7);}}

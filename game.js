@@ -816,7 +816,7 @@ function buildStartDeck(champId){
   // If the deck editor has saved an override, use it directly
   if(mods.deckOverride && mods.deckOverride.length > 0){
     var base = mods.deckOverride.slice();
-    // Pad with filler only if current STR cap exceeds deck size (post level-up)
+    // Pad with Dead Weight if current STR cap exceeds deck size (post level-up)
     while(base.length < cap) base.push('filler');
     return base;
   }
@@ -847,10 +847,8 @@ function buildStartDeck(champId){
     for(var i=0;i<(e.copies||1);i++) base.push(e.cardId);
   });
 
-  // Filler rule: only pad with filler if STR has grown beyond the base deck size.
-  // At level 1, base deck fills baseStr slots exactly — no filler.
-  // After level-ups, the STR cap grows and empty slots become Dead Weight
-  // prompting the player to unlock new cards in the Sanctum.
+  // Pad with Dead Weight if STR has grown beyond base deck size.
+  // Player can swap these out via Sanctum deck editor.
   while(base.length < cap) base.push('filler');
   return base;
 }
@@ -1979,6 +1977,7 @@ function setEnemyUI(idx){
       nextCardCrit: gs.nextCardCrit || false,
       cardsPlayed: 0,
       lastCardPlayed: null,
+      _cardMods: [],
     };
     var enemyActor = {
       id: e.id,
@@ -2005,6 +2004,7 @@ function setEnemyUI(idx){
       nextCardCrit: false,
       cardsPlayed: 0,
       lastCardPlayed: null,
+      _cardMods: [],
     };
     gs.actors = { player: playerActor, enemy: enemyActor };
   }
@@ -2921,6 +2921,7 @@ function hideTip(){ document.getElementById('tip').classList.remove('show'); }
 // ═══════════════════════════════════════════════════════
 function checkEnd(){
   if(!gs) return;
+  if(!gs.running) return;  // already ended — prevent double-fire
   if(gs.enemyHp<=0){
     var e=gs.enemies[gs.enemyIdx];
     // Wax Oasis cannot be killed
@@ -3374,6 +3375,74 @@ function nextEnemy(autoChain){
   gs._trollRegenAcc=0; gs._wyrmAuraAcc=0;
   gs.drawSpeedBonus=1.0; gs.drawSpeedBonusTimer=0;
   gs.running=false;
+  gs.enemyShell=0;
+  gs.enemyCardCount=0; gs.lastEnemyCard=null;
+  gs.enemyHand=[];
+  gs.enemyDodge=false;
+  // Rebuild enemy mana
+  var eManaMax=Math.round(e.wis*8+40);
+  gs.enemyMaxMana=eManaMax; gs.enemyMana=0;
+  gs.enemyManaRegen=Math.round(e.wis*1.2+3); gs.enemyManaAccum=0;
+  // Rebuild enemy deck
+  var eDeck = [];
+  var creatureDef = CREATURES[e.id];
+  if(creatureDef && creatureDef.deckOrder){
+    eDeck = buildCreatureDeck(creatureDef, e.str);
+  }
+  var pool=[];
+  eDeck.forEach(function(card){
+    if(typeof card==='string'){
+      var cDef=CARDS[card];
+      if(cDef) pool.push({id:card, name:cDef.name, _new:true});
+      else pool.push({id:card, name:card, _new:true});
+    } else {
+      for(var i=0;i<(card.copies||1);i++) pool.push(Object.assign({},card));
+    }
+  });
+  for(var i=pool.length-1;i>0;i--){ var j=Math.floor(Math.random()*(i+1)); var tmp=pool[i]; pool[i]=pool[j]; pool[j]=tmp; }
+  gs.enemyDrawPool=pool;
+  gs.enemyDiscardPile=[];
+  // Rebuild enemy actor
+  if(gs.actors){
+    gs.actors.enemy = {
+      id: e.id,
+      creature: CREATURES[e.id] || {innate: e.innate, name: e.name},
+      side: 'enemy',
+      level: gs.level,
+      str: e.str, agi: e.agi, wis: e.wis,
+      hp: e.baseHp, maxHp: e.baseHp,
+      mana: 0, maxMana: eManaMax,
+      manaRegen: gs.enemyManaRegen, manaAccum: 0,
+      shield: 0,
+      hand: gs.enemyHand,
+      drawPool: gs.enemyDrawPool,
+      discardPile: gs.enemyDiscardPile,
+      drawInterval: calcDrawInterval(e.agi),
+      drawTimer: 0,
+      drawSpeedMult: 1.0,
+      statusEffects: gs.statusEffects.enemy,
+      innateCooldown: 0,
+      frenzyStacks: 0,
+      dodge: false,
+      conjuredCount: 0,
+      shadowMarkActive: false,
+      nextCardCrit: false,
+      cardsPlayed: 0,
+      lastCardPlayed: null,
+      _cardMods: [],
+    };
+    // Also refresh player actor references
+    if(gs.actors.player){
+      gs.actors.player.hp = gs.playerHp;
+      gs.actors.player.shield = gs.playerShield;
+      gs.actors.player.mana = gs.mana;
+      gs.actors.player.hand = gs.hand;
+      gs.actors.player.drawPool = gs.drawPool;
+      gs.actors.player.discardPile = gs.discardPile;
+      gs.actors.player.statusEffects = gs.statusEffects.player;
+      gs.actors.player.dodge = false;
+    }
+  }
   document.getElementById('p-tags').innerHTML='';
   setEnemyUI(gs.enemyIdx);
   addLog('⚔ Next: '+e.name+'!','sys');
@@ -3713,11 +3782,18 @@ function buildCardHTML(id,isGhost){
   var c=CARDS[id];
   if(!c) c={name:id,icon:'?',type:'attack',unique:false,effect:'?',champ:null,statId:null,manaCost:0};
   var statCls=c.statId?'card-stat-'+c.statId:'card-stat-none';
-  var rawLines=(c.effect||'').split('\n');
-  var resolvedLines=rawLines.map(function(line){ return resolveCardEffect(line, typeof gs!=='undefined'&&gs?gs:null, null); });
-  var mechanic=renderKeywords(resolvedLines.join('<div class="card-line-sep"></div>'));
+  // Use dynamic text if actor available and card has effects array
+  var mechanic;
+  var playerActor = (typeof gs !== 'undefined' && gs && gs.actors) ? gs.actors.player : null;
+  if(playerActor && c.effects){
+    mechanic = generateCardTextHTML(playerActor, id, null);
+  } else {
+    var rawLines=(c.effect||'').split('\n');
+    var resolvedLines=rawLines.map(function(line){ return resolveCardEffect(line, typeof gs!=='undefined'&&gs?gs:null, null); });
+    mechanic=renderKeywords(resolvedLines.join('<div class="card-line-sep"></div>'));
+  }
   var manaCost=c.manaCost!=null?c.manaCost:0;
-  var fzStyle=cardEffectFontSize(c.effect);
+  var fzStyle=cardEffectFontSize(c.effect||'');
   var tags=getCardTags(c);
   var tagsHTML=buildTagsHTML(tags);
   var identity=getCardIdentityLabel(c);
@@ -3777,14 +3853,27 @@ function renderHand(){
     var drop=Math.abs(t)*16;
     d.style.cssText='transform:rotate('+rot+'deg) translateY('+drop+'px);transform-origin:bottom center;z-index:'+i+';position:relative;'+(i>0?'margin-left:-38px;':'');
 
-    var cEffect=cd?(cd.effect||''):'';
-    var rawLines=cEffect.split('\n');
-    var resolvedLines=rawLines.map(function(line){ return resolveCardEffect(line, gs, null); });
-    if(item.critBonus){
-      resolvedLines.push('<span style="color:#60c060;">+[Crit]: '+item.critBonus+'%</span>');
+    var cEffect = cd ? (cd.effect||'') : '';
+    // Use dynamic text if card has effects array AND actor is available
+    var mechanic;
+    var playerActor = gs.actors && gs.actors.player;
+    if(playerActor && cd && cd.effects && cd.effects.length){
+      try {
+        mechanic = generateCardTextHTML(playerActor, item.id, item);
+      } catch(e){
+        var rawLines = cEffect.split('\n');
+        var resolvedLines = rawLines.map(function(line){ return resolveCardEffect(line, gs, null); });
+        mechanic = renderKeywords(resolvedLines.join('<div class="card-line-sep"></div>'));
+      }
+    } else {
+      var rawLines = cEffect.split('\n');
+      var resolvedLines = rawLines.map(function(line){ return resolveCardEffect(line, gs, null); });
+      if(item.critBonus){
+        resolvedLines.push('<span style="color:#60c060;">+[Crit]: '+item.critBonus+'%</span>');
+      }
+      mechanic = renderKeywords(resolvedLines.join('<div class="card-line-sep"></div>'));
     }
-    var mechanic=renderKeywords(resolvedLines.join('<div class="card-line-sep"></div>'));
-    var fzStyle=cardEffectFontSize(cEffect);
+    var fzStyle = cardEffectFontSize(cEffect);
     var manaCost=cd&&cd.manaCost!=null?cd.manaCost:0;
     var rTags=getCardTags(cd||{});
     var rTagsHTML=buildTagsHTML(rTags);
