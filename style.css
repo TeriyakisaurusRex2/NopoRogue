@@ -316,6 +316,8 @@ body:has(#game-screen.active) #root{max-width:100%;}
 .kw-drain{background:#003d3d;color:#44dddd;}
 .kw-webbed{background:#1a1a1a;color:#888888;}
 .kw-echo{background:#1a3d2a;color:#66ddaa;}
+.card-mod-text{color:#60c060;}
+.card-inactive{opacity:0.4;}
 /* ── KEYWORD TOOLTIP ── */
 #kw-tooltip{position:fixed;z-index:9999;background:#120a02;border:1px solid #c09030;border-radius:5px;padding:6px 10px;max-width:180px;font-size:10px;color:#d4a843;pointer-events:none;opacity:0;transition:opacity .15s;line-height:1.5;}
 #kw-tooltip.show{opacity:1;}

@@ -8,48 +8,32 @@
 
 var KEYWORDS = {
   // ── Damage over time ──
-  Burn:      {cls:'burn',      def:'Deals X dmg every second. Non-stacking — reapplication refreshes duration only. Bypasses Shield.'},
-  Poison:    {cls:'poison',    def:'Deals X dmg every second. Stacks — each application adds damage and refreshes timer. Bypasses Shield.'},
+  Burn:      {cls:'burn',      def:'Deals X damage per second. Non-stacking — reapplication refreshes duration only. Bypasses Shield.'},
+  Poison:    {cls:'poison',    def:'Deals X damage per second. Stacks — each application adds damage and refreshes timer. Bypasses Shield.'},
 
   // ── Debuffs ──
   Weaken:    {cls:'cursed',    def:'Target deals 15% less damage for the duration.'},
-  Cursed:    {cls:'cursed',    def:'Target deals 15% less damage for the duration.'},  // legacy alias
-  Slow:      {cls:'slow',      def:'Draw interval increased by 600ms. Non-stacking — reapplication refreshes duration only.'},
-  Root:      {cls:'root',      def:'Cannot draw cards for the duration.'},
-  Webbed:    {cls:'webbed',    def:'Draw interval permanently increased by 800ms for this fight.'},
-  Marked:     {cls:'cursed',    def:'Target takes 50% more damage from all sources while active.'},
-  Vulnerable: {cls:'cursed',    def:'Target takes 50% more damage from all sources while active.'},
-  Condemned: {cls:'cursed',    def:'Each stack increases Retribution damage by +15% (max 5 stacks, 12s).'},
+  Slow:      {cls:'slow',      def:'Draw speed reduced for the duration. Non-stacking — reapplication refreshes.'},
 
   // ── Buffs ──
-  Shield:    {cls:'shielded',  def:'Temporary HP buffer. Absorbs direct damage before HP. DoTs bypass it. Manabound: purged if mana hits 0.'},
-  Dodge:     {cls:'dodge',     def:'The next incoming attack is completely evaded. Manabound: purged if mana hits 0.'},
-  Haste:     {cls:'haste',     def:'Draw speed increased by X% for the duration.'},
-  Frenzy:    {cls:'hastened',  def:'Stacking draw-speed buff. Each stack = +10% draw speed. Duration starts at 3s, shortens by 10% per stack. Collapses entirely when timer expires. Manabound. Drains 3 mana/s.'},
-  Thorns:    {cls:'burn',      def:'While active, each hit from an attack card reflects X damage back to the attacker. Triggers even through Shield. Manabound: purged if mana hits 0.'},
+  Shield:    {cls:'shielded',  def:'Temporary HP buffer. Absorbs direct damage before HP. DoTs bypass it. Manabound.'},
+  Dodge:     {cls:'dodge',     def:'The next incoming attack is completely evaded. Manabound.'},
+  Haste:     {cls:'haste',     def:'Draw speed increased by X% for the duration. Manabound.'},
+  Frenzy:    {cls:'hastened',  def:'Stacking draw-speed buff. Each stack = +10% draw speed. Collapses entirely when timer expires. Manabound. Drains 3 mana/s.'},
+  Thorns:    {cls:'burn',      def:'Each hit from an attack card reflects X damage back to the attacker. Triggers through Shield. Manabound.'},
 
-  // ── New status mechanics ──
-  Volatile:  {cls:'burn',      def:'Stacking. Timer resets on each new stack. At 5+ stacks: detonates for 2× base damage. Below 5 stacks when timer expires: fizzles for 1× base damage. [Stabilize] raises threshold to 10 stacks (10+ = 4× damage).'},
+  // ── Card keywords ──
+  Sorcery:   {cls:'drain',     def:'Spend X mana to trigger this bonus. If mana is below X, the effect does not fire. Multiple Sorcery effects resolve top to bottom.'},
+  Hellbent:  {cls:'burn',      def:'This effect triggers only if the card is the last card in hand when played.'},
+  Echo:      {cls:'echo',      def:'If this card is discarded, its Echo effect triggers.'},
+  Churn:     {cls:'echo',      def:'Discard X random cards from hand, then draw X cards.'},
+  Crit:      {cls:'hastened',  def:'A critical strike that deals double damage. Triggered by chance or special conditions.'},
 
-  // ── Action keywords ──
-  Sorcery:   {cls:'drain',     def:'Sorcery [X]: spend X mana to trigger this bonus. If mana is below X the effect does not fire and no mana is spent. Multiple Sorcery effects on one card resolve top to bottom, each spending from remaining mana.'},
-  Sacrifice: {cls:'burn',      def:'Sacrifice [X]: pay X of a specified resource (HP, mana, or status stacks) to trigger this effect. If the cost cannot be paid the effect does not fire. Base effect always resolves.'},
-  Drain:     {cls:'drain',     def:'Steal X mana from the target directly.'},
-  Refresh:   {cls:'echo',      def:'Shuffle your discard pile into your draw pile.'},
-  Churn:     {cls:'echo',      def:'Churn [X]: discard X random cards from hand, then draw X cards. Discard resolves before draw.'},
-  Hellbent:  {cls:'burn',      def:'This effect only triggers if you have no cards in hand.'},
-  Suspend:   {cls:'echo',      def:'Suspend [X]: pause all active buff and debuff timers on this creature for X seconds.'},
-  Stabilize: {cls:'hastened',  def:'Raises the Volatile detonation threshold from 5 stacks to 10. At 5-9 stacks: 2× damage. At 10+ stacks: 4× damage.'},
-  Convert:   {cls:'echo',      def:'Remove the oldest card in hand and replace it with the specified card. The new card is played immediately.'},
-  Shed:      {cls:'poison',    def:'Shed [X]: transfer all stacks of [X] from self to target.'},
-
-  // ── Misc ──
-  Crit:      {cls:'hastened',  def:'A strike that deals double damage. Triggered by chance or special conditions.'},
-  Echo:      {cls:'echo',      def:'If this card is discarded by any effect — innate, overflow, or another card — its Echo effect triggers.'},
-  Manabound: {cls:'drain',     def:'This effect is purged immediately if the creature\'s mana hits 0. Applies to Shield, Dodge, and Frenzy.'},
-  Debuff:    {cls:'cursed',    def:'Any negative status effect on the target (Weaken, Poison, Burn, Slow, etc.). Some effects trigger only when a debuff is present.'},
-  Ethereal:  {cls:'echo',      def:'This card vanishes when played or discarded — it does not return to your deck. Created temporarily by special abilities.'},
-  Conjured:  {cls:'echo',      def:'This card was created during combat. It circulates normally through your deck — not removed on play or discard. Removed from the game at end of battle. [Echo] on a Conjured card removes all Conjured copies from everywhere.'},
+  // ── Card properties ──
+  Ethereal:  {cls:'echo',      def:'This card vanishes when played or discarded — it does not return to the deck. Created temporarily by abilities.'},
+  Conjured:  {cls:'echo',      def:'Created during combat. Circulates normally through the deck. Removed at end of battle.'},
+  Manabound: {cls:'drain',     def:'This effect is purged immediately if the creature\'s mana hits 0. Applies to Shield, Dodge, Frenzy, Thorns, Haste.'},
+  Debuff:    {cls:'cursed',    def:'Any negative status effect (Weaken, Poison, Burn, Slow, etc.).'},
 };
 
 // Replace [BracketWord] tokens in effect strings with styled keyword spans.
@@ -102,47 +86,45 @@ var CARDS = {
 
   // ── Starcaller Druid ──
   druid_void_bolt: {id:'druid_void_bolt', name:'Void Bolt', icon:'🔵', type:'attack', unique:true, champ:'druid', statId:'wis',
-    effect:'Deal 10 + WIS damage.\n[Echo]: Draw 1 card.',
-    effects:[{type:'dmg_conditional',base:10,hits:1,stat:'wis',stat_div:1}],
+    effect:'Deal WIS÷2 damage.\n[Sorcery] [30]: [Churn] 1.\n[Echo]: Draw 1.',
+    effects:[{type:'dmg_conditional',base:0,hits:1,stat:'wis',stat_div:2},{type:'sorcery',cost:30,effect:{type:'churn',count:1}}],
     onDiscard:[{type:'draw_cards',count:1}]},
 
   druid_star_shard: {id:'druid_star_shard', name:'Star Shard', icon:'✨', type:'attack', unique:true, champ:'druid', statId:'wis',
-    effect:'Deal 4 damage. [Conjured] a copy into discard.\n[Echo]: Remove all [Conjured] copies from everywhere.',
-    effects:[{type:'dmg_conditional',base:4,hits:1},{type:'conjure_copy'}],
-    onDiscard:[{type:'purge_conjured'}]},
-    // [Echo] purge trigger on discard. Currently just deals 4 damage.
+    effect:'Deal 8 damage. [Conjured] a copy.\n[Echo]: Purge all [Conjured]. Deal +2 per card purged.',
+    effects:[{type:'dmg_conditional',base:8,hits:1},{type:'conjure_copy'}],
+    onDiscard:[{type:'purge_conjured'},{type:'dmg_scaling',base:0,source:'purged_count',check:'self',mult:2}]},
 
-  druid_nova_burst: {id:'druid_nova_burst', name:'Nova Burst', icon:'💥', type:'attack', unique:true, champ:'druid', statId:'wis',
-    effect:'Deal 12 damage per card in hand (min 12).\n[Churn] 3.',
-    effects:[{type:'dmg_scaling',base:12,source:'hand_size',check:'self',mult:1},{type:'churn',count:3}]},
+  druid_nova_burst: {id:'druid_nova_burst', name:'Nova Burst', icon:'💫', type:'attack', unique:true, champ:'druid', statId:'wis',
+    effect:'Deal 12 + 2 per card in hand damage.\n[Sorcery] [60]: [Churn] 3.',
+    effects:[{type:'dmg_scaling',base:12,source:'hand_size',check:'self',mult:2},{type:'sorcery',cost:60,effect:{type:'churn',count:3}}]},
 
-  // Drifting Comet (heavy damage + control — [Suspend] needs defining first)
 
   // ── Cursed Paladin ──
   paladin_smite: {id:'paladin_smite', name:'Smite', icon:'🔥', type:'attack', unique:true, champ:'paladin', statId:'str',
-    effect:'Deal 14 damage. Apply 2 [Burn] for 5s.\n[Burn] on enemy: [Crit]: 75%.',
-    effects:[{type:'dmg_conditional',base:14,hits:1,condition:'has_burn',on_true:'crit',on_true_val:75},{type:'apply_status',status:'burn',target:'opponent',value:2,dur:5}]},
+    effect:'Deal 10+STR÷4 damage. [Crit]: 25%.',
+    effects:[{type:'dmg_conditional',base:10,hits:1,crit:25,stat:'str',stat_div:4}]},
 
-  paladin_consecrate: {id:'paladin_consecrate', name:'Consecrate', icon:'🕊️', type:'utility', unique:true, champ:'paladin', statId:'wis',
-    effect:'Apply [Weaken] for 6s.\n[Sorcery] [20]: Apply 2 [Burn] for 5s.',
-    effects:[{type:'apply_status',status:'weaken',target:'opponent',value:1,dur:6},{type:'sorcery',cost:20,effect:{type:'apply_status',status:'burn',target:'opponent',value:2,dur:5}}]},
+  paladin_consecrate: {id:'paladin_consecrate', name:'Consecrate', icon:'🕊️', type:'utility', unique:true, champ:'paladin', statId:'str',
+    effect:'Apply [Burn] 5s.\n[Sorcery] [40]: Heal STR÷4.',
+    effects:[{type:'apply_status',status:'burn',target:'opponent',value:2,dur:5},{type:'sorcery',cost:40,effect:{type:'heal',amt:0,stat:'str',stat_div:4}}]},
 
   paladin_aegis: {id:'paladin_aegis', name:'Aegis', icon:'🛡️', type:'defense', unique:true, champ:'paladin', statId:'str',
-    effect:'Gain STR [Shield] for 6s.\n[Sorcery] [25]: Apply [Weaken] for 4s.',
-    effects:[{type:'apply_status',status:'shield',target:'self',value:0,stat:'str',stat_div:1,dur:6},{type:'sorcery',cost:25,effect:{type:'apply_status',status:'weaken',target:'opponent',value:1,dur:4}}]},
+    effect:'Gain STR [Shield] 6s.\n[Sorcery] [40]: [Weaken] 6s.',
+    effects:[{type:'apply_status',status:'shield',target:'self',value:0,stat:'str',stat_div:1,dur:6},{type:'sorcery',cost:40,effect:{type:'apply_status',status:'weaken',target:'opponent',value:1,dur:6}}]},
 
   // ── Faceless Thief ──
   thief_quick_slash: {id:'thief_quick_slash', name:'Quick Slash', icon:'⚡', type:'attack', unique:true, champ:'thief', statId:'agi',
-    effect:'Deal 10 + AGI ÷ 4 damage.\n[Crit]: 20%.',
-    effects:[{type:'dmg_conditional',base:10,hits:1,crit:20},{type:'dmg_conditional',base:0,hits:1,stat:'agi',stat_div:4}]},
+    effect:'Deal 8 damage × 2 hits. [Crit]: 15%.',
+    effects:[{type:'dmg_conditional',base:8,hits:2,crit:15}]},
 
   thief_poison_dart: {id:'thief_poison_dart', name:'Poison Dart', icon:'🎯', type:'attack', unique:true, champ:'thief', statId:'agi',
-    effect:'Deal 10 damage. Apply 1 [Poison].\n[Sorcery] [20]: Apply 1 additional [Poison].',
-    effects:[{type:'dmg_conditional',base:10,hits:1},{type:'apply_status',status:'poison',target:'opponent',value:1,dur:8},{type:'sorcery',cost:20,effect:{type:'apply_status',status:'poison',target:'opponent',value:1,dur:8}}]},
+    effect:'Deal 10+AGI÷4 damage. Apply 1 [Poison] 8s.',
+    effects:[{type:'dmg_conditional',base:10,hits:1,stat:'agi',stat_div:4},{type:'apply_status',status:'poison',target:'opponent',value:1,dur:8}]},
 
   thief_shadow_step: {id:'thief_shadow_step', name:'Shadow Step', icon:'👣', type:'utility', unique:true, champ:'thief', statId:'agi',
-    effect:'Apply [Weaken] for 6s.',
-    effects:[{type:'apply_status',status:'weaken',target:'opponent',value:1,dur:6}]},
+    effect:'[Weaken] 6s.\n[Sorcery] [25]: Apply 1 [Poison] 8s.',
+    effects:[{type:'apply_status',status:'weaken',target:'opponent',value:1,dur:6},{type:'sorcery',cost:25,effect:{type:'apply_status',status:'poison',target:'opponent',value:1,dur:8}}]},
 
   //   Backstab: [Debuff] on enemy: deal 33 additional damage — condition syntax needs crit system
   //   Death Mark: Apply [Vulnerable] for 6s — clean once explanation line removed
@@ -157,8 +139,8 @@ var CARDS = {
     effect:'Deal 13 + AGI ÷ 4 damage.\n[Crit]: 15%.',
     effects:[{type:'dmg_conditional',base:13,hits:1,crit:15},{type:'dmg_conditional',base:0,hits:1,stat:'agi',stat_div:4}]},
   rat_dart:   {id:'rat_dart',   name:'Dart',   icon:'💨', type:'utility', unique:true, champ:'rat', statId:'agi',
-    effect:'Gain [Haste] 20% for 3s.',
-    effects:[{type:'apply_status',status:'haste',target:'self',value:0.20,dur:3}]},
+    effect:'[Haste] 20% 3s.\n[Sorcery] [35]: Next attack card: +[Crit] 5%.',
+    effects:[{type:'apply_status',status:'haste',target:'self',value:0.20,dur:3},{type:'sorcery',cost:35,effect:{type:'modify_cards',source:'rat_dart',filter:{type:'attack'},where:'hand',scope:'next_play',changes:[{field:'crit',delta:5}]}}]},
 
   // ── Goblin Scavenger ──
   goblin_jab:        {id:'goblin_jab',        name:'Jab',        icon:'🗡️', type:'attack', unique:true, champ:'goblin', statId:'str',
@@ -344,21 +326,21 @@ var CARDS = {
   // ── Infernal Beast ──
   infernal_strike: {id:'infernal_strike', name:'Infernal Strike', icon:'🔥', type:'attack',
     unique:false, champ:'infernal_beast', statId:'agi',
-    effect:'Deal 8 damage × 2 hits.\nSorcery 25: Mana Burn 15.\nHellbent: Apply 2 Burn for 5s.',
+    effect:'Deal 8 damage × 2 hits.\n[Sorcery] [25]: Mana Burn 15.\n[Hellbent]: Apply [Burn] 5s.',
     effects:[
       {type:'dmg_conditional', base:8, hits:2},
       {type:'mana_burn', value:15, sorcery:25},
       {type:'hellbent', effect:{type:'apply_status', status:'burn', target:'opponent', value:2, dur:5}}]},
   infernal_demon_bolt: {id:'infernal_demon_bolt', name:'Demon Bolt', icon:'⚡', type:'attack',
     unique:false, champ:'infernal_beast', statId:'wis',
-    effect:'Deal 10 damage.\nSorcery 30: Mana Burn 20.\nHellbent: Draw 2 cards.',
+    effect:'Deal 10 damage.\n[Sorcery] [30]: Mana Burn 20.\n[Hellbent]: Draw 2.',
     effects:[
       {type:'dmg_conditional', base:10, hits:1},
       {type:'mana_burn', value:20, sorcery:30},
       {type:'hellbent', effect:{type:'draw_cards', count:2}}]},
   infernal_dark_pact: {id:'infernal_dark_pact', name:'Dark Pact', icon:'👁️', type:'utility',
     unique:false, champ:'infernal_beast', statId:'wis',
-    effect:'Discard 3. Apply Weaken 4s.\nSorcery 20: Mana Burn 15.\nHellbent: Cleanse Shield from both sides.',
+    effect:'Discard 3. [Weaken] 4s.\n[Sorcery] [20]: Mana Burn 15.\n[Hellbent]: Cleanse [Shield] (both).',
     effects:[
       {type:'discard_own', count:3},
       {type:'apply_status', status:'weaken', target:'opponent', value:1, dur:4},

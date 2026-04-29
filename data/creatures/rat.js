@@ -10,7 +10,7 @@ CREATURES.rat = {
   role:     'Tempo / Frenzy',
   bossOnly: false,
 
-  baseStats: { str:12, agi:14, wis:10 },
+  baseStats: { str:10, agi:15, wis:8 },
   growth:    { str:1,  agi:2,  wis:1 },
 
   innate: {

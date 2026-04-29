@@ -10,26 +10,23 @@ CREATURES.paladin = {
   role:     'Attrition Tank / Burn + Weaken',
   bossOnly: false,
 
-  baseStats: { str:18, agi:10, wis:14 },
-  growth:    { str:2,  agi:1,  wis:1  },
+  baseStats: { str:20, agi:12, wis:16 },
+  growth:    { str:3,  agi:1,  wis:2  },
 
   innate: {
     id:       'cursed_retribution',
     name:     'Cursed Retribution',
-    desc:     'Passive: when taking damage while [Shield] is active, apply 2 [Burn] for 5s to the enemy.',
+    desc:     'While [Shield] is active, taking damage applies [Burn] 5s.',
     active:   false,
     cost:     0,
     cooldown: 0,
     triggers: [
-      { on: 'on_hit_while_shielded', target: 'opponent', effect: {type: 'burn', dpt: 2, dur: 5} }
+      { on: 'on_hit_while_shielded', target: 'opponent', effect: {type: 'apply_status', status: 'burn', target: 'opponent', value: 2, dur: 5} }
     ],
   },
 
-  // Deck is generated from STR. The 5 identity cards below are distributed
-  // evenly (20% each) at STR 10. Extra slots from higher STR are filled in
-  // deckOrder priority: unique cards first (in listed order), then universals.
-  // deckOrder defines the priority tiebreaker for odd extra slots.
   deckOrder: ['paladin_smite', 'paladin_aegis', 'paladin_consecrate'],
 };
-// Backup: protect triggers array from being stripped
-CREATURES.paladin._innateTriggers = [{"on": "on_hit_while_shielded", "target": "opponent", "effect": {"type": "burn", "dpt": 2, "dur": 5}}];
+CREATURES.paladin._innateTriggers = [
+  {on: 'on_hit_while_shielded', target: 'opponent', effect: {type: 'apply_status', status: 'burn', target: 'opponent', value: 2, dur: 5}}
+];

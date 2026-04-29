@@ -731,8 +731,8 @@ function generateAreas(champLevel){
 function calcHp(str){ return str*5; }
 function calcDeckCap(str){ return str; }           // deck size unchanged
 function calcDrawInterval(agi){ return Math.round(2000+6000/(1+agi*0.08)); }
-function calcMaxMana(wis){ return wis*20; }
-function calcManaRegen(wis){ return wis*1.5; }
+function calcMaxMana(wis){ return wis*5; }
+function calcManaRegen(wis){ return Math.round(wis*0.8+2); }
 var HAND_SIZE=7;
 var SOUL_SHARDS_PER_PULL=100;
 
@@ -1915,9 +1915,9 @@ function setEnemyUI(idx){
   gs.enemyCardCount=0; gs.lastEnemyCard=null;
   gs.enemyHand=[];
   // Enemy mana — scales with WIS like player
-  var eManaMax=Math.round(e.wis*8+40);
+  var eManaMax=calcMaxMana(e.wis);
   gs.enemyMaxMana=eManaMax; gs.enemyMana=0;
-  gs.enemyManaRegen=Math.round(e.wis*1.2+3); gs.enemyManaAccum=0; gs._innCooldown=0;
+  gs.enemyManaRegen=calcManaRegen(e.wis); gs.enemyManaAccum=0; gs._innCooldown=0;
   gs.playerRooted=false;
   gs.playerDrawDelay=0;
   gs.enemyDodge=false;
@@ -1978,6 +1978,8 @@ function setEnemyUI(idx){
       cardsPlayed: 0,
       lastCardPlayed: null,
       _cardMods: [],
+      auras: {},
+      _activeAuraIds: [],
     };
     var enemyActor = {
       id: e.id,
@@ -2005,6 +2007,8 @@ function setEnemyUI(idx){
       cardsPlayed: 0,
       lastCardPlayed: null,
       _cardMods: [],
+      auras: {},
+      _activeAuraIds: [],
     };
     gs.actors = { player: playerActor, enemy: enemyActor };
   }
@@ -2178,29 +2182,12 @@ function gameTick(){
   // Enemy innate cooldown tick (player cooldown)
   if(gs._innCooldown>0) gs._innCooldown=Math.max(0,gs._innCooldown-100);
 
-  // ── Hellfire passive: while hand empty, apply Haste 100% ──
-  // Check both player and enemy actors
+  // ── Aura system: process all passive auras for both actors ──
   if(gs.actors){
-    ['player','enemy'].forEach(function(side){
-      var actor = gs.actors[side];
-      if(!actor || !actor.creature || !actor.creature.innate) return;
-      if(actor.creature.innate.id !== 'hellfire') return;
-      var handEmpty = actor.hand.length === 0;
-      var hasHellfireHaste = actor.statusEffects.some(function(s){ return s.id === 'hellfire_haste'; });
-      if(handEmpty && !hasHellfireHaste){
-        // Apply massive haste
-        actor.statusEffects.push({id:'hellfire_haste', label:'Hellfire', cls:'buff', stat:'haste', val:1.0, remaining:999999, maxRemaining:999999, desc:'Hellfire: 100% Haste while hand is empty.'});
-        addTag(side, 'buff', '🔥 Hellfire', 0, '', 'Hellfire: 100% Haste while hand is empty.');
-        addLog(actor.creature.name+' — Hellfire! 100% Haste!', 'innate');
-      } else if(!handEmpty && hasHellfireHaste){
-        // Remove hellfire haste
-        for(var i = actor.statusEffects.length - 1; i >= 0; i--){
-          if(actor.statusEffects[i].id === 'hellfire_haste') actor.statusEffects.splice(i, 1);
-        }
-        removeTagByLabel(side, '🔥 Hellfire');
-      }
-    });
+    if(gs.actors.player) processAuras(gs.actors.player);
+    if(gs.actors.enemy) processAuras(gs.actors.enemy);
   }
+
 
   // Enemy active innate AI — route through actorActivateInnate
   if(gs.actors && gs.actors.enemy && typeof actorActivateInnate === 'function'){
@@ -3380,9 +3367,9 @@ function nextEnemy(autoChain){
   gs.enemyHand=[];
   gs.enemyDodge=false;
   // Rebuild enemy mana
-  var eManaMax=Math.round(e.wis*8+40);
+  var eManaMax=calcMaxMana(e.wis);
   gs.enemyMaxMana=eManaMax; gs.enemyMana=0;
-  gs.enemyManaRegen=Math.round(e.wis*1.2+3); gs.enemyManaAccum=0;
+  gs.enemyManaRegen=calcManaRegen(e.wis); gs.enemyManaAccum=0;
   // Rebuild enemy deck
   var eDeck = [];
   var creatureDef = CREATURES[e.id];
@@ -3430,6 +3417,8 @@ function nextEnemy(autoChain){
       cardsPlayed: 0,
       lastCardPlayed: null,
       _cardMods: [],
+      auras: {},
+      _activeAuraIds: [],
     };
     // Also refresh player actor references
     if(gs.actors.player){
@@ -3786,7 +3775,7 @@ function buildCardHTML(id,isGhost){
   var mechanic;
   var playerActor = (typeof gs !== 'undefined' && gs && gs.actors) ? gs.actors.player : null;
   if(playerActor && c.effects){
-    mechanic = generateCardTextHTML(playerActor, id, null);
+    mechanic = renderKeywords(generateCardTextHTML(playerActor, id, null));
   } else {
     var rawLines=(c.effect||'').split('\n');
     var resolvedLines=rawLines.map(function(line){ return resolveCardEffect(line, typeof gs!=='undefined'&&gs?gs:null, null); });
@@ -3859,7 +3848,9 @@ function renderHand(){
     var playerActor = gs.actors && gs.actors.player;
     if(playerActor && cd && cd.effects && cd.effects.length){
       try {
-        mechanic = generateCardTextHTML(playerActor, item.id, item);
+        var rawHtml = generateCardTextHTML(playerActor, item.id, item);
+        if(typeof rawHtml !== 'string') rawHtml = String(rawHtml || '');
+        mechanic = renderKeywords(rawHtml);
       } catch(e){
         var rawLines = cEffect.split('\n');
         var resolvedLines = rawLines.map(function(line){ return resolveCardEffect(line, gs, null); });

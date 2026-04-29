@@ -10,13 +10,13 @@ CREATURES.druid = {
   role:     'Mana Engine / Hand Burst',
   bossOnly: false,
 
-  baseStats: { str:10, agi:12, wis:22 },
-  growth:    { str:1,  agi:1,  wis:3  },
+  baseStats: { str:12, agi:16, wis:20 },
+  growth:    { str:1,  agi:2,  wis:3  },
 
   innate: {
     id:       'starfall',
     name:     'Starfall',
-    desc:     'Churn your entire hand. Deal 5 damage per card churned.',
+    desc:     '[Churn] entire hand. Deal 5 damage per card churned.',
     active:   true,
     cost:     50,
     cooldown: 8000,

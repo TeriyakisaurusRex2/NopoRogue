@@ -20,8 +20,8 @@ function createActor(creatureId, level, side) {
   var agi = Math.round(c.baseStats.agi + (level - 1) * c.growth.agi);
   var wis = Math.round(c.baseStats.wis + (level - 1) * c.growth.wis);
   var maxHp  = str * 5;
-  var maxMana = Math.round(wis * 8 + 40);
-  var manaRegen = Math.round(wis * 1.2 + 3);
+  var maxMana = calcMaxMana(wis);
+  var manaRegen = calcManaRegen(wis);
 
   // Build deck
   var deckIds = buildCreatureDeck(c, str);
@@ -30,7 +30,7 @@ function createActor(creatureId, level, side) {
     // Identity
     id: creatureId,
     creature: c,
-    side: side || 'player',   // 'player' or 'enemy'
+    side: side || 'player',
     level: level,
 
     // Core stats
@@ -38,24 +38,24 @@ function createActor(creatureId, level, side) {
 
     // Resources
     hp: maxHp, maxHp: maxHp,
-    mana: side === 'enemy' ? 0 : 0,  // both start at 0
+    mana: 0,
     maxMana: maxMana,
     manaRegen: manaRegen,
-    manaAccum: 0,   // fractional mana accumulator for tick
+    manaAccum: 0,
     shield: 0,
 
     // Card zones
-    hand: [],                             // [{id, ghost, critBonus, _conjured, ...}]
+    hand: [],
     drawPool: deckIds.slice().sort(function(){ return Math.random() - 0.5; }),
-    discardPile: [],                      // array of card ID strings
+    discardPile: [],
 
     // Draw system
     drawInterval: calcDrawInterval(agi),
     drawTimer: 0,
-    drawSpeedMult: 1.0,    // multiplied by Haste/Frenzy, divided by Slow
+    drawSpeedMult: 1.0,
 
     // Status effects
-    statusEffects: [],      // [{id, label, cls, stat, remaining, maxRemaining, dot, dpt, ...}]
+    statusEffects: [],
 
     // Innate
     innateCooldown: 0,
@@ -65,7 +65,7 @@ function createActor(creatureId, level, side) {
 
     // Tracking
     cardsPlayed: 0,
-    lastCardPlayed: null,   // card ID string
+    lastCardPlayed: null,
 
     // Flags
     dodge: false,
@@ -75,6 +75,11 @@ function createActor(creatureId, level, side) {
 
     // Card modification system
     _cardMods: [],
+
+    // Aura system — resolution-time modifiers from innates/relics
+    // Populated by processAuras() in gameTick
+    auras: {},
+    _activeAuraIds: [],
   };
 }
 

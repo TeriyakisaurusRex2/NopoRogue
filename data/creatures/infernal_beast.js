@@ -23,10 +23,13 @@ CREATURES.infernal_beast = {
   innate: {
     id:       'hellfire',
     name:     'Hellfire',
-    desc:     'Passive: while hand is empty, gain 100% Haste. Haste is Manabound.',
+    desc:     'While hand is empty, gain 100% [Haste]. [Manabound].',
     active:   false,
     cost:     0,
     cooldown: 0,
+    auras: [
+      {id: 'hellfire', condition: 'hand_empty', effect: {status: 'haste', value: 1.0, label: 'Hellfire'}, manabound: true}
+    ],
   },
 
   deckOrder: ['infernal_strike', 'infernal_demon_bolt', 'infernal_dark_pact'],

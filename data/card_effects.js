@@ -314,6 +314,135 @@ function getSelfSide(ctx){
 }
 
 // ══════════════════════════════════════════════════════════════
+// AURA SYSTEM — conditional resolution-time modifiers
+// ══════════════════════════════════════════════════════════════
+//
+// Auras are defined on innates and relics:
+//   innate.auras: [{id, condition, effect, manabound}]
+//
+// Conditions: 'always', 'hand_empty', 'hand_full', 'below_50_hp',
+//   'above_50_hp', 'has_shield', 'has_debuff', 'no_debuff',
+//   'has_burn', 'has_poison', 'has_haste'
+//
+// Effect types:
+//   Status aura:    {status:'haste', value:1.0, label:'Hellfire'}
+//   Modifier aura:  {debuffDurMult:1.5}  or  {poisonTickMult:2, poisonDurMult:0.5}
+//                   {shieldMult:1.25}  or  {healMult:0.5}  or  {critDmgMult:2.5}
+//
+// Supported modifier keys (checked at resolution time):
+//   debuffDurMult   — multiply duration on debuff applications
+//   poisonTickMult  — multiply poison tick rate
+//   poisonDurMult   — multiply poison duration
+//   burnDurMult     — multiply burn duration
+//   shieldMult      — multiply shield values
+//   healMult        — multiply heal values
+//   critDmgMult     — multiply crit damage (default 2x)
+//
+// processAuras(actor) is called every gameTick for both actors.
+
+function _checkAuraCondition(condition, actor){
+  if(!actor) return false;
+  switch(condition){
+    case 'always':      return true;
+    case 'hand_empty':  return actor.hand && actor.hand.length === 0;
+    case 'hand_full':   return actor.hand && actor.hand.length >= (HAND_SIZE||7);
+    case 'below_50_hp': return actor.hp < actor.maxHp * 0.5;
+    case 'above_50_hp': return actor.hp >= actor.maxHp * 0.5;
+    case 'has_shield':  return (actor.shield || 0) > 0;
+    case 'no_shield':   return (actor.shield || 0) <= 0;
+    case 'has_debuff':  return actor.statusEffects && actor.statusEffects.some(function(s){return s.cls==='debuff';});
+    case 'no_debuff':   return !actor.statusEffects || !actor.statusEffects.some(function(s){return s.cls==='debuff';});
+    case 'has_burn':    return actor.statusEffects && actor.statusEffects.some(function(s){return s.id==='burn';});
+    case 'has_poison':  return actor.statusEffects && actor.statusEffects.some(function(s){return s.id==='poison';});
+    case 'has_haste':   return actor.statusEffects && actor.statusEffects.some(function(s){return s.stat==='haste'||s.id==='haste';});
+    default: return false;
+  }
+}
+
+function _getAuraDefinitions(actor){
+  var defs = [];
+  // From innate
+  if(actor.creature && actor.creature.innate && actor.creature.innate.auras){
+    actor.creature.innate.auras.forEach(function(a){ defs.push(a); });
+  }
+  // Future: from relics
+  // if(actor.relics){ actor.relics.forEach(function(r){ if(r.auras) r.auras.forEach(function(a){ defs.push(a); }); }); }
+  return defs;
+}
+
+function _applyAura(actor, auraDef){
+  var eff = auraDef.effect;
+  // Status aura — push a status effect
+  if(eff.status){
+    actor.statusEffects.push({
+      id: auraDef.id + '_aura', label: eff.label || auraDef.id,
+      cls:'buff', stat: eff.status, val: eff.value || 0,
+      remaining:999999, maxRemaining:999999,
+      desc: (eff.label || auraDef.id) + ' (aura)',
+      _aura: true
+    });
+    addTag(actor.side, 'buff', (eff.label || auraDef.id), 0, '', (eff.label || auraDef.id) + ' (aura)');
+    addLog(actor.creature.name + ' — ' + (eff.label || auraDef.id) + '!', 'innate');
+  }
+  // Modifier aura — set keys on actor.auras
+  var modKeys = ['debuffDurMult','poisonTickMult','poisonDurMult','burnDurMult',
+                 'shieldMult','healMult','critDmgMult'];
+  modKeys.forEach(function(key){
+    if(eff[key] !== undefined) actor.auras[key] = eff[key];
+  });
+}
+
+function _removeAura(actor, auraDef){
+  var auraStatusId = auraDef.id + '_aura';
+  var eff = auraDef.effect;
+  // Remove status aura
+  if(eff.status){
+    for(var i = actor.statusEffects.length - 1; i >= 0; i--){
+      if(actor.statusEffects[i].id === auraStatusId) actor.statusEffects.splice(i, 1);
+    }
+    removeTagByLabel(actor.side, eff.label || auraDef.id);
+  }
+  // Remove modifier keys
+  var modKeys = ['debuffDurMult','poisonTickMult','poisonDurMult','burnDurMult',
+                 'shieldMult','healMult','critDmgMult'];
+  modKeys.forEach(function(key){
+    if(eff[key] !== undefined) delete actor.auras[key];
+  });
+}
+
+// Called every gameTick for both actors
+function processAuras(actor){
+  if(!actor) return;
+  var defs = _getAuraDefinitions(actor);
+  if(defs.length === 0) return;
+
+  defs.forEach(function(auraDef){
+    var condMet = _checkAuraCondition(auraDef.condition || 'always', actor);
+    var isActive = actor._activeAuraIds.indexOf(auraDef.id) !== -1;
+
+    // Manabound check — if manabound and mana is 0, force inactive
+    if(auraDef.manabound && (actor.mana || 0) <= 0) condMet = false;
+
+    if(condMet && !isActive){
+      // Activate
+      _applyAura(actor, auraDef);
+      actor._activeAuraIds.push(auraDef.id);
+    } else if(!condMet && isActive){
+      // Deactivate
+      _removeAura(actor, auraDef);
+      var idx = actor._activeAuraIds.indexOf(auraDef.id);
+      if(idx !== -1) actor._activeAuraIds.splice(idx, 1);
+    }
+  });
+}
+
+// Read an aura modifier value from actor (for display and execution)
+function getAura(actor, key){
+  if(!actor || !actor.auras) return undefined;
+  return actor.auras[key];
+}
+
+// ══════════════════════════════════════════════════════════════
 // CARD MOD RESOLUTION — resolve a card's effects with active mods
 // ══════════════════════════════════════════════════════════════
 
@@ -340,13 +469,14 @@ function getCardMods(actor, cardId){
 // Resolve card effects + all applicable mods → {effects, crit, appendedEffects}
 function resolveCardEffects(actor, cardId){
   var card = CARDS[cardId];
-  if(!card) return {effects:[], crit:0, appendedEffects:[]};
+  if(!card) return {effects:[], crit:0, appendedEffects:[], modifiedFields:{}};
   var mods = getCardMods(actor, cardId);
-  if(mods.length === 0) return {effects:card.effects||[], crit:0, appendedEffects:[]};
+  if(mods.length === 0) return {effects:card.effects||[], crit:0, appendedEffects:[], modifiedFields:{}};
 
   var resolved = JSON.parse(JSON.stringify(card.effects || []));
   var totalCrit = 0;
   var appended = [];
+  var modifiedFields = {}; // track which fields were changed by mods
 
   for(var mi = 0; mi < mods.length; mi++){
     var changes = mods[mi].changes;
@@ -354,6 +484,7 @@ function resolveCardEffects(actor, cardId){
       var ch = changes[ci];
       if(ch.field === 'crit'){
         totalCrit += (+ch.delta || 0);
+        modifiedFields['crit'] = true;
       } else if(ch.append_effect){
         appended.push(JSON.parse(JSON.stringify(ch.append_effect)));
       } else if(ch.append_sorcery){
@@ -365,12 +496,27 @@ function resolveCardEffects(actor, cardId){
           var prop = fmatch[2];
           if(resolved[idx] && resolved[idx][prop] !== undefined){
             resolved[idx][prop] = (+resolved[idx][prop]) + (+ch.delta);
+            modifiedFields[ch.field] = true;
+          }
+        }
+      } else if(ch.debuff_dur_mult){
+        // Multiply duration on all debuff-applying effects
+        var debuffStatuses = ['weaken','poison','burn','slow'];
+        for(var di = 0; di < resolved.length; di++){
+          if(resolved[di].type === 'apply_status' && debuffStatuses.indexOf(resolved[di].status) !== -1 && resolved[di].dur){
+            resolved[di].dur = Math.round(resolved[di].dur * ch.debuff_dur_mult);
+            modifiedFields['effects['+di+'].dur'] = true;
+          }
+          // Also check inside sorcery wrappers
+          if(resolved[di].type === 'sorcery' && resolved[di].effect && resolved[di].effect.type === 'apply_status' && debuffStatuses.indexOf(resolved[di].effect.status) !== -1 && resolved[di].effect.dur){
+            resolved[di].effect.dur = Math.round(resolved[di].effect.dur * ch.debuff_dur_mult);
+            modifiedFields['effects['+di+'].effect.dur'] = true;
           }
         }
       }
     }
   }
-  return {effects: resolved, crit: totalCrit, appendedEffects: appended};
+  return {effects: resolved, crit: totalCrit, appendedEffects: appended, modifiedFields: modifiedFields};
 }
 
 function consumeNextPlayMods(actor, cardId){
@@ -440,23 +586,39 @@ function _effectLiveText(eff, actor, opponent){
         base += Math.floor(statVal / (+eff.stat_div || 1));
       }
       var hits = +eff.hits || 1;
-      var txt = 'Deal '+sv(hits > 1 ? base : base)+' damage';
+      var txt = 'Deal '+sv(base)+' damage';
       if(hits > 1) txt += ' × '+sv(hits)+' hits';
+      // Base crit (flat chance on this card, not from conditions)
+      if(+eff.crit > 0) txt += '. [Crit]: '+sv(+eff.crit)+'%';
       // Condition text
       if(eff.condition){
         var condMet = false;
-        if(actor){
-          if(eff.condition === 'below_50_hp') condMet = actor.hp < actor.maxHp * 0.5;
-          else if(eff.condition === 'has_debuff') condMet = opponent && opponent.statusEffects && opponent.statusEffects.some(function(s){return s.cls==='debuff';});
-          else if(eff.condition === 'has_burn') condMet = opponent && opponent.statusEffects && opponent.statusEffects.some(function(s){return s.id==='burn';});
+        if(eff.condition === 'below_50_hp'){
+          condMet = actor && actor.hp < actor.maxHp * 0.5;
+        } else if(eff.condition === 'has_debuff'){
+          condMet = opponent && opponent.statusEffects && opponent.statusEffects.some(function(s){return s.cls==='debuff';});
+        } else if(eff.condition === 'has_burn'){
+          condMet = opponent && opponent.statusEffects && opponent.statusEffects.some(function(s){return s.id==='burn';});
+        } else if(eff.condition === 'has_poison'){
+          condMet = opponent && opponent.statusEffects && opponent.statusEffects.some(function(s){return s.id==='poison';});
         }
-        var condLabel = (eff.condition||'').replace(/_/g,' ');
+        var condLabels = {
+          'below_50_hp': 'Below 50% HP',
+          'has_debuff': '[Debuff] on enemy',
+          'has_burn': '[Burn] on enemy',
+          'has_poison': '[Poison] on enemy',
+          'has_shield': '[Shield] active',
+          'hand_empty': 'Hand empty',
+          'hand_full': 'Hand full'
+        };
+        var condLabel = condLabels[eff.condition] || (eff.condition||'').replace(/_/g,' ');
         var bonusVal = +eff.on_true_val || 0;
         if(eff.on_true === 'bonus_dmg'){
           if(condMet) txt = 'Deal '+sv(base + bonusVal)+' damage'+(hits>1?' × '+sv(hits)+' hits':'') + ' ⚡';
-          else txt += '. If '+condLabel+': '+sv(base + bonusVal);
+          else txt += '.<br><span class="card-inactive">'+condLabel+': '+sv(base + bonusVal)+' damage</span>';
         } else if(eff.on_true === 'crit'){
-          txt += '. If '+condLabel+': [Crit] '+sv(bonusVal)+'%';
+          if(condMet) txt += '. [Crit]: '+sv(bonusVal)+'% ⚡';
+          else txt += '.<br><span class="card-inactive">'+condLabel+': [Crit] '+sv(bonusVal)+'%</span>';
         }
       }
       return txt+'.';
@@ -476,6 +638,7 @@ function _effectLiveText(eff, actor, opponent){
           case 'shield':       sourceVal = who.shield || 0; sourceLabel = 'Shield'; break;
           case 'missing_mana': sourceVal = (who.maxMana||0) - (who.mana||0); sourceLabel = 'missing mana'; break;
           case 'cards_played': sourceVal = who.cardsPlayed || 0; sourceLabel = 'cards played'; break;
+          case 'purged_count': sourceVal = (ctx && ctx._purgedCount) || 0; sourceLabel = 'cards purged'; break;
           case 'stat':
             var sn = eff.stat || 'str';
             sourceVal = Math.floor((who[sn]||0) / (+eff.stat_div||1));
@@ -501,14 +664,30 @@ function _effectLiveText(eff, actor, opponent){
         val += Math.floor((actor[eff.stat]||0) / (+eff.stat_div||1));
       }
       var status = eff.status || '';
-      var dur = eff.dur ? ' '+eff.dur+'s' : '';
-      var tgt = eff.target === 'opponent' ? '' : ''; // context makes it clear
-      
+      var durSec = eff.dur || 0;
+      var isDebuff = ['poison','burn','weaken','slow'].indexOf(status) !== -1;
+      var durModified = false;
+      var valModified = false;
+
+      // Aura: debuff duration multiplier
+      if(isDebuff && actor){
+        var auraDurMult = getAura(actor, 'debuffDurMult');
+        if(auraDurMult){ durSec = Math.round(durSec * auraDurMult); durModified = true; }
+      }
+      // Aura: shield multiplier
+      if(status === 'shield' && actor){
+        var auraShMult = getAura(actor, 'shieldMult');
+        if(auraShMult){ val = Math.round(val * auraShMult); valModified = true; }
+      }
+
+      var dur = durSec ? ' '+durSec+'s' : '';
+      if(durModified) dur = ' <span class="card-mod-text">'+durSec+'s</span>';
+
       // Format based on status type
-      if(status === 'shield') return 'Gain '+sv(val)+' [Shield]'+dur+'.';
+      if(status === 'shield') return 'Gain '+(valModified?'<span class="card-mod-text">'+sv(val)+'</span>':sv(val))+' [Shield]'+dur+'.';
       if(status === 'haste') return '[Haste] '+sv(Math.round((+eff.value||0)*100))+'%'+dur+'.';
       if(status === 'poison') return 'Apply '+sv(val)+' [Poison]'+dur+'.';
-      if(status === 'burn') return 'Apply '+sv(val)+' [Burn]'+dur+'.';
+      if(status === 'burn') return 'Apply [Burn]'+dur+'.';
       if(status === 'weaken') return '[Weaken]'+dur+'.';
       if(status === 'slow') return '[Slow]'+dur+'.';
       if(status === 'thorns') return '[Thorns] '+sv(val)+dur+'.';
@@ -523,15 +702,21 @@ function _effectLiveText(eff, actor, opponent){
       return 'Cleanse '+what+' '+tgt+'.';
     }
 
-    case 'heal': return 'Heal '+sv(+eff.amt||0)+' HP.';
+    case 'heal': {
+      var healVal = +eff.amt || 0;
+      if(eff.stat && eff.stat !== 'none' && actor){
+        healVal += Math.floor((actor[eff.stat] || 0) / (+eff.stat_div || 4));
+      }
+      return 'Heal '+sv(healVal)+' HP.';
+    }
 
-    case 'churn': return 'Churn '+sv(+eff.count||1)+'.';
+    case 'churn': return '[Churn] '+sv(+eff.count||1)+'.';
 
     case 'churn_all_damage': {
       var handSize = actor && actor.hand ? actor.hand.length : '?';
       var perCard = +eff.dmgPerCard || 0;
       var total = (typeof handSize === 'number') ? handSize * perCard : '?';
-      return 'Churn '+sv(handSize)+'. Deal '+sv(total)+' damage.';
+      return '[Churn] '+sv(handSize)+'. Deal '+sv(total)+' damage.';
     }
 
     case 'discard_own': {
@@ -547,11 +732,11 @@ function _effectLiveText(eff, actor, opponent){
       var card = CARDS[eff.cardId];
       var name = card ? card.name : eff.cardId;
       var tgt = eff.target === 'opponent' ? 'opponent\'s hand' : 'hand';
-      return 'Create '+(eff.ghost?'Ethereal ':'')+name+' in '+tgt+'.';
+      return 'Create '+(eff.ghost?'[Ethereal] ':'')+name+' in '+tgt+'.';
     }
 
-    case 'conjure_copy': return 'Conjure a copy of this card.';
-    case 'purge_conjured': return 'Purge all conjured cards.';
+    case 'conjure_copy': return '[Conjured]: copy this card.';
+    case 'purge_conjured': return 'Purge all [Conjured] cards.';
     case 'copy_last_card': return 'Copy last played card.';
     case 'convert_oldest_to': return 'Convert oldest card.';
 
@@ -576,12 +761,22 @@ function _effectLiveText(eff, actor, opponent){
       if(eff.effect) inner = _effectLiveText(eff.effect, actor, opponent);
       if(eff.effects) inner = eff.effects.map(function(e){ return _effectLiveText(e, actor, opponent); }).join(' ');
       var costDisplay = eff.cost === 'all' ? 'all mana' : sv(+eff.cost||0);
-      return '[Sorcery] '+costDisplay+': '+inner;
+      var canAfford = true;
+      if(actor){
+        var pool = actor.mana || 0;
+        if(eff.cost === 'all') canAfford = pool > 0;
+        else canAfford = pool >= (+eff.cost||0);
+      }
+      var txt = '[Sorcery] '+costDisplay+': '+inner;
+      return canAfford ? txt : '<span class="card-inactive">'+txt+'</span>';
     }
 
     case 'hellbent': {
       var inner = eff.effect ? _effectLiveText(eff.effect, actor, opponent) : '';
-      return '[Hellbent]: '+inner;
+      var txt = '[Hellbent]: '+inner;
+      // Hellbent fires when hand size is 1 (this card is the last)
+      var willFire = actor && actor.hand && actor.hand.length <= 1;
+      return willFire ? txt : '<span class="card-inactive">'+txt+'</span>';
     }
 
     default: return eff.type + '.';
@@ -623,6 +818,7 @@ function generateCardText(actor, cardId, item){
 
   // Build display lines per layer
   var sections = [];
+  var modFields = resolved.modifiedFields || {};
 
   // Normal layer
   if(layers.normal.length){
@@ -637,9 +833,9 @@ function generateCardText(actor, cardId, item){
       if(txt) lines.push(txt);
     });
 
-    // Append crit to damage line (inline)
+    // Append crit to damage line (inline) — green if from mod
     if(critDelta > 0 && hasDmg && lines.length > 0){
-      lines[0] = lines[0].replace(/\.$/, '') + ' [Crit]: <span class="stat-val">'+critDelta+'%</span>.';
+      lines[0] = lines[0].replace(/\.$/, '') + ' <span class="card-mod-text">[Crit]: <span class="stat-val">'+critDelta+'%</span></span>.';
     }
     sections.push({layer:'normal', html:lines.join('<br>')});
   }
@@ -670,6 +866,16 @@ function generateCardText(actor, cardId, item){
       return _effectLiveText(eff, actor, opponent);
     }).filter(Boolean);
     if(sLines.length) sections.push({layer:'sorcery', html:sLines.join('<br>')});
+  }
+
+  // Appended effects from mods (shown in green)
+  if(resolved.appendedEffects && resolved.appendedEffects.length){
+    var modLines = resolved.appendedEffects.map(function(eff){
+      return '<span class="card-mod-text">'+_effectLiveText(eff, actor, opponent)+'</span>';
+    }).filter(Boolean);
+    if(modLines.length){
+      sections.push({layer:'mod', html:modLines.join('<br>')});
+    }
   }
 
   return sections;
@@ -720,7 +926,7 @@ var EFFECT_TYPES = {
       {id:'on_true_val',label:'Value',      type:'number', default:25}
     ],
     effectText: function(v){
-      var base = +v.dmg;
+      var base = +v.base || +v.dmg || 0;
       var statStr = (v.stat && v.stat !== 'none') ? ' + '+v.stat.toUpperCase()+' ÷ '+v.stat_div : '';
       var dmgStr = (+v.hits > 1) ? (base + ' damage × ' + v.hits + ' hits') : ('Deal ' + base + statStr + ' damage');
       if (+v.hits > 1) dmgStr = 'Deal ' + dmgStr;
@@ -739,10 +945,11 @@ var EFFECT_TYPES = {
     typeHint:'attack',
     run: function(v,ctx){
       var hits = +v.hits || 1;
-      var baseDmg = +v.dmg || 0;
+      var baseDmg = +v.base || +v.dmg || 0;
       // Stat scaling
       if (v.stat && v.stat !== 'none') {
-        baseDmg += Math.floor((ctx[v.stat] || 0) / (+v.stat_div || 4));
+        var statSource = ctx.actor || ctx;
+        baseDmg += Math.floor((statSource[v.stat] || 0) / (+v.stat_div || 4));
       }
       // Check condition
       var checkTarget;
@@ -787,17 +994,34 @@ var EFFECT_TYPES = {
       var actualHits = hits;
       if (condMet && v.on_true === 'bonus_hits') actualHits += (+v.on_true_val || 0);
 
-      for (var i = 0; i < actualHits; i++) {
+      var hitDelay = 120; // ms between hits
+      function fireHit(i) {
+        if (!gs || !gs.running) return;
         var d = ctx.pdmg(baseDmg);
-        var isCrit = ctx.markedCrit || (condMet && v.on_true === 'crit' && Math.random() < (+v.on_true_val / 100));
+        var critPct = +v.crit || 0;
+        if (ctx.critBonus) critPct += ctx.critBonus;
+        var isCrit = ctx.markedCrit || (critPct > 0 && Math.random() * 100 < critPct);
+        if (!isCrit && condMet && v.on_true === 'crit') isCrit = Math.random() < (+v.on_true_val / 100);
         if (isCrit) { d = Math.round(d * 2); crits++; }
         if (condMet && v.on_true === 'bonus_dmg' && i === 0) d += (+v.on_true_val || 0);
         total += d;
         dealCardDamage(d, ctx);
+
+        // Log after final hit
+        if (i === actualHits - 1) {
+          if (crits > 0) spawnFloatNum(target, 'CRIT' + (crits > 1 ? ' ×' + crits : '') + '!', false, 'crit-num');
+          addLog(ctx.cardName + '! ' + (actualHits > 1 ? actualHits + ' hits, ' : '') + total + ' total dmg' +
+            (crits > 0 ? ' (' + crits + ' crit' + (crits > 1 ? 's' : '') + ')' : '') + '.', 'dmg');
+        }
       }
-      if (crits > 0) spawnFloatNum(target, 'CRIT' + (crits > 1 ? ' ×' + crits : '') + '!', false, 'crit-num');
-      addLog(ctx.cardName + '! ' + (actualHits > 1 ? actualHits + ' hits, ' : '') + total + ' total dmg' +
-        (crits > 0 ? ' (' + crits + ' crit' + (crits > 1 ? 's' : '') + ')' : '') + '.', 'dmg');
+
+      if (actualHits <= 1) {
+        fireHit(0);
+      } else {
+        for (var i = 0; i < actualHits; i++) {
+          (function(idx){ setTimeout(function(){ fireHit(idx); }, idx * hitDelay); })(i);
+        }
+      }
     }
   },
 
@@ -818,7 +1042,7 @@ var EFFECT_TYPES = {
     fields:[
       {id:'base',   label:'Base Dmg',  type:'number', default:8},
       {id:'source', label:'Scale from',type:'select', default:'discard_size',
-        options:['hand_size','discard_size','missing_hp','shield','missing_mana','cards_played','stat']},
+        options:['hand_size','discard_size','missing_hp','shield','missing_mana','cards_played','stat','purged_count']},
       {id:'check',  label:'Read from', type:'select', default:'self', options:['self','opponent']},
       {id:'mult',   label:'Per unit',  type:'number', default:1},
       {id:'stat',   label:'Stat (if source=stat)', type:'select', default:'str', options:['str','agi','wis']},
@@ -827,6 +1051,7 @@ var EFFECT_TYPES = {
     effectText: function(v){
       var sourceMap = {hand_size:'hand size',discard_size:'discard pile',missing_hp:'missing HP',
         shield:'[Shield]',missing_mana:'missing mana',cards_played:'cards played',
+        purged_count:'cards purged',
         stat:(v.stat||'STR').toUpperCase()+'÷'+(v.stat_div||1)};
       var src = sourceMap[v.source] || v.source;
       return 'Deal ' + v.base + ' + ' + src + ' × ' + v.mult + ' damage.';
@@ -843,6 +1068,7 @@ var EFFECT_TYPES = {
           case 'shield':        sourceVal = who.shield || 0; break;
           case 'missing_mana':  sourceVal = who.maxMana - who.mana; break;
           case 'cards_played':  sourceVal = who.cardsPlayed || 0; break;
+          case 'purged_count':  sourceVal = (ctx && ctx._purgedCount) || 0; break;
           case 'stat':
             var statName = v.stat || 'str';
             var rawStat = who[statName] || ctx[statName] || 0;
@@ -1171,9 +1397,22 @@ var EFFECT_TYPES = {
       var val = +v.value || 0;
       // Stat scaling
       if (v.stat && v.stat !== 'none') {
-        val += Math.floor((ctx[v.stat] || 0) / (+v.stat_div || 4));
+        var statSource = ctx.actor || ctx;
+        val += Math.floor((statSource[v.stat] || 0) / (+v.stat_div || 4));
       }
       val = Math.max(val, 0);
+
+      // Aura: debuff duration multiplier
+      var isDebuff = ['poison','burn','weaken','slow'].indexOf(v.status) !== -1;
+      if(isDebuff && ctx.actor){
+        var durMult = getAura(ctx.actor, 'debuffDurMult');
+        if(durMult) dur = Math.round(dur * durMult);
+      }
+      // Aura: shield multiplier
+      if(v.status === 'shield' && ctx.actor){
+        var sMult = getAura(ctx.actor, 'shieldMult');
+        if(sMult) val = Math.round(val * sMult);
+      }
 
       switch (v.status) {
         case 'poison':
@@ -1466,8 +1705,9 @@ var EFFECT_TYPES = {
     tooltipText: function(v){ return 'Echo: on discard, purges all temporary copies.'; },
     typeHint:'utility',
     run: function(v,ctx){
-      if(!gs.conjuredCount || gs.conjuredCount <= 0) return;
+      if(!gs.conjuredCount || gs.conjuredCount <= 0){ ctx._purgedCount = 0; return; }
       var purged = purgeAllConjured();
+      ctx._purgedCount = purged;
       if(purged > 0){
         addLog('[Echo] Purged ' + purged + ' [Conjured] copies.','draw');
         if(ctx.cardId) spawnEchoFloat(ctx.cardId);
@@ -1516,27 +1756,37 @@ var EFFECT_TYPES = {
 
   heal: {
     label:'Heal HP', cat:'buff',
-    desc:'Restore a flat amount of HP.',
-    fields:[{id:'amt', label:'HP restored', type:'number', default:5, min:1, max:80}],
+    desc:'Restore HP. Supports stat scaling.',
+    fields:[
+      {id:'amt', label:'HP restored', type:'number', default:5, min:0, max:80},
+      {id:'stat', label:'Stat scale', type:'select', default:'none', options:['none','str','agi','wis']},
+      {id:'stat_div', label:'Stat div', type:'number', default:4, min:1}
+    ],
     effectText:  function(v){ return 'Heal '+v.amt+' HP.'; },
     tooltipText: function(v){ return ''; },
     typeHint:'defense',
     run: function(v,ctx){
+      var healAmt = +v.amt || 0;
+      // Stat scaling
+      if(v.stat && v.stat !== 'none'){
+        var statSource = ctx.actor || ctx;
+        healAmt += Math.floor((statSource[v.stat] || 0) / (+v.stat_div || 4));
+      }
       var target, side;
       if(ctx.actor){
         target = ctx.actor;
         side = ctx.actor.side;
-        var h = Math.min(+v.amt, target.maxHp - target.hp);
+        var h = Math.min(healAmt, target.maxHp - target.hp);
         target.hp = Math.min(target.maxHp, target.hp + h);
         if(h > 0){ spawnHealNum(side, h); flashHpBar(side, 'hp-flash-green'); }
         addLog(ctx.cardName + '! +' + h + ' HP.', 'heal');
       } else if(ctx.isEnemy){
-        var h2 = Math.min(+v.amt, gs.enemyMaxHp - gs.enemyHp);
+        var h2 = Math.min(healAmt, gs.enemyMaxHp - gs.enemyHp);
         gs.enemyHp = Math.min(gs.enemyMaxHp, gs.enemyHp + h2);
         if(h2 > 0){ spawnHealNum('enemy', h2); flashHpBar('enemy', 'hp-flash-green'); }
         addLog(ctx.cardName + '! +' + h2 + ' HP.', 'heal');
       } else {
-        var h3 = Math.min(+v.amt, gs.playerMaxHp - gs.playerHp);
+        var h3 = Math.min(healAmt, gs.playerMaxHp - gs.playerHp);
         gs.playerHp = Math.min(gs.playerMaxHp, gs.playerHp + h3);
         if(h3 > 0){ spawnHealNum('player', h3); flashHpBar('player', 'hp-flash-green'); }
         addLog(ctx.cardName + '! +' + h3 + ' HP.', 'heal');
