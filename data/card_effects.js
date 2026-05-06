@@ -65,6 +65,11 @@ function _applyPoisonToPlayer(dpt, durMs){
 // Apply Burn — non-stacking. Reapplication refreshes duration only, never increases dpt.
 // Burn is a single flat DoT. Use poison for stacking pressure.
 function _applyBurn(dpt, durMs){
+  // Wildfire Focus relic: burn dpt scales with player WIS instead of card-flat value.
+  if(gs && gs._relicBurnScalesWis){
+    var wis = (gs.stats && gs.stats.wis) || 0;
+    dpt = Math.max(1, Math.round(wis/3));
+  }
   var dur=(durMs||9000)+((gs&&gs._relicBurnDurBonus)||0);
   var e=gs.statusEffects.enemy.find(function(s){return s.id==='burn';});
   if(e){ e.remaining=dur; e.maxRemaining=dur; }
@@ -386,7 +391,7 @@ function _applyAura(actor, auraDef){
   }
   // Modifier aura — set keys on actor.auras
   var modKeys = ['debuffDurMult','poisonTickMult','poisonDurMult','burnDurMult',
-                 'shieldMult','healMult','critDmgMult'];
+                 'shieldMult','healMult','critDmgMult','attackCritBonus'];
   modKeys.forEach(function(key){
     if(eff[key] !== undefined) actor.auras[key] = eff[key];
   });
@@ -404,7 +409,7 @@ function _removeAura(actor, auraDef){
   }
   // Remove modifier keys
   var modKeys = ['debuffDurMult','poisonTickMult','poisonDurMult','burnDurMult',
-                 'shieldMult','healMult','critDmgMult'];
+                 'shieldMult','healMult','critDmgMult','attackCritBonus'];
   modKeys.forEach(function(key){
     if(eff[key] !== undefined) delete actor.auras[key];
   });
@@ -467,11 +472,12 @@ function getCardMods(actor, cardId){
 }
 
 // Resolve card effects + all applicable mods → {effects, crit, appendedEffects}
-function resolveCardEffects(actor, cardId){
+function resolveCardEffects(actor, cardId, item){
   var card = CARDS[cardId];
   if(!card) return {effects:[], crit:0, appendedEffects:[], modifiedFields:{}};
   var mods = getCardMods(actor, cardId);
-  if(mods.length === 0) return {effects:card.effects||[], crit:0, appendedEffects:[], modifiedFields:{}};
+  var hasItemMods = item && (item._sorceryMult !== undefined);
+  if(mods.length === 0 && !hasItemMods) return {effects:card.effects||[], crit:0, appendedEffects:[], modifiedFields:{}};
 
   var resolved = JSON.parse(JSON.stringify(card.effects || []));
   var totalCrit = 0;
@@ -501,7 +507,7 @@ function resolveCardEffects(actor, cardId){
         }
       } else if(ch.debuff_dur_mult){
         // Multiply duration on all debuff-applying effects
-        var debuffStatuses = ['weaken','poison','burn','slow'];
+        var debuffStatuses = ['weaken','poison','burn','slow','bleed'];
         for(var di = 0; di < resolved.length; di++){
           if(resolved[di].type === 'apply_status' && debuffStatuses.indexOf(resolved[di].status) !== -1 && resolved[di].dur){
             resolved[di].dur = Math.round(resolved[di].dur * ch.debuff_dur_mult);
@@ -513,6 +519,23 @@ function resolveCardEffects(actor, cardId){
             modifiedFields['effects['+di+'].effect.dur'] = true;
           }
         }
+      } else if(ch.sorcery_cost_mult){
+        // Multiply sorcery costs on all sorcery effects
+        for(var si = 0; si < resolved.length; si++){
+          if(resolved[si].type === 'sorcery' && resolved[si].cost && resolved[si].cost !== 'all'){
+            resolved[si].cost = Math.max(1, Math.round((+resolved[si].cost) * ch.sorcery_cost_mult));
+            modifiedFields['effects['+si+'].cost'] = true;
+          }
+        }
+      }
+    }
+  }
+  // Apply per-card item stamps (e.g. from sorcery_discount)
+  if(item && item._sorceryMult !== undefined){
+    for(var ii = 0; ii < resolved.length; ii++){
+      if(resolved[ii].type === 'sorcery' && resolved[ii].cost && resolved[ii].cost !== 'all'){
+        resolved[ii].cost = Math.max(1, Math.round((+resolved[ii].cost) * item._sorceryMult));
+        modifiedFields['effects['+ii+'].cost'] = true;
       }
     }
   }
@@ -567,6 +590,9 @@ var EFFECT_DISPLAY = {
   purge_conjured:  {cat:'card_act', order:5},
   modify_cards:    {cat:'modifier', order:7},
   copy_last_card:  {cat:'card_act', order:5},
+  copy_hand_card:  {cat:'card_act', order:5},
+  copy_last_copied:{cat:'card_act', order:5},
+  sorcery_discount:{cat:'modifier', order:7},
   convert_oldest_to:{cat:'card_act',order:5},
   sorcery:         {cat:'keyword',  order:11},
   hellbent:        {cat:'keyword',  order:10},
@@ -585,6 +611,10 @@ function _effectLiveText(eff, actor, opponent){
         var statVal = actor[eff.stat] || 0;
         base += Math.floor(statVal / (+eff.stat_div || 1));
       }
+      if(eff.stat2 && actor){
+        var statVal2 = actor[eff.stat2] || 0;
+        base += Math.floor(statVal2 / (+eff.stat2_div || 1));
+      }
       var hits = +eff.hits || 1;
       var txt = 'Deal '+sv(base)+' damage';
       if(hits > 1) txt += ' × '+sv(hits)+' hits';
@@ -593,21 +623,28 @@ function _effectLiveText(eff, actor, opponent){
       // Condition text
       if(eff.condition){
         var condMet = false;
+        var checkWho = (eff.check === 'self') ? actor : opponent;
         if(eff.condition === 'below_50_hp'){
-          condMet = actor && actor.hp < actor.maxHp * 0.5;
+          condMet = checkWho && checkWho.hp < checkWho.maxHp * 0.5;
+        } else if(eff.condition === 'above_50_hp'){
+          condMet = checkWho && checkWho.hp >= checkWho.maxHp * 0.5;
         } else if(eff.condition === 'has_debuff'){
-          condMet = opponent && opponent.statusEffects && opponent.statusEffects.some(function(s){return s.cls==='debuff';});
+          condMet = checkWho && checkWho.statusEffects && checkWho.statusEffects.some(function(s){return s.cls==='debuff';});
         } else if(eff.condition === 'has_burn'){
-          condMet = opponent && opponent.statusEffects && opponent.statusEffects.some(function(s){return s.id==='burn';});
+          condMet = checkWho && checkWho.statusEffects && checkWho.statusEffects.some(function(s){return s.id==='burn';});
         } else if(eff.condition === 'has_poison'){
-          condMet = opponent && opponent.statusEffects && opponent.statusEffects.some(function(s){return s.id==='poison';});
+          condMet = checkWho && checkWho.statusEffects && checkWho.statusEffects.some(function(s){return s.id==='poison';});
+        } else if(eff.condition === 'has_shield'){
+          condMet = checkWho && (checkWho.shield || 0) > 0;
         }
+        var isSelfCheck = eff.check === 'self';
         var condLabels = {
-          'below_50_hp': 'Below 50% HP',
-          'has_debuff': '[Debuff] on enemy',
-          'has_burn': '[Burn] on enemy',
-          'has_poison': '[Poison] on enemy',
-          'has_shield': '[Shield] active',
+          'below_50_hp': isSelfCheck ? 'Below 50% HP' : 'Enemy below 50% HP',
+          'above_50_hp': isSelfCheck ? 'Above 50% HP' : 'Enemy above 50% HP',
+          'has_debuff': isSelfCheck ? '[Debuff] active' : '[Debuff] on enemy',
+          'has_burn': isSelfCheck ? '[Burn] active' : '[Burn] on enemy',
+          'has_poison': isSelfCheck ? '[Poison] active' : '[Poison] on enemy',
+          'has_shield': isSelfCheck ? '[Shield] active' : 'Enemy has [Shield]',
           'hand_empty': 'Hand empty',
           'hand_full': 'Hand full'
         };
@@ -665,7 +702,7 @@ function _effectLiveText(eff, actor, opponent){
       }
       var status = eff.status || '';
       var durSec = eff.dur || 0;
-      var isDebuff = ['poison','burn','weaken','slow'].indexOf(status) !== -1;
+      var isDebuff = ['poison','burn','weaken','slow','bleed'].indexOf(status) !== -1;
       var durModified = false;
       var valModified = false;
 
@@ -689,7 +726,9 @@ function _effectLiveText(eff, actor, opponent){
       if(status === 'poison') return 'Apply '+sv(val)+' [Poison]'+dur+'.';
       if(status === 'burn') return 'Apply [Burn]'+dur+'.';
       if(status === 'weaken') return '[Weaken]'+dur+'.';
-      if(status === 'slow') return '[Slow]'+dur+'.';
+      if(status === 'slow') return '[Slow] '+sv(Math.round((+eff.value||0.5)*100))+'%'+dur+'.';
+      if(status === 'stun') return '[Stun] 1s.';
+      if(status === 'bleed') return 'Apply [Bleed]'+dur+'.';
       if(status === 'thorns') return '[Thorns] '+sv(val)+dur+'.';
       if(status === 'dodge') return '[Dodge]'+dur+'.';
       if(status === 'frenzy') return '[Frenzy] '+sv(val)+dur+'.';
@@ -738,6 +777,9 @@ function _effectLiveText(eff, actor, opponent){
     case 'conjure_copy': return '[Conjured]: copy this card.';
     case 'purge_conjured': return 'Purge all [Conjured] cards.';
     case 'copy_last_card': return 'Copy last played card.';
+    case 'copy_hand_card': return 'Copy a random card in hand.';
+    case 'copy_last_copied': return 'Copy the same card again.';
+    case 'sorcery_discount': return 'Reduce [Sorcery] costs by '+sv(Math.round((1-(+eff.mult||0.5))*100))+'%.';
     case 'convert_oldest_to': return 'Convert oldest card.';
 
     case 'modify_cards': {
@@ -786,7 +828,7 @@ function _effectLiveText(eff, actor, opponent){
 // Generate full card display text from effects array
 // Returns array of {layer, html} objects
 function generateCardText(actor, cardId, item){
-  var resolved = resolveCardEffects(actor, cardId);
+  var resolved = resolveCardEffects(actor, cardId, item);
   var allEffects = resolved.effects.concat(resolved.appendedEffects);
   var opponent = actor ? getOpponent(actor) : null;
 
@@ -826,6 +868,12 @@ function generateCardText(actor, cardId, item){
     var critDelta = resolved.crit || 0;
     // Check for base crit on item
     if(item && item.critBonus) critDelta += item.critBonus;
+    // Aura: attack crit bonus (e.g. Wolf Keen Senses)
+    var card = CARDS[cardId];
+    if(card && card.type === 'attack' && actor){
+      var auraCrit = getAura(actor, 'attackCritBonus');
+      if(auraCrit) critDelta += auraCrit;
+    }
     var hasDmg = layers.normal.some(function(e){ return e.type==='dmg_conditional'||e.type==='dmg_scaling'||e.type==='churn_all_damage'; });
 
     layers.normal.forEach(function(eff){
@@ -915,9 +963,12 @@ var EFFECT_TYPES = {
     desc:'Flexible damage with optional condition check.',
     fields:[
       {id:'hits',       label:'Hits',       type:'number', default:1},
-      {id:'dmg',        label:'Dmg/hit',    type:'number', default:10},
+      {id:'base',       label:'Base dmg',   type:'number', default:10},
+      {id:'crit',       label:'Crit %',     type:'number', default:0},
       {id:'stat',       label:'Stat scale', type:'select', default:'none', options:['none','str','agi','wis']},
       {id:'stat_div',   label:'Stat div',   type:'number', default:4},
+      {id:'stat2',      label:'Stat 2',     type:'select', default:'none', options:['none','str','agi','wis']},
+      {id:'stat2_div',  label:'Stat 2 div', type:'number', default:4},
       {id:'condition',  label:'Condition',  type:'select', default:'always',
         options:['always','has_debuff','has_burn','has_poison','has_weaken','has_slow',
                  'has_shield','has_haste','has_frenzy','below_50_hp','above_50_hp']},
@@ -946,10 +997,15 @@ var EFFECT_TYPES = {
     run: function(v,ctx){
       var hits = +v.hits || 1;
       var baseDmg = +v.base || +v.dmg || 0;
-      // Stat scaling
+      // Stat scaling (primary)
       if (v.stat && v.stat !== 'none') {
         var statSource = ctx.actor || ctx;
         baseDmg += Math.floor((statSource[v.stat] || 0) / (+v.stat_div || 4));
+      }
+      // Stat scaling (secondary)
+      if (v.stat2 && v.stat2 !== 'none') {
+        var statSource2 = ctx.actor || ctx;
+        baseDmg += Math.floor((statSource2[v.stat2] || 0) / (+v.stat2_div || 4));
       }
       // Check condition
       var checkTarget;
@@ -1000,9 +1056,18 @@ var EFFECT_TYPES = {
         var d = ctx.pdmg(baseDmg);
         var critPct = +v.crit || 0;
         if (ctx.critBonus) critPct += ctx.critBonus;
+        // Aura: attack crit bonus (e.g. Wolf Keen Senses while haste active)
+        if (ctx.card && ctx.card.type === 'attack') {
+          var auraCrit = getAura(ctx.actor, 'attackCritBonus');
+          if (auraCrit) critPct += auraCrit;
+        }
+        // Overflow Crystal relic: each percentage of crit chance over 100
+        // becomes 1% bonus damage, applied after the crit doubling.
+        var critOverflowExcess = (gs && gs._relicCritOverflow && critPct > 100) ? (critPct - 100) : 0;
         var isCrit = ctx.markedCrit || (critPct > 0 && Math.random() * 100 < critPct);
         if (!isCrit && condMet && v.on_true === 'crit') isCrit = Math.random() < (+v.on_true_val / 100);
         if (isCrit) { d = Math.round(d * 2); crits++; }
+        if (critOverflowExcess > 0) { d = Math.round(d * (1 + critOverflowExcess/100)); }
         if (condMet && v.on_true === 'bonus_dmg' && i === 0) d += (+v.on_true_val || 0);
         total += d;
         dealCardDamage(d, ctx);
@@ -1103,7 +1168,7 @@ var EFFECT_TYPES = {
     fields:[
       {id:'target', label:'Target', type:'select', default:'self', options:['self','opponent']},
       {id:'what', label:'What to cleanse', type:'select', default:'all_debuffs',
-        options:['shield','all_debuffs','all_buffs','poison','burn','weaken','slow','haste','frenzy','dodge','thorns','all']}
+        options:['shield','all_debuffs','all_buffs','poison','burn','weaken','slow','bleed','stun','haste','frenzy','dodge','thorns','all']}
     ],
     effectText: function(v){ return 'Cleanse '+(v.what||'all_debuffs').replace(/_/g,' ')+' from '+(v.target||'self')+'.'; },
     tooltipText: function(v){ return ''; },
@@ -1249,6 +1314,15 @@ var EFFECT_TYPES = {
           });
           if(typeof spawnEchoFloat === 'function') spawnEchoFloat(disc.id);
         }
+        // Fire on_discard innate triggers (e.g. Toxic Cloud)
+        if(!disc.ghost && typeof fireInnateTriggers === 'function'){
+          fireInnateTriggers(actor, 'on_discard', {
+            actor: actor,
+            opponent: ctx.opponent || (typeof getOpponent === 'function' ? getOpponent(actor) : null),
+            pdmg: function(b){ return Math.max(1,b); },
+            cardId: disc.id
+          });
+        }
       }
       if(n > 0) addLog('Discarded '+n+' card'+(n>1?'s':'')+'.', 'draw');
     }
@@ -1364,7 +1438,7 @@ var EFFECT_TYPES = {
     desc:'Apply a status effect to self or opponent.',
     fields:[
       {id:'status',   label:'Status',     type:'select', default:'poison',
-        options:['poison','burn','weaken','slow','haste','thorns','dodge','frenzy','shield']},
+        options:['poison','burn','weaken','slow','haste','thorns','dodge','frenzy','shield','bleed','stun']},
       {id:'target',   label:'Target',     type:'select', default:'opponent', options:['opponent','self']},
       {id:'value',    label:'Value',      type:'number', default:2},
       {id:'stat',     label:'Stat scale', type:'select', default:'none', options:['none','str','agi','wis']},
@@ -1403,7 +1477,7 @@ var EFFECT_TYPES = {
       val = Math.max(val, 0);
 
       // Aura: debuff duration multiplier
-      var isDebuff = ['poison','burn','weaken','slow'].indexOf(v.status) !== -1;
+      var isDebuff = ['poison','burn','weaken','slow','bleed'].indexOf(v.status) !== -1;
       if(isDebuff && ctx.actor){
         var durMult = getAura(ctx.actor, 'debuffDurMult');
         if(durMult) dur = Math.round(dur * durMult);
@@ -1438,8 +1512,32 @@ var EFFECT_TYPES = {
           break;
 
         case 'slow':
-          applyStatus(targetSide, 'debuff', 'Slow', 600, 'slow_draw', dur, 'Slow: draw interval +600ms.');
-          addLog(ctx.cardName + '! [Slow] ' + v.dur + 's.', 'debuff');
+          applyStatus(targetSide, 'debuff', 'Slow ('+Math.round((+v.value||0.5)*100)+'%)', +v.value||0.5, 'slow_draw', dur,
+            'Slow: draw speed reduced by '+Math.round((+v.value||0.5)*100)+'%.');
+          addLog(ctx.cardName + '! [Slow] '+Math.round((+v.value||0.5)*100)+'% ' + (v.dur||4) + 's.', 'debuff');
+          break;
+
+        case 'stun':
+          // Stun is always 90% slow for 1 second
+          applyStatus(targetSide, 'debuff', 'Stunned', 0.9, 'slow_draw', 1000,
+            'Stunned: draw speed reduced by 90% for 1s.');
+          addLog(ctx.cardName + '! [Stun] 1s.', 'debuff');
+          break;
+
+        case 'bleed':
+          // Non-stacking, refresh duration (like Burn)
+          var bleedList = gs.statusEffects[targetSide];
+          var existingBleed = bleedList.findIndex(function(s){ return s.id === 'bleed'; });
+          if(existingBleed !== -1){
+            bleedList[existingBleed].remaining = dur;
+            bleedList[existingBleed].maxRemaining = dur;
+          } else {
+            bleedList.push({id:'bleed', label:'Bleed', cls:'debuff', stat:'bleed',
+              remaining:dur, maxRemaining:dur, dot:false, dpt:val,
+              desc:'Bleed: takes '+val+' damage each time a card is played.'});
+            addTag(targetSide, 'debuff', 'Bleed', 0, '', 'Bleed: takes '+val+' damage each time a card is played.');
+          }
+          addLog(ctx.cardName + '! [Bleed] '+(v.dur||4)+'s.', 'debuff');
           break;
 
         case 'haste':
@@ -1551,6 +1649,68 @@ var EFFECT_TYPES = {
 
   // ── Sacrifice poison stacks ──
 
+  // ── Copy Hand Card ──
+  // Create an Ethereal copy of a random card from own hand.
+  copy_hand_card: {
+    label:'Copy Hand Card', cat:'utility',
+    desc:'Create an Ethereal copy of a random card in hand.',
+    fields:[],
+    effectText: function(v){ return 'Copy a random card in hand.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      var actor = ctx.actor;
+      if(!actor || !actor.hand || actor.hand.length === 0) return;
+      var sourceId = ctx.cardId || null;
+      var candidates = actor.hand.filter(function(h){ return CARDS[h.id] && h.id !== sourceId; });
+      if(candidates.length === 0) return;
+      var pick = candidates[Math.floor(Math.random() * candidates.length)];
+      ctx._copiedCardId = pick.id;
+      actor.hand.push({id: pick.id, ghost: true, _new: true, _newDraw: true});
+      var c = CARDS[pick.id];
+      addLog('[Ethereal] copy of '+(c?c.name:pick.id)+' created.', 'draw');
+    }
+  },
+
+  // ── Copy Last Copied ──
+  copy_last_copied: {
+    label:'Copy Last Copied', cat:'utility',
+    desc:'Create another Ethereal copy of the last copied card.',
+    fields:[],
+    effectText: function(v){ return 'Copy the same card again.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      var actor = ctx.actor;
+      if(!actor || !ctx._copiedCardId) return;
+      actor.hand.push({id: ctx._copiedCardId, ghost: true, _new: true, _newDraw: true});
+      var c = CARDS[ctx._copiedCardId];
+      addLog('[Ethereal] copy of '+(c?c.name:ctx._copiedCardId)+' created.', 'draw');
+    }
+  },
+
+  // ── Sorcery Discount ──
+  // Reduce sorcery costs on all cards currently in hand.
+  sorcery_discount: {
+    label:'Sorcery Discount', cat:'utility',
+    desc:'Reduce sorcery costs on cards currently in hand.',
+    fields:[{id:'mult', label:'Cost multiplier', type:'number', default:0.5}],
+    effectText: function(v){ return 'Reduce [Sorcery] costs by '+ Math.round((1-(+v.mult||0.5))*100) +'%.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      var actor = ctx.actor;
+      if(!actor || !actor.hand) return;
+      var mult = +v.mult || 0.5;
+      var count = 0;
+      actor.hand.forEach(function(item){
+        item._sorceryMult = mult;
+        count++;
+      });
+      if(count > 0){
+        addLog('[Sorcery] costs reduced by '+ Math.round((1-mult)*100) +'% on '+count+' cards!', 'buff');
+        if(actor.side === 'player' && typeof renderHand === 'function') renderHand();
+      }
+    }
+  },
+
   // ── Sorcery wrapper ──
   sorcery: {
     label:'[Sorcery] conditional', cat:'utility',
@@ -1623,6 +1783,15 @@ var EFFECT_TYPES = {
           var ri=Math.floor(Math.random()*gs.enemyHand.length);
           var disc=gs.enemyHand.splice(ri,1)[0];
           gs.enemyDiscardPile.push(disc);
+          // Fire on_discard innate triggers for enemy (e.g. Toxic Cloud)
+          if(ctx.actor && typeof fireInnateTriggers === 'function'){
+            fireInnateTriggers(ctx.actor, 'on_discard', {
+              actor: ctx.actor,
+              opponent: ctx.opponent || (typeof getOpponent === 'function' ? getOpponent(ctx.actor) : null),
+              pdmg: function(b){ return Math.max(1,b); },
+              cardId: disc.id || disc
+            });
+          }
           discarded++;
         }
         for(var d=0;d<discarded;d++){
@@ -1644,6 +1813,15 @@ var EFFECT_TYPES = {
           if(!disc.ghost){
             gs.discardPile.push(disc.id);
             handleCardDiscard(disc.id);
+            // Fire on_discard innate triggers (e.g. Toxic Cloud)
+            if(ctx.actor && typeof fireInnateTriggers === 'function'){
+              fireInnateTriggers(ctx.actor, 'on_discard', {
+                actor: ctx.actor,
+                opponent: ctx.opponent || (typeof getOpponent === 'function' ? getOpponent(ctx.actor) : null),
+                pdmg: function(b){ return Math.max(1,b); },
+                cardId: disc.id
+              });
+            }
             // Spawn discard ghost from card's actual position
             if(cardEl){
               var cr = cardEl.getBoundingClientRect();
@@ -2098,6 +2276,15 @@ var EFFECT_TYPES = {
               if(EFFECT_TYPES[eff.type]) EFFECT_TYPES[eff.type].run(eff, ctx);
             });
             spawnEchoFloat(discItem.id);
+          }
+          // Fire on_discard innate triggers (e.g. Toxic Cloud)
+          if(typeof fireInnateTriggers === 'function'){
+            fireInnateTriggers(actor, 'on_discard', {
+              actor: actor,
+              opponent: ctx.opponent || (typeof getOpponent === 'function' ? getOpponent(actor) : null),
+              pdmg: function(b){ return Math.max(1,b); },
+              cardId: discItem.id
+            });
           }
         }
         spawnCardFloat(discItem.id, 'discard');

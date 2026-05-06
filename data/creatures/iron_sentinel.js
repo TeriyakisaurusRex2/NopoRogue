@@ -11,16 +11,15 @@ CREATURES.iron_sentinel = {
   name:     'IRON SENTINEL',
   icon:     '🗿',
   lore:     'A guardian construct still standing watch over ruins it failed to protect. It does not know the temple fell. It does not need to know. It only needs to stand.',
-  role:     'Tank / Damage Capped',
   bossOnly: false,
 
-  baseStats: { str:18, agi:6, wis:6 },
-  growth:    { str:2,  agi:0, wis:1 },
+  baseStats: { str:17, agi:10, wis:10 },
+  growth:    { str:2,  agi:1,  wis:1 },
 
   innate: {
     id:       'ironclad',
     name:     'Ironclad',
-    desc:     'Passive: no single attack can deal more than 20% of max HP. DoTs bypass this.',
+    desc:     'No single hit can deal more than 20% of max HP. DoTs bypass this.',
     active:   false,
     cost:     0,
     cooldown: 0,

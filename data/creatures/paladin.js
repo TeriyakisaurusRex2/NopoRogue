@@ -7,7 +7,6 @@ CREATURES.paladin = {
   name:     'CURSED PALADIN',
   icon:     '🛡️',
   lore:     'A defender of the Sanctum of Light, now marked by the same evil he swore to destroy. The curse does not weaken him. It redirects him. Every act of holy power feeds the darkness coiled around his heart — and he has learned, grimly, to use that.',
-  role:     'Attrition Tank / Burn + Weaken',
   bossOnly: false,
 
   baseStats: { str:20, agi:12, wis:16 },

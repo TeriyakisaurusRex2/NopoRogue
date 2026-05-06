@@ -7,7 +7,6 @@ CREATURES.thief = {
   name:     'FACELESS THIEF',
   icon:     '🎭',
   lore:     'No name. No history. The face they wear belongs to someone else. They are very good at their work, which is the only thing they know for certain about themselves. The clues to who they were are scattered across the city — in graves, in ledgers, in the faces of people who look at them and go pale.',
-  role:     'Poison Setup / Crit Burst',
   bossOnly: false,
 
   baseStats: { str:16, agi:20, wis:12 },

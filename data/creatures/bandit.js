@@ -7,10 +7,9 @@ CREATURES.bandit = {
   name:     'BANDIT',
   icon:     '🗡️',
   lore:     'The road bandits are not organised. They do not need to be. Each one fights with the desperate efficiency of someone who has learned that hesitation is more expensive than recklessness. Quick hands, sharp steel, no honour.',
-  role:     'Discard Engine / Multi-hit',
   bossOnly: false,
 
-  baseStats: { str:12, agi:14, wis:8 },
+  baseStats: { str:12, agi:14, wis:10 },
   growth:    { str:1,  agi:2,  wis:1 },
 
   innate: {
@@ -18,7 +17,7 @@ CREATURES.bandit = {
     name:     'Quick Hands',
     desc:     'Discard 1 card. Draw 2 cards.',
     active:   true,
-    cost:     20,
+    cost:     40,
     cooldown: 3000,
     effect: [
       {type: 'discard_random', count: 1},

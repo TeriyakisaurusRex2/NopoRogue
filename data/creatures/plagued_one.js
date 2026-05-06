@@ -7,7 +7,6 @@ CREATURES.plagued_one = {
   name:     'PLAGUED ONE',
   icon:     '☠️',
   lore:     'A cultist who completed the rite of willing infection and survived it. They consider this proof of divine favour. The distinction between faith and disease has stopped mattering to them entirely.',
-  role:     'Poison Carrier / Transfer Burst',
   bossOnly: false,
 
   baseStats: { str:9,  agi:8,  wis:16 },

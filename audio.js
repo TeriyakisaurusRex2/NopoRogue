@@ -31,6 +31,17 @@ var SFX_FILES = {
   ui_settings:    { file:'ui_settings',    vol:0.6  },
   quest_notify:   { file:'quest_notify',   vol:0.9  },
   enter_area:     { file:'enter_area',     vol:0.85 },
+  accept:         { file:'accept',         vol:0.9  },
+  scribble:       { file:'scribble',       vol:0.7  },
+  ascend:         { file:'ascend',         vol:1.0  },
+  craft_start:    { file:'craft_start',    vol:0.8  },
+  craft_done:     { file:'craft_done',     vol:1.0  },
+  abandon:        { file:'abandon',        vol:0.8  },
+  // ── Deck Editor (de_*) ───────────────────────────────────────
+  de_small_click: { file:'de_small_click', vol:0.7  },  // adding a card
+  de_remove:      { file:'de_remove',      vol:0.75 },  // removing a card
+  de_deck_saved:  { file:'de_deck_saved',  vol:0.85 },  // save & exit
+  de_deadweight:  { file:'de_deadweight',  vol:0.7  },  // filler appears in deck
 };
 
 var SFX_BASE = 'assets/audio/sfx/';
@@ -93,6 +104,15 @@ function playEnterAreaSfx()   { playSfx('enter_area');      }
 // Legacy aliases so any old call sites still work
 function playSelectSfx()      { playSfx('ui_click');        }
 function playCardSfx()        { playSfx('card_play');       }
+function playQuestAcceptSfx() { playSfx('accept'); playSfx('scribble'); }
+function playAscendSfx()      { playSfx('ascend');          }
+function playCraftStartSfx()  { playSfx('craft_start');     }
+function playCraftDoneSfx()   { playSfx('craft_done');      }
+// Deck editor wrappers
+function playDeAddSfx()       { playSfx('de_small_click');  }
+function playDeRemoveSfx()    { playSfx('de_remove');       }
+function playDeSavedSfx()     { playSfx('de_deck_saved');   }
+function playDeDeadweightSfx(){ playSfx('de_deadweight');   }
 
 // ── Live volume update ─────────────────────────────────────────
 // Called from applySetting('sfx', v) so the slider is instant.
@@ -111,10 +131,9 @@ function updateSfxVolume(pct){
 // Tracks expected at: assets/audio/music/{key}.mp3
 
 var MUSIC_FILES = {
-  // Add your music tracks here as you get them.
-  // theme_menu:   'theme_menu',
+  menu_theme:   'menu_theme',
+  theme_town:   'theme_town',
   // theme_combat: 'theme_combat',
-  // theme_town:   'theme_town',
 };
 
 var MUSIC_BASE = 'assets/audio/music/';

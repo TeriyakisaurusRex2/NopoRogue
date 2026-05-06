@@ -10,3 +10,4 @@ buildSelectScreen();
 showNav(true);
 updateNavBar('adventure');
 restoreQuestBadge();
+preloadGemIcons();

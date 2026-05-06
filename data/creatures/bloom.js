@@ -7,16 +7,15 @@ CREATURES.bloom = {
   name:     'CORRUPTED BLOOM',
   icon:     '🌺',
   lore:     'It was a flower once. The corruption entered through the roots and climbed. Now it blooms in colours that do not occur in nature and releases spores that make living things forget they were ever healthy. The petals open wider when something approaches.',
-  role:     'Hand Size Scaling / Reactive Debuffer',
   bossOnly: false,
 
-  baseStats: { str:16, agi:6, wis:12 },
-  growth:    { str:2,  agi:0, wis:1 },
+  baseStats: { str:13, agi:10, wis:11 },
+  growth:    { str:1,  agi:1, wis:1 },
 
   innate: {
     id:       'corruption_spread',
     name:     'Corruption Spread',
-    desc:     'Passive: when the opponent plays an attack card, spend 20 mana to create an Ethereal Corrupt Spore (Weaken 4s) in own hand.',
+    desc:     'When enemy plays an attack card, spend 20 mana to create an [Ethereal] Corrupt Spore in hand.',
     active:   false,
     cost:     0,
     cooldown: 0,

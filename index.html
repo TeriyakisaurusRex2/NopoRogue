@@ -23,11 +23,8 @@
       <button class="nav-tab" id="nav-town" onclick="navToTown()">🏘 TOWN<span id="quest-badge"></span></button>
     </div>
     <div class="nav-right">
-      <div class="nav-gold" id="nav-gold">✦ 0</div>
+      <div class="nav-gold" id="nav-gold"></div>
       <button id="btn-return-battle" onclick="returnToBattle()" style="display:none;font-family:'Cinzel',serif;font-size:9px;padding:3px 10px;background:rgba(80,30,10,.7);border:1px solid #c06020;color:#d4a843;border-radius:4px;cursor:pointer;letter-spacing:.5px;">⚔ RETURN TO BATTLE</button>
-      <button class="nav-icon-btn" onclick="openAchPanel()" title="Achievements" style="position:relative;">
-        <img src="assets/icons/achievements.png" style="width:24px;height:24px;image-rendering:pixelated;vertical-align:middle;" onerror="this.style.display='none'"><span class="tab-badge" id="ach-badge" style="display:none;position:absolute;top:-2px;right:-2px;"><img src="assets/icons/alert.png" style="width:16px;height:16px;image-rendering:pixelated;" onerror="this.style.display='none'">0</span>
-      </button>
       <button class="nav-icon-btn" onclick="openSettings()" title="Settings">⚙</button>
     </div>
   </div>
@@ -43,7 +40,7 @@
   <div class="cs-header">
     <div class="cs-title">CREATURES</div>
     <div class="cs-controls">
-      <span class="cs-gold" id="cs-gold">✦ 0</span>
+      <span class="cs-gold" id="cs-gold"></span>
       <select class="cs-sort" id="cs-sort" onchange="rebuildChampGrid()">
         <option value="recent">Recently Unlocked</option>
         <option value="level" selected>Highest Level</option>
@@ -141,7 +138,7 @@
     <!-- Right side: battle counter, gold, quest, controls -->
     <div style="display:flex;align-items:center;gap:8px;margin-left:auto;flex-shrink:0;">
       <div class="tb-battle" id="battle-counter">Battle 1 of 1</div>
-      <div class="tb-gold" id="gold-d">✦ 0</div>
+      <div class="tb-gold" id="gold-d"></div>
       <div id="quest-indicator" style="display:none;font-family:'Cinzel',serif;font-size:8px;color:#c09030;background:rgba(10,6,1,.85);border:1px solid #5a3010;border-radius:5px;padding:3px 8px;max-width:140px;cursor:pointer;flex-shrink:0;" onclick="openQuestPopup()">
         <div style="display:flex;align-items:center;gap:4px;color:#6a4010;letter-spacing:.5px;margin-bottom:1px;white-space:nowrap;">
           <img src="assets/icons/quest.png" style="width:14px;height:14px;image-rendering:pixelated;vertical-align:middle;" onerror="this.style.display='none'">
@@ -177,6 +174,7 @@
         <!-- PLAYER -->
         <div class="combatant" id="combatant-player">
           <div class="cname" id="p-name">Champion</div>
+          <div class="relic-strip-wrap" id="p-relics"></div>
           <div class="combatant-inner">
             <div class="big-hp-wrap" style="flex:1;"><div class="big-hp-inner p" id="p-hp-bar" style="width:100%"></div><div class="shield-bar" id="p-shield-bar" style="width:0%;left:0%;display:none;"><span class="shield-timer" id="p-shield-timer"></span></div></div>
             <div class="hp-txt-big" id="p-hp-txt">20/20</div>
@@ -293,39 +291,35 @@
         <div class="de-champ-sub" id="de-champ-sub"></div>
       </div>
     </div>
+    <div id="de-innate" class="de-innate"></div>
     <div class="de-header-right">
       <div class="de-stat-row" id="de-stat-row"></div>
       <div class="de-gold-row" id="de-gold-row"></div>
+      <div class="de-relic-row" id="de-relic-row"></div>
     </div>
   </div>
   <div class="de-body">
-    <div class="de-cols">
-      <div class="de-panel de-panel-left">
-        <div class="de-panel-label">DECK <span id="de-deck-size"></span></div>
-        <div class="de-deck-grid" id="de-deck-grid"></div>
-        <div class="de-size-wrap">
-          <div class="de-size-bar"><div class="de-size-fill" id="de-size-fill"></div></div>
-          <div class="de-size-label" id="de-size-label"></div>
-        </div>
-      </div>
-      <div class="de-panel de-panel-right">
-        <div class="de-panel-label" id="de-avail-label">AVAILABLE CARDS</div>
-        <div class="de-avail-tabs" id="de-avail-tabs"></div>
-        <div class="de-avail-grid" id="de-avail-grid"></div>
+    <!-- Left: compact deck list -->
+    <div class="de-deck-rail">
+      <div class="de-panel-label">DECK <span id="de-deck-size"></span></div>
+      <div class="de-deck-list" id="de-deck-list"></div>
+      <div class="de-size-wrap">
+        <div class="de-size-bar"><div class="de-size-fill" id="de-size-fill"></div></div>
+        <div class="de-size-label" id="de-size-label"></div>
       </div>
     </div>
-    <!-- Info strip — full card render + keyword glossary -->
-    <div class="de-info-strip" id="de-info-strip">
-      <div class="de-info-card">
-        <div class="de-info-card-wrap" id="de-info-card-wrap"></div>
-      </div>
-      <div class="de-info-detail" id="de-info-detail">
-        <div class="de-info-empty">Select a card to see details</div>
-      </div>
+    <!-- Center: card library (search + filters + sort + grid) -->
+    <div class="de-browser">
+      <div class="de-toolbar" id="de-avail-toolbar"></div>
+      <div class="de-avail-grid" id="de-avail-grid"></div>
+    </div>
+    <!-- Right: card inspector -->
+    <div class="de-inspector" id="de-inspector">
+      <div class="de-info-empty">Select a card to see details</div>
     </div>
   </div>
   <div class="de-footer">
-    <div class="de-hint" id="de-hint">Select a card in your deck to replace it</div>
+    <div class="de-hint" id="de-hint">Click a card to inspect · Click + to add · Click − to remove</div>
     <div class="de-footer-btns">
       <button class="btn btn-dim" id="de-undo-btn" onclick="deDeckUndo()" style="display:none;font-size:9px;padding:5px 12px;">↩ Undo</button>
       <button class="btn btn-dim" onclick="deDeckReset()" style="font-size:9px;padding:5px 12px;">Reset</button>
@@ -341,7 +335,7 @@
       <div class="town-title">THE TOWN</div>
       <div class="town-subtitle" id="town-subtitle">Your settlement grows...</div>
     </div>
-    <div class="town-gold" id="town-gold">✦ 0</div>
+    <div class="town-gold" id="town-gold"></div>
   </div>
   <div id="town-summons-banner" style="display:none;flex-shrink:0;"></div>
   <div class="town-grid" id="town-grid"></div>
@@ -383,7 +377,7 @@
   <div class="town-panel-bg" id="adventurers_hall-panel-bg" onclick="closeBuildingPanel('adventurers_hall')">
     <div class="hall-panel-main" onclick="event.stopPropagation()">
       <div class="hall-header">
-        <div class="town-panel-icon"><img src="assets/icons/buildings/adventurers_hall.png" alt="Hall" onerror="this.parentNode.textContent='⚐'"></div>
+        <div class="town-panel-icon"><img src="assets/icons/buildings/hall.png" alt="Hall" onerror="this.parentNode.textContent='⚐'"></div>
         <div style="flex:1;">
           <div class="town-panel-name">ADVENTURER'S HALL</div>
           <div class="town-panel-sub">Where champions gather and contracts are signed</div>
@@ -406,10 +400,10 @@
       <div class="vault-tabs">
         <div class="vault-tab active" onclick="switchHallTab('quests')" id="htab-quests">QUESTS</div>
         <div class="vault-tab" onclick="switchHallTab('expeditions')" id="htab-expeditions">EXPEDITIONS</div>
-        <div class="vault-tab" onclick="switchHallTab('achievements')" id="htab-achievements">ACHIEVEMENTS</div>
+        <div class="vault-tab" onclick="switchHallTab('achievements')" id="htab-achievements"><span id="htab-achievements-icon" class="hall-tab-icon-slot"></span>ACHIEVEMENTS</div>
       </div>
       <div class="town-locked-msg" id="adventurers_hall-locked-msg" style="display:none;"></div>
-      <div id="hall-body-inner" style="flex:1;overflow-y:auto;"></div>
+      <div id="hall-body-inner" style="flex:1;overflow-y:auto;min-height:0;"></div>
       <div id="hall-upgrades-footer" class="vault-upgrades-bar" style="display:none;"></div>
     </div>
   </div>
@@ -418,7 +412,7 @@
   <div class="town-panel-bg" id="forge-panel-bg" onclick="closeBuildingPanel('forge')">
     <div class="town-panel town-panel-forge" onclick="event.stopPropagation()">
       <div class="town-panel-header">
-        <div class="town-panel-icon">🔨</div>
+        <div class="town-panel-icon"><img src="assets/icons/buildings/forge.png" alt="Forge" onerror="this.parentNode.textContent='🔨'"></div>
         <div style="flex:1;">
           <div class="town-panel-name">THE FORGE</div>
           <div class="town-panel-sub">Craft relics from area materials · Assign a champion to speed up crafting</div>
@@ -427,17 +421,27 @@
         <button class="tut-help-btn" onclick="showBuildingTutorial('forge')" title="Help">?</button>
       </div>
       <div class="town-locked-msg" id="forge-locked-msg" style="display:none;"></div>
-      <div id="forge-inner" style="display:flex;flex-direction:column;flex:1;overflow:hidden;min-height:0;">
-        <div class="forge-body" id="forge-body">
-          <div class="forge-recipe-list" id="forge-recipe-list"></div>
-          <div class="forge-inspector" id="forge-inspector">
-            <div class="forge-inspector-empty">Select a recipe to see details and craft.</div>
+      <div id="forge-inner">
+        <div class="npc-greeting" id="forge-npc-greeting">
+          <div class="npc-greeting-sprite"><img src="assets/creatures/forge_keeper.png" alt="M'bur" onerror="this.parentNode.textContent='🔨'"></div>
+          <div class="npc-greeting-text">
+            <div class="npc-greeting-name">M'BUR</div>
+            <div class="npc-greeting-msg" id="forge-npc-msg"></div>
           </div>
         </div>
-        <div class="forge-queue-section" id="forge-queue-section">
-          <div class="forge-queue-label">CRAFTING QUEUE</div>
-          <div class="forge-queue" id="forge-queue-list">
-            <div class="forge-queue-empty">No items queued.</div>
+        <div class="vault-level-row">
+          <span class="vault-level-badge" id="forge-level-badge">FORGE Lv.1</span>
+          <div class="vault-xp-wrap"><div class="vault-xp-bar" id="forge-xp-bar" style="width:0%"></div></div>
+          <span class="vault-xp-txt" id="forge-xp-txt"></span>
+        </div>
+        <div class="forge-queue-section">
+          <div class="forge-queue-label">ACTIVE FORGES</div>
+          <div class="forge-queue" id="forge-queue-list"></div>
+        </div>
+        <div class="forge-body">
+          <div class="forge-recipe-list" id="forge-recipe-list"></div>
+          <div class="forge-inspector" id="forge-inspector">
+            <div class="forge-inspector-empty">Select a recipe to see its effect, materials, and craft time.</div>
           </div>
         </div>
       </div>
@@ -449,7 +453,7 @@
   <div class="town-panel-bg" id="bestiary-panel-bg" onclick="closeBuildingPanel('bestiary')">
     <div class="town-panel town-panel-bestiary" onclick="event.stopPropagation()">
       <div class="town-panel-header">
-        <div class="town-panel-icon">📖</div>
+        <div class="town-panel-icon"><img src="assets/icons/buildings/bestiary.png" alt="Bestiary" onerror="this.parentNode.textContent='📖'"></div>
         <div style="flex:1;">
           <div class="town-panel-name">THE BESTIARY</div>
           <div class="town-panel-sub" id="bestiary-sub">Records of every creature and location</div>
@@ -457,28 +461,62 @@
         <button class="ach-close-btn" onclick="closeBuildingPanel('bestiary')">✕</button><button class="tut-help-btn" onclick="showBuildingTutorial('bestiary')" title="Help">?</button>
       </div>
       <div class="town-locked-msg" id="bestiary-locked-msg" style="display:none;"></div>
-      <div id="bestiary-inner" style="display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;">
-        <div class="bestiary-top-bar">
-          <div class="town-panel-slot-row" style="margin:0;flex:1;">
-  
-          </div>
-          <div class="bestiary-tab-row">
-            <button class="bestiary-tab active" id="btab-creatures" onclick="setBestiaryTab('creatures')"><img src="assets/icons/bestiary_creatures.png" class="bestiary-tab-icon" onerror="this.style.display='none'">🦎 CREATURES</button>
-            <button class="bestiary-tab" id="btab-locations" onclick="setBestiaryTab('locations')"><img src="assets/icons/bestiary_locations.png" class="bestiary-tab-icon" onerror="this.style.display='none'">🗺 LOCATIONS</button>
-            <button class="bestiary-tab" id="btab-glossary" onclick="setBestiaryTab('glossary')"><img src="assets/icons/bestiary_glossary.png" class="bestiary-tab-icon" onerror="this.style.display='none'">📖 GLOSSARY</button>
+      <div id="bestiary-inner">
+        <div class="npc-greeting" id="bestiary-npc-greeting">
+          <div class="npc-greeting-sprite"><img src="assets/creatures/hoot_archivist.png" alt="Hoot" onerror="this.parentNode.textContent='🦉'"></div>
+          <div class="npc-greeting-text">
+            <div class="npc-greeting-name">HOOT</div>
+            <div class="npc-greeting-msg" id="bestiary-npc-msg"></div>
           </div>
         </div>
+        <div class="vault-level-row">
+          <span class="vault-level-badge" id="bestiary-level-badge">BESTIARY Lv.1</span>
+          <div class="vault-xp-wrap"><div class="vault-xp-bar" id="bestiary-xp-bar" style="width:0%"></div></div>
+          <span class="vault-xp-txt" id="bestiary-xp-txt"></span>
+        </div>
+        <div class="bestiary-tab-row">
+          <button class="bestiary-tab active" id="btab-creatures" onclick="setBestiaryTab('creatures')"><img src="assets/icons/beastiary_creatures.png" class="bestiary-tab-icon" onerror="this.outerHTML='🦎'">CREATURES</button>
+          <button class="bestiary-tab" id="btab-locations" onclick="setBestiaryTab('locations')"><img src="assets/icons/beastiary_locations.png" class="bestiary-tab-icon" onerror="this.outerHTML='🗺'">LOCATIONS</button>
+          <button class="bestiary-tab" id="btab-glossary" onclick="setBestiaryTab('glossary')"><img src="assets/icons/beastiary_glossary.png" class="bestiary-tab-icon" onerror="this.outerHTML='📖'">GLOSSARY</button>
+        </div>
+        <div class="bestiary-tab-content" style="display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;">
         <div id="bestiary-creatures-pane" class="bestiary-creatures-layout">
-          <div class="bestiary-creature-grid" id="bestiary-creature-grid"></div>
+          <div class="bestiary-index">
+            <div class="bestiary-filter-bar">
+              <input type="text" class="bestiary-search" id="bestiary-search" placeholder="Search creatures..." oninput="buildBestiaryCreatures()">
+              <div class="bestiary-filter-row">
+                <select class="bestiary-area-select" id="bestiary-area-select" onchange="setBestiaryAreaFilter(this.value)">
+                  <option value="all">All Areas</option>
+                </select>
+                <select class="bestiary-area-select" id="bestiary-status-select" onchange="setBestiaryStatusFilter(this.value)">
+                  <option value="all">All Status</option>
+                  <option value="claimable">✦ Claimable</option>
+                  <option value="unseen">??? Unseen</option>
+                  <option value="mastered">✓ Mastered</option>
+                </select>
+                <span class="bestiary-entry-count" id="bestiary-entry-count"></span>
+              </div>
+            </div>
+            <div class="bestiary-grid-scroll">
+              <div class="bestiary-creature-grid" id="bestiary-creature-grid"></div>
+            </div>
+          </div>
           <div class="bc-detail-panel" id="bc-detail-panel">
             <div class="bc-empty-detail">Select a creature<br>to view its record</div>
           </div>
         </div>
-        <div id="bestiary-locations-pane" class="bestiary-pane" style="display:none;flex:1;min-height:0;overflow:hidden;">
+        <div class="bestiary-footer" id="bestiary-footer">
+          <span class="bestiary-footer-label">ARCHIVE COMPLETION</span>
+          <div class="bestiary-footer-bar"><div class="bestiary-footer-fill" id="bestiary-footer-fill"></div></div>
+          <span class="bestiary-footer-count" id="bestiary-footer-count">0/0</span>
+          <span class="bestiary-footer-legend">✦ NEW · ● milestone · ✓ mastered</span>
         </div>
-        <div id="bestiary-glossary-pane" class="bestiary-pane" style="display:none;max-height:62vh;">
-          <div id="bestiary-glossary-grid"></div>
+        <div id="bestiary-locations-pane" class="bestiary-pane" style="display:none;">
         </div>
+        <div id="bestiary-glossary-pane" class="bestiary-pane" style="display:none;">
+          <div id="bestiary-glossary-grid" style="padding:12px;"></div>
+        </div>
+        </div><!-- /bestiary-tab-content -->
       </div>
     </div>
   </div>
@@ -486,65 +524,52 @@
 
   <!-- Sanctum panel -->
   <div class="town-panel-bg" id="sanctum-panel-bg" onclick="closeBuildingPanel('sanctum')">
-    <div class="sanctum-panel" onclick="event.stopPropagation()">
-      <!-- Header -->
-      <div class="sanctum-header">
-        <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;">
-          <span style="font-size:22px;">⚗️</span>
-          <div>
-            <div class="town-panel-name">THE SANCTUM</div>
-            <div class="town-panel-sub">Customise starting decks between runs</div>
-          </div>
+    <div class="town-panel town-panel-sanctum" onclick="event.stopPropagation()">
+      <div class="town-panel-header">
+        <div class="town-panel-icon"><img src="assets/icons/buildings/sanctum.png" alt="Sanctum" onerror="this.parentNode.textContent='⚗️'"></div>
+        <div style="flex:1;">
+          <div class="town-panel-name">THE SANCTUM</div>
+          <div class="town-panel-sub" id="sanctum-sub">Champion management · Ascension · Relics</div>
         </div>
-        <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;">
-          <div style="text-align:right;">
-            <div style="font-family:'Cinzel',serif;font-size:10px;color:#d4a843;">🃏 <span id="sanctum-frag-count">0</span> Fragments</div>
-            <div style="font-size:7px;color:#5a4020;margin-top:1px;">earned from chests &amp; quests</div>
-          </div>
-        </div>
-        <button class="ach-close-btn" onclick="closeBuildingPanel('sanctum')" style="margin-left:6px;">✕</button><button class="tut-help-btn" onclick="showBuildingTutorial('sanctum')" title="Help">?</button>
+        <button class="tut-help-btn" onclick="showBuildingTutorial('sanctum')" title="Help">?</button>
+        <button class="ach-close-btn" onclick="closeBuildingPanel('sanctum')">✕</button>
       </div>
-      <div class="town-locked-msg" id="sanctum-locked-msg" style="display:none;padding:20px;text-align:center;"></div>
-      <div id="sanctum-inner" style="display:flex;flex:1;overflow:hidden;min-height:0;">
-        <!-- Left: champion list -->
-        <div class="sanctum-champ-col">
-          <div class="tp-section-label" style="margin-bottom:6px;">CHAMPIONS</div>
-          <div id="sanctum-champ-tabs" style="display:flex;flex-direction:column;gap:4px;"></div>
+      <div class="town-locked-msg" id="sanctum-locked-msg" style="display:none;"></div>
+      <div id="sanctum-inner">
+        <div class="npc-greeting" id="sanctum-npc-greeting">
+          <div class="npc-greeting-sprite"><img src="assets/creatures/sanctum_keeper.png" alt="Keeper" onerror="this.parentNode.textContent='⚗️'"></div>
+          <div class="npc-greeting-text">
+            <div class="npc-greeting-name">THEO</div>
+            <div class="npc-greeting-msg" id="sanctum-npc-msg"></div>
+          </div>
         </div>
-        <!-- Right: tabs + content -->
-        <div class="sanctum-content-col">
-          <!-- Sub-tabs -->
-          <div style="display:flex;gap:4px;margin-bottom:0;border-bottom:1px solid #1e1006;padding-bottom:0;padding-top:0;">
-            <button class="sanctum-tab active" id="stab-overview"  onclick="setSanctumTab('overview')">👤 Overview</button>
-            <button class="sanctum-tab"        id="stab-deck"      onclick="setSanctumTab('deck')">🃏 Deck</button>
-            <button class="sanctum-tab"        id="stab-relics"    onclick="setSanctumTab('relics')">💎 Relics</button>
-            <button class="sanctum-tab"        id="stab-upgrades"  onclick="setSanctumTab('upgrades')">⬆ Upgrades</button>
-            <button class="sanctum-tab"        id="stab-training"  onclick="setSanctumTab('training')">🏆 Training</button>
-          </div>
-          <div id="sanctum-overview-pane" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;">
-            <div id="sanctum-overview-body"></div>
-          </div>
-          <div id="sanctum-deck-pane" style="display:none;overflow-y:auto;flex:1;flex-direction:column;">
-            <div id="sanctum-deck-grid"></div>
-          </div>
-          <div id="sanctum-relics-pane" class="sanctum-relics-pane" style="display:none;">
-            <div class="sr-top">
-              <div class="sr-stats" id="sr-stats-col"></div>
-              <div class="sr-hero" id="sr-hero-col"></div>
-              <div class="sr-effects" id="sr-effects-col"></div>
+        <div class="vault-level-row">
+          <span class="vault-level-badge" id="sanctum-level-badge">SANCTUM Lv.1</span>
+          <div class="vault-xp-wrap"><div class="vault-xp-bar" id="sanctum-xp-bar" style="width:0%"></div></div>
+          <span class="vault-xp-txt" id="sanctum-xp-txt"></span>
+        </div>
+        <div class="sanctum-body">
+          <!-- Left: champion roster -->
+          <div class="sanctum-roster" id="sanctum-roster"></div>
+          <!-- Right: profile -->
+          <div class="sanctum-profile">
+            <div class="bestiary-tab-row">
+              <button class="bestiary-tab active" id="stab-overview" onclick="setSanctumTab('overview')">OVERVIEW</button>
+              <button class="bestiary-tab" id="stab-relics" onclick="setSanctumTab('relics')">RELICS</button>
+              <button class="bestiary-tab" id="stab-deck" onclick="setSanctumTab('deck')">DECK</button>
             </div>
-            <div class="sr-inv" id="sr-inv-strip"></div>
-          </div>
-          <div id="sanctum-upgrades-pane" style="display:none;overflow-y:auto;flex:1;">
-            <div id="sanctum-upgrades-list"></div>
-          </div>
-          <div id="sanctum-training-pane" style="display:none;overflow-y:auto;flex:1;">
-            <div id="sanctum-training-list"></div>
+            <div class="sanctum-tab-content">
+              <div id="sanctum-overview-pane" class="sanctum-pane"></div>
+              <div id="sanctum-relics-pane" class="sanctum-pane" style="display:none;"></div>
+              <div id="sanctum-deck-pane" class="sanctum-pane" style="display:none;"></div>
+            </div>
           </div>
         </div>
       </div>
     </div>
   </div>
+  <!-- Ascension ceremony overlay -->
+  <div id="ascension-ceremony" style="display:none;"></div>
 
   <!-- Expedition Hall panel -->
   <div class="town-panel-bg" id="expedition_hall-panel-bg" onclick="closeBuildingPanel('expedition_hall')">
@@ -565,35 +590,57 @@
 
   <!-- Market panel -->
   <div class="town-panel-bg" id="market-panel-bg" onclick="closeBuildingPanel('market')">
-    <div class="town-panel town-panel-wide" onclick="event.stopPropagation()">
+    <div class="town-panel town-panel-market" onclick="event.stopPropagation()">
       <div class="town-panel-header">
-        <div class="town-panel-icon">🛒</div>
+        <div class="town-panel-icon"><img src="assets/icons/buildings/market.png" alt="Market" onerror="this.parentNode.textContent='🛒'"></div>
         <div style="flex:1;">
           <div class="town-panel-name">THE MARKET</div>
-          <div class="town-panel-sub">Stock refreshes over time · Prices rise with each purchase</div>
+          <div class="town-panel-sub" id="market-sub">Rotating stock · Limited supply</div>
         </div>
-        <span class="market-gold-val" id="market-gold-val" style="margin-right:10px;">✦ 0</span>
-        <button class="ach-close-btn" onclick="closeBuildingPanel('market')">✕</button><button class="tut-help-btn" onclick="showBuildingTutorial('market')" title="Help">?</button>
+        <div class="market-gold-display" id="market-gold-display"></div>
+        <button class="tut-help-btn" onclick="showBuildingTutorial('market')" title="Help">?</button>
+        <button class="ach-close-btn" onclick="closeBuildingPanel('market')">✕</button>
       </div>
       <div class="town-locked-msg" id="market-locked-msg" style="display:none;"></div>
-      <div id="market-inner" style="overflow-y:auto;max-height:72vh;padding:10px 14px;">
-          <span class="market-mini-eta" id="market-stock-eta">—</span>
+      <div id="market-inner" style="display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;">
+        <div class="npc-greeting" id="market-npc-greeting">
+          <div class="npc-greeting-sprite"><img src="assets/creatures/merchant.png" alt="Merchant" onerror="this.parentNode.textContent='🧳'"></div>
+          <div class="npc-greeting-text">
+            <div class="npc-greeting-name">THE MERCHANT</div>
+            <div class="npc-greeting-msg" id="market-npc-msg"></div>
+          </div>
         </div>
-        <div class="market-offers-grid" id="market-stock-grid"></div>
-        <!-- DEALS section -->
-        <div class="market-section-hdr" style="margin-top:12px;">
-          <span class="tp-section-label">DEALS</span>
-          <div class="market-mini-refresh-wrap"><div class="market-mini-bar" id="market-deals-bar" style="width:0%"></div></div>
-          <span class="market-mini-eta" id="market-deals-eta">—</span>
+        <div class="vault-level-row">
+          <span class="vault-level-badge" id="market-level-badge">MARKET Lv.1</span>
+          <div class="vault-xp-wrap"><div class="vault-xp-bar" id="market-xp-bar" style="width:0%"></div></div>
+          <span class="vault-xp-txt" id="market-xp-txt"></span>
+          <span class="market-restock-timer" id="market-restock-timer">RESTOCK: --:--</span>
         </div>
-        <div class="market-offers-grid" id="market-deals-grid"></div>
-        <!-- RARE section -->
-        <div class="market-section-hdr" style="margin-top:12px;">
-          <span class="tp-section-label" style="color:#a080d0;">RARE FIND</span>
-          <div class="market-mini-refresh-wrap"><div class="market-mini-bar" id="market-rare-bar" style="width:0%;background:linear-gradient(90deg,#4a1870,#a060e0);"></div></div>
-          <span class="market-mini-eta" id="market-rare-eta">—</span>
+        <div class="bestiary-tab-row">
+          <button class="bestiary-tab active" id="mtab-wares" onclick="setMarketTab('wares')">WARES</button>
+          <button class="bestiary-tab" id="mtab-deals" onclick="setMarketTab('deals')">DEALS</button>
+          <button class="bestiary-tab" id="mtab-rare" onclick="setMarketTab('rare')">RARE FINDS</button>
         </div>
-        <div class="market-offers-grid" id="market-rare-grid"></div>
+        <div class="bestiary-tab-content">
+          <div id="market-wares-pane" class="market-pane">
+            <div class="market-list" id="market-wares-list"></div>
+            <div class="market-inspector" id="market-wares-inspector">
+              <div class="market-inspector-empty">Select an item to inspect</div>
+            </div>
+          </div>
+          <div id="market-deals-pane" class="market-pane" style="display:none;">
+            <div class="market-list" id="market-deals-list"></div>
+            <div class="market-inspector" id="market-deals-inspector">
+              <div class="market-inspector-empty">Select a deal to inspect</div>
+            </div>
+          </div>
+          <div id="market-rare-pane" class="market-pane" style="display:none;">
+            <div class="market-list" id="market-rare-list"></div>
+            <div class="market-inspector" id="market-rare-inspector">
+              <div class="market-inspector-empty">Select an item to inspect</div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -735,7 +782,7 @@
 <div class="town-panel-bg" id="board-panel-bg" onclick="closeBuildingPanel('board')">
   <div class="town-panel" onclick="event.stopPropagation()">
     <div class="town-panel-header">
-      <div class="town-panel-icon">📋</div>
+      <div class="town-panel-icon"><img src="assets/icons/buildings/questboard.png" alt="Board" onerror="this.parentNode.textContent='📋'"></div>
       <div style="flex:1;">
         <div class="town-panel-name">ADVENTURER'S BOARD</div>
         <div class="town-panel-sub">Take on quests for gold, gem shards, and glory</div>
@@ -753,7 +800,7 @@
 <div class="town-panel-bg" id="shard_well-panel-bg" onclick="closeBuildingPanel('shard_well')">
   <div class="town-panel" onclick="event.stopPropagation()">
     <div class="town-panel-header">
-      <div class="town-panel-icon">🔮</div>
+      <div class="town-panel-icon"><img src="assets/icons/buildings/shardwell.png" alt="Shard Well" onerror="this.parentNode.textContent='🔮'"></div>
       <div style="flex:1;">
         <div class="town-panel-name">THE SHARD WELL</div>
         <div class="town-panel-sub">Passively generates Gem Shards over time</div>
@@ -881,7 +928,13 @@
 
 
   <!-- ── Core engine (defines all functions + empty data stubs) ── -->
-  <script src="game.js"></script>
+  <script src="game.js?v=2"></script>
+
+  <!-- ── Deck builder (deck editing screen) ── -->
+  <script src="deck_builder.js?v=1"></script>
+
+  <!-- ── Town: buildings, NPC dialogue, bestiary, tutorials ── -->
+  <script src="town.js?v=2"></script>
 
   <!-- ── Data: keywords, cards, creature decks ── -->
   <script src="data/cards.js"></script>
@@ -899,81 +952,35 @@
   <script src="data/areas.js"></script>
   <script src="data/relics.js"></script>
   <script src="data/expedition.js"></script>
-  <script src="data/quests.js"></script>
+  <!-- quests.js removed — quest logic now lives in town.js -->
   <script src="data/vault.js"></script>
 
-  <!-- ── Data: one file per creature ── -->
-  <script src="data/creatures/abysscrawler.js"></script>
-  <script src="data/creatures/amalgam.js"></script>
-  <script src="data/creatures/ashbat.js"></script>
+  <!-- ── Data: one file per creature ──
+       Keep this list in sync with the files actually present in
+       data/creatures/. A missing file here throws ERR_FILE_NOT_FOUND
+       on page load. -->
   <script src="data/creatures/bandit.js"></script>
   <script src="data/creatures/bloom.js"></script>
-  <script src="data/creatures/cavegrub.js"></script>
-  <script src="data/creatures/corruptionbloom.js"></script>
-  <script src="data/creatures/cursedurn.js"></script>
-  <script src="data/creatures/dragon.js"></script>
-  <script src="data/creatures/drownedsailor.js"></script>
+  <script src="data/creatures/dojo_tiger.js"></script>
   <script src="data/creatures/drain_lurker.js"></script>
   <script src="data/creatures/druid.js"></script>
-  <script src="data/creatures/dunecrawler.js"></script>
-  <script src="data/creatures/embergolem.js"></script>
-  <script src="data/creatures/flamesprite.js"></script>
-  <script src="data/creatures/foghast.js"></script>
   <script src="data/creatures/goblin.js"></script>
-  <script src="data/creatures/gorby.js"></script>
-  <script src="data/creatures/golem.js"></script>
-  <script src="data/creatures/grub.js"></script>
-  <script src="data/creatures/harbourmaster.js"></script>
-  <script src="data/creatures/harpy.js"></script>
-  <script src="data/creatures/inksquall.js"></script>
+  <script src="data/creatures/infernal_beast.js"></script>
+  <script src="data/creatures/iron_sentinel.js"></script>
   <script src="data/creatures/ironsentinel.js"></script>
-  <script src="data/creatures/knight.js"></script>
-  <script src="data/creatures/lavacrawler.js"></script>
-  <script src="data/creatures/lich.js"></script>
-  <script src="data/creatures/lurker.js"></script>
-  <script src="data/creatures/maskedowl.js"></script>
-  <script src="data/creatures/mineghoul.js"></script>
-  <script src="data/creatures/mistraven.js"></script>
-  <script src="data/creatures/moonsquirrel.js"></script>
-  <script src="data/creatures/mudcrab.js"></script>
   <script src="data/creatures/mycelid.js"></script>
-  <script src="data/creatures/nightentling.js"></script>
-  <script src="data/creatures/orbweaver.js"></script>
-  <script src="data/creatures/orc.js"></script>
   <script src="data/creatures/paladin.js"></script>
-  <script src="data/creatures/plague.js"></script>
+  <script src="data/creatures/plagued_one.js"></script>
+  <script src="data/creatures/raider.js"></script>
   <script src="data/creatures/rat.js"></script>
-  <script src="data/creatures/roach.js"></script>
-  <script src="data/creatures/sharknight.js"></script>
-  <script src="data/creatures/siren.js"></script>
-  <script src="data/creatures/skeleton.js"></script>
   <script src="data/creatures/slime.js"></script>
+  <script src="data/creatures/smuggler.js"></script>
   <script src="data/creatures/snake.js"></script>
   <script src="data/creatures/sporepuff.js"></script>
   <script src="data/creatures/squanchback.js"></script>
-  <script src="data/creatures/temple_guardian.js"></script>
   <script src="data/creatures/thief.js"></script>
-  <script src="data/creatures/tidecrab.js"></script>
-  <script src="data/creatures/toadking.js"></script>
-  <script src="data/creatures/troll.js"></script>
-  <script src="data/creatures/tunnelant.js"></script>
-  <script src="data/creatures/vaultspectre.js"></script>
-  <script src="data/creatures/venomstalker.js"></script>
-  <script src="data/creatures/watcher.js"></script>
-  <script src="data/creatures/waxeffigy.js"></script>
-  <script src="data/creatures/waxhound.js"></script>
-  <script src="data/creatures/waxoasis.js"></script>
-  <script src="data/creatures/waxsoldier.js"></script>
-  <script src="data/creatures/wisp.js"></script>
-  <script src="data/creatures/witch.js"></script>
   <script src="data/creatures/wolf.js"></script>
-  <script src="data/creatures/wretch.js"></script>
-  <script src="data/creatures/wyrm.js"></script>
   <script src="data/creatures/zombie.js"></script>
-  <script src="data/creatures/dojo_tiger.js"></script>
-  <script src="data/creatures/iron_sentinel.js"></script>
-  <script src="data/creatures/raider.js"></script>
-  <script src="data/creatures/infernal_beast.js"></script>
 
   <!-- ── Audio system ── -->
   <script src="audio.js"></script>

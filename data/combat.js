@@ -133,6 +133,13 @@ function dealDamage(target, dmg, options) {
           target.statusEffects.splice(si, 1);
         }
       }
+      // Shieldbreaker Charm relic: when PLAYER damage breaks ENEMY shield, draw a card.
+      if (gs && gs._relicDrawOnShieldBreak && target.side === 'enemy' && !options.isThorns && !options.isDot){
+        if (typeof doDraw === 'function') {
+          doDraw(null, false);
+          addLog('[Shieldbreaker] shield shattered — extra draw!', 'buff');
+        }
+      }
     }
 
     // Fire on_hit_while_shielded triggers (even if shield absorbed all damage)
@@ -164,6 +171,7 @@ function dealDamage(target, dmg, options) {
   }
 
   target.hp = Math.max(0, target.hp - dmg);
+  if(typeof gs !== 'undefined' && gs) gs._handDisplayDirty = true;
 
   // Undying: survive lethal damage once
   if (target.hp <= 0 && target.creature && target.creature.innate
@@ -697,6 +705,23 @@ function playCardForActor(actor, cardIndex) {
     playCardSfx();
   }
 
+  // Bleed: take damage when playing a card (action-triggered DoT)
+  if (actor.statusEffects) {
+    var bleed = actor.statusEffects.find(function(s){ return s.id === 'bleed'; });
+    if (bleed && bleed.dpt) {
+      actor.hp = Math.max(0, actor.hp - bleed.dpt);
+      if (actor.side === 'player') {
+        gs.playerHp = actor.hp;
+        gs._handDisplayDirty = true;
+      } else {
+        gs.enemyHp = actor.hp;
+      }
+      spawnFloatNum(actor.side, '-' + bleed.dpt, false, 'bleed-num');
+      addLog(actor.creature.name + ' bleeds for ' + bleed.dpt + '!', 'debuff');
+      updateAll();
+    }
+  }
+
   // Shadow Mark crit consumption
   var markedCrit = false;
   if (item.critBonus) {
@@ -739,22 +764,10 @@ function playCardForActor(actor, cardIndex) {
   if (card.type === 'attack') {
     // Check for innate crit modifiers (e.g. Keen Senses)
     var innate = actor.creature && actor.creature.innate;
-    if (innate && innate.triggers) {
-      innate.triggers.forEach(function(trigger) {
-        if (trigger.on !== 'on_attack') return;
-        if (trigger.condition && !checkTriggerCondition(actor, trigger.condition)) return;
-        // crit_roll: roll for crit and set markedCrit on ctx
-        if (trigger.effect && trigger.effect.type === 'crit_roll') {
-          if (Math.random() < (+trigger.effect.pct / 100)) {
-            ctx.markedCrit = true;
-          }
-        }
-      });
-    }
   }
 
   // Execute card effects through EFFECT_TYPES (with mod resolution)
-  var resolved = resolveCardEffects(actor, item.id);
+  var resolved = resolveCardEffects(actor, item.id, item);
   var resolvedEffects = resolved.effects.concat(resolved.appendedEffects);
 
   // Apply crit from mods
@@ -770,26 +783,16 @@ function playCardForActor(actor, cardIndex) {
     });
   }
 
-  // Execute legacy _bonusEffects (from old modify_hand, kept for compatibility)
-  if (item._bonusEffects && item._bonusEffects.length) {
-    item._bonusEffects.forEach(function(eff) {
-      var def = EFFECT_TYPES[eff.type];
-      if (def) def.run(eff, ctx);
-    });
-  }
-
   // Consume next_play mods after card is played
   consumeNextPlayMods(actor, item.id);
 
   // Fire post-play innate triggers (rewards like Frenzy)
   fireInnateTriggers(actor, 'on_card', ctx);
   if (card.type === 'attack') {
-    // Filter out crit_roll triggers (already fired pre-attack)
     var innate2 = actor.creature && actor.creature.innate;
     if (innate2 && innate2.triggers) {
       innate2.triggers.forEach(function(trigger) {
         if (trigger.on !== 'on_attack') return;
-        if (trigger.effect && trigger.effect.type === 'crit_roll') return; // already handled
         if (trigger.condition && !checkTriggerCondition(actor, trigger.condition)) return;
         var effectTarget = (trigger.target === 'opponent') ? ctx.opponent : ctx.actor;
         var effCtx = {

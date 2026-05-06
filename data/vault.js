@@ -187,6 +187,10 @@ function refreshVaultPanel(){
   if(!inner) return;
 
   if(_vaultTab === 'inventory'){
+    // Inventory layout needs a flex column parent so the grid+inspector row can stretch
+    inner.style.display = 'flex';
+    inner.style.flexDirection = 'column';
+    inner.style.overflowY = 'hidden';
     inner.innerHTML = renderVaultInventory();
     // Upgrades footer still shows
     var footerEl = document.getElementById('vault-upgrades-footer');
@@ -194,6 +198,10 @@ function refreshVaultPanel(){
     renderVaultUpgradesFooter();
     return;
   }
+  // Materials tab: restore default scrollable block layout
+  inner.style.display = '';
+  inner.style.flexDirection = '';
+  inner.style.overflowY = '';
 
   // ── MATERIALS TAB — Forge Ledger Layout ──
   var u=PERSIST.town.vaultUpgrades||{};
@@ -381,51 +389,92 @@ function renderVaultUpgradesFooter(){
   }
 }
 
-// ── Inventory Tab ──
+// ── Inventory Tab (v2 — grid + inspector) ──
+
+var _vaultInvSelected = null;          // composite key e.g. 'gem:ruby'
+var _vaultInvFilter   = 'all';         // 'all' | 'gems' | 'relics' | ...
+var _vaultInvSort     = 'category';    // 'category' | 'name' | 'qty'
+var _vaultInvLastList = [];            // last filtered list (for inspector lookups)
+
+function _vaultInvBuildAll(){
+  var items = PERSIST.town.items || {};
+  var relics = PERSIST.town.relics || {};
+  var gems = PERSIST.gems || {};
+  var shards = PERSIST.soulShards || 0;
+  var all = [];
+
+  Object.keys(gems).forEach(function(gid){
+    var qty = gems[gid] || 0; if(qty<=0) return;
+    var label = gid.charAt(0).toUpperCase() + gid.slice(1).replace(/_/g,' ') + ' Gem';
+    all.push({key:'gem:'+gid, id:gid, qty:qty, name:label, icon:'◆', type:'gem', cat:'gems', catLabel:'GEMS', tier:gid});
+  });
+  if(shards > 0){
+    all.push({key:'currency:soul_shards', id:'soul_shards', qty:shards, name:'Soul Shards', icon:'💠', type:'currency', cat:'consumables', catLabel:'CONSUMABLES'});
+  }
+  if(PERSIST.activeLure){
+    var lure = PERSIST.activeLure;
+    var lureLabel = (lure.type==='area'?'Area':'Type') + ' Lure: ' + lure.target;
+    all.push({key:'lure:active', id:'active_lure', qty:1, name:lureLabel, icon:'🪤', type:'lure', cat:'consumables', catLabel:'CONSUMABLES'});
+  }
+  Object.keys(relics).forEach(function(rid){
+    var qty = relics[rid] || 0; if(qty<=0) return;
+    var def = (typeof RELICS !== 'undefined' && RELICS[rid]) || null;
+    all.push({key:'relic:'+rid, id:rid, qty:qty, name:def?def.name:rid, icon:def?def.icon:'⚗️', type:'relic', cat:'relics', catLabel:'RELIC', def:def});
+  });
+  Object.keys(items).forEach(function(iid){
+    var qty = items[iid] || 0; if(qty<=0) return;
+    var def = (typeof LOOT_DEFS !== 'undefined' && LOOT_DEFS[iid]) || null;
+    var t = def?def.type:'misc';
+    var cat = (t==='chest') ? 'chests' : (t==='key') ? 'keys' : 'misc';
+    var catLabel = (cat==='chests')?'CHEST':(cat==='keys')?'KEY':'OTHER';
+    all.push({key:t+':'+iid, id:iid, qty:qty, name:def?def.name:iid, icon:def?def.icon:'❓', type:t, cat:cat, catLabel:catLabel, def:def});
+  });
+  return all;
+}
+
+function setVaultInvFilter(cat){ _vaultInvFilter = cat; refreshVaultPanel(); }
+function setVaultInvSort(key){   _vaultInvSort   = key; refreshVaultPanel(); }
+
+function selectVaultInvItem(key){
+  _vaultInvSelected = key;
+  var insp = document.getElementById('vault-inv-inspector');
+  if(insp) insp.innerHTML = _renderInvInspectorHTML();
+  document.querySelectorAll('.vault-inv-cell').forEach(function(c){
+    c.classList.toggle('selected', c.dataset.key === key);
+  });
+}
 
 function renderVaultInventory(){
   var u=PERSIST.town.vaultUpgrades||{};
-  var items = PERSIST.town.items || {};
-  var relics = PERSIST.town.relics || {};
+  var all = _vaultInvBuildAll();
 
-  // Categorise items
-  var categories = [
-    { id:'chests', label:'CHESTS', icon:'📦', items:[] },
-    { id:'keys', label:'KEYS', icon:'🗝️', items:[] },
-    { id:'gems', label:'GEMS', icon:'💎', items:[] },
-    { id:'tokens', label:'SUMMON TOKENS', icon:'🎟️', items:[] },
-    { id:'relics', label:'RELICS', icon:'⚗️', items:[] },
-    { id:'misc', label:'OTHER', icon:'📋', items:[] },
-  ];
+  // Filter
+  var filtered = (_vaultInvFilter==='all') ? all.slice() : all.filter(function(it){ return it.cat === _vaultInvFilter; });
 
-  // Sort LOOT_DEFS items into categories
-  Object.keys(items).forEach(function(itemId){
-    var qty = items[itemId] || 0;
-    if(qty <= 0) return;
-    var def = (typeof LOOT_DEFS !== 'undefined' && LOOT_DEFS[itemId]) || null;
-    var entry = { id:itemId, qty:qty, name:def?def.name:itemId, icon:def?def.icon:'❓', type:def?def.type:'misc' };
-
-    if(entry.type === 'chest') categories[0].items.push(entry);
-    else if(entry.type === 'key') categories[1].items.push(entry);
-    else if(entry.type === 'gem') categories[2].items.push(entry);
-    else if(entry.type === 'token' || entry.type === 'summon_token') categories[3].items.push(entry);
-    else categories[5].items.push(entry);
+  // Sort
+  var catOrder = {gems:1, relics:2, consumables:3, chests:4, keys:5, misc:6};
+  var tierOrder = {ruby:1, emerald:2, sapphire:3, amethyst:4, diamond:5, opal:6, black_opal:7};
+  filtered.sort(function(a,b){
+    if(_vaultInvSort==='name') return a.name.localeCompare(b.name);
+    if(_vaultInvSort==='qty')  return (b.qty - a.qty) || a.name.localeCompare(b.name);
+    // category
+    var ca = catOrder[a.cat]||99, cb = catOrder[b.cat]||99;
+    if(ca!==cb) return ca-cb;
+    if(a.cat==='gems'){ return (tierOrder[a.tier]||99) - (tierOrder[b.tier]||99); }
+    return a.name.localeCompare(b.name);
   });
 
-  // Relics (unequipped, in town inventory)
-  Object.keys(relics).forEach(function(relicId){
-    var qty = relics[relicId] || 0;
-    if(qty <= 0) return;
-    var def = (typeof RELICS !== 'undefined' && RELICS[relicId]) || null;
-    categories[4].items.push({ id:relicId, qty:qty, name:def?def.name:relicId, icon:def?def.icon:'⚗️', type:'relic' });
-  });
+  // Validate selection
+  if(_vaultInvSelected && !filtered.find(function(it){ return it.key===_vaultInvSelected; })){
+    _vaultInvSelected = null;
+  }
+  _vaultInvLastList = filtered;
 
-  // Gems from persist (if stored separately)
-  // Future: PERSIST.gems or similar
+  // Categories present (for filter chips)
+  var presentCats = {};
+  all.forEach(function(it){ presentCats[it.cat] = true; });
 
-  // Count total items
-  var totalItems = 0;
-  categories.forEach(function(cat){ totalItems += cat.items.length; });
+  var totalItems = all.length;
 
   var html = '<div class="vault-top-bar">'
     +'<span class="vault-tally">ITEMS <span class="vault-tally-val">'+totalItems+'</span></span>'
@@ -433,60 +482,158 @@ function renderVaultInventory(){
     +(u.sellDesk ? '<span class="vault-tally" style="color:#70a030;">SELL DESK ACTIVE</span>' : '')
     +'</div>';
 
+  html += '<div class="vault-inv-layout">';
+
+  // Main column
+  html += '<div class="vault-inv-main">';
+  html += '<div class="vault-inv-toolbar">';
+  html += '<div class="vault-inv-chips">';
+  var chipDefs = [
+    {id:'all',         label:'ALL'},
+    {id:'gems',        label:'💎 GEMS'},
+    {id:'relics',      label:'⚗️ RELICS'},
+    {id:'consumables', label:'🎟️ CONSUMABLES'},
+    {id:'chests',      label:'🎁 CHESTS'},
+    {id:'keys',        label:'🗝 KEYS'},
+    {id:'misc',        label:'📋 OTHER'},
+  ];
+  chipDefs.forEach(function(c){
+    if(c.id!=='all' && !presentCats[c.id]) return;
+    html += '<button class="vault-inv-chip'+(_vaultInvFilter===c.id?' active':'')+'" onclick="setVaultInvFilter(\''+c.id+'\')">'+c.label+'</button>';
+  });
+  html += '</div>';
+  html += '<span style="flex:1;"></span>';
+  html += '<span class="vault-inv-count">'+filtered.length+' / '+totalItems+'</span>';
+  html += '<select class="vault-inv-sort" onchange="setVaultInvSort(this.value)">'
+    +'<option value="category"'+(_vaultInvSort==='category'?' selected':'')+'>Sort: Category</option>'
+    +'<option value="name"'    +(_vaultInvSort==='name'?    ' selected':'')+'>Sort: Name</option>'
+    +'<option value="qty"'     +(_vaultInvSort==='qty'?     ' selected':'')+'>Sort: Quantity</option>'
+    +'</select>';
+  html += '</div>'; // toolbar
+
   if(totalItems === 0){
-    html += '<div style="padding:40px 20px;text-align:center;">'
-      +'<div style="font-size:24px;margin-bottom:12px;opacity:.4;">📦</div>'
-      +'<div style="font-family:Cinzel,serif;font-size:10px;color:#3a2810;letter-spacing:2px;">INVENTORY EMPTY</div>'
+    html += '<div class="vault-inv-empty">'
+      +'<div style="font-size:32px;opacity:.4;margin-bottom:10px;">📦</div>'
+      +'<div style="font-family:Cinzel,serif;font-size:11px;color:#3a2810;letter-spacing:2px;">INVENTORY EMPTY</div>'
       +'<div style="font-size:9px;color:#2a1808;margin-top:6px;">Items from runs, chests, and rewards will appear here.</div>'
       +'</div>';
-    return html;
-  }
-
-  // Render each non-empty category
-  categories.forEach(function(cat){
-    if(cat.items.length === 0) return;
-
-    html += '<div class="vault-inv-category">'
-      +'<div class="vault-inv-cat-header">'+cat.icon+' '+cat.label+'</div>'
-      +'<div class="vault-inv-cat-grid">';
-
-    cat.items.forEach(function(item){
-      var actions = '';
-      if(u.sellDesk){
-        var price = (typeof getSellPrice === 'function') ? getSellPrice({lootKey:item.id}) : 5;
-        actions += '<button class="vault-inv-action" onclick="event.stopPropagation();sellVaultItem(\''+item.id+'\')">SELL '+price+'g</button>';
+  } else if(filtered.length === 0){
+    html += '<div class="vault-inv-empty">'
+      +'<div style="font-family:Cinzel,serif;font-size:10px;color:#3a2810;letter-spacing:2px;">NO ITEMS IN THIS CATEGORY</div>'
+      +'</div>';
+  } else {
+    html += '<div class="vault-inv-grid">';
+    filtered.forEach(function(it){
+      var sel = (_vaultInvSelected===it.key)?' selected':'';
+      var tagHtml = (it.cat==='gems') ? '<span class="vault-inv-cell-tag tag-'+it.tier+'"></span>' : '';
+      var iconInner;
+      if(it.type === 'gem'){
+        iconInner = '<span class="vault-inv-cell-icon-img">'+gemImgHTML(it.tier,'40px')+'</span>';
+      } else if(it.type === 'relic'){
+        iconInner = '<span class="vault-inv-cell-icon-img">'+relicImgHTML(it.id,'40px')+'</span>';
+      } else {
+        iconInner = '<span class="vault-inv-cell-icon-emoji">'+it.icon+'</span>';
       }
-      if(item.type === 'relic'){
-        actions += '<button class="vault-inv-action vault-inv-action-go" onclick="event.stopPropagation();closeBuildingPanel(\'vault\');openBuilding(\'sanctum\')">EQUIP →</button>';
-      }
-      if(item.type === 'gem'){
-        actions += '<button class="vault-inv-action vault-inv-action-go" onclick="event.stopPropagation();closeBuildingPanel(\'vault\');openBuilding(\'sanctum\')">ASCEND →</button>';
-      }
-      if(item.type === 'token' || item.type === 'summon_token'){
-        actions += '<button class="vault-inv-action vault-inv-action-go" onclick="event.stopPropagation();closeBuildingPanel(\'vault\');openBuilding(\'shard_well\')">SUMMON →</button>';
-      }
-      if(item.type === 'chest'){
-        var hasKey = (typeof _chestHasKey === 'function') && _chestHasKey(item.id);
-        if(hasKey){
-          var keyId = (typeof _findKeyForChest === 'function') ? _findKeyForChest(item.id) : null;
-          actions += '<button class="vault-inv-action vault-inv-action-go" onclick="event.stopPropagation();openChest(\''+item.id+'\',\''+keyId+'\')">OPEN</button>';
-        }
-      }
-
-      html += '<div class="vault-inv-item">'
-        +'<div class="vault-inv-item-icon">'+item.icon+'</div>'
-        +'<div class="vault-inv-item-info">'
-          +'<div class="vault-inv-item-name">'+item.name+'</div>'
-          +'<div class="vault-inv-item-qty">×'+item.qty+'</div>'
-        +'</div>'
-        +(actions ? '<div class="vault-inv-item-actions">'+actions+'</div>' : '')
+      html += '<div class="vault-inv-cell'+sel+'" data-key="'+it.key+'" onclick="selectVaultInvItem(\''+it.key+'\')" title="'+it.name+'">'
+        +tagHtml
+        +iconInner
+        +'<span class="vault-inv-cell-qty">×'+it.qty+'</span>'
         +'</div>';
     });
+    html += '</div>'; // grid
+  }
 
-    html += '</div></div>';
-  });
+  html += '</div>'; // vault-inv-main
 
+  // Inspector
+  html += '<div class="vault-inv-inspector" id="vault-inv-inspector">';
+  html += _renderInvInspectorHTML();
+  html += '</div>';
+
+  html += '</div>'; // vault-inv-layout
   return html;
+}
+
+function _renderInvInspectorHTML(){
+  if(!_vaultInvSelected){
+    return '<div class="vault-inv-insp-empty">'
+      +'<div style="font-size:24px;opacity:.4;margin-bottom:8px;">↩</div>'
+      +'<div style="font-family:Cinzel,serif;font-size:9px;color:#3a2810;letter-spacing:1.5px;">SELECT AN ITEM</div>'
+      +'<div style="font-size:8px;color:#2a1808;margin-top:4px;">to view details</div>'
+      +'</div>';
+  }
+  var item = _vaultInvLastList.find(function(it){ return it.key===_vaultInvSelected; });
+  if(!item){
+    return '<div class="vault-inv-insp-empty"><div style="font-size:9px;color:#3a2810;font-family:Cinzel,serif;letter-spacing:1px;">NOT IN VIEW</div></div>';
+  }
+
+  var u = PERSIST.town.vaultUpgrades || {};
+
+  // Description
+  var desc = '';
+  if(item.type==='gem'){
+    desc = 'Spent in the Sanctum to ascend a champion of matching tier.';
+  } else if(item.type==='relic' && item.def){
+    desc = item.def.effect || item.def.desc || '';
+  } else if(item.type==='currency' && item.id==='soul_shards'){
+    desc = 'Spent at the Shard Well to summon new champions.';
+  } else if(item.type==='lure' && item.def){
+    desc = item.def.desc || 'Influences the next adventure.';
+  } else if(item.type==='lure'){
+    desc = 'Influences your next expedition.';
+  } else if(item.def){
+    desc = item.def.effect || item.def.desc || item.def.note || '';
+  }
+
+  // Badge
+  var badge = item.catLabel;
+  if(item.type==='relic' && item.def && item.def.tier){
+    badge = item.def.tier.toUpperCase() + ' RELIC';
+  } else if(item.type==='gem' && item.tier){
+    badge = item.tier.toUpperCase().replace(/_/g,' ') + ' GEM';
+  }
+
+  // Actions
+  var actionsHtml = '';
+  if(u.sellDesk && (item.type==='chest' || item.type==='key')){
+    var price = (typeof getSellPrice === 'function') ? getSellPrice({lootKey:item.id}) : 0;
+    if(price > 0){
+      actionsHtml += '<button class="vault-inv-act" onclick="sellVaultItem(\''+item.id+'\')">SELL ✦'+price+'g</button>';
+    }
+  }
+  if(item.type==='relic'){
+    actionsHtml += '<button class="vault-inv-act go" onclick="closeBuildingPanel(\'vault\');openBuilding(\'sanctum\')">EQUIP IN SANCTUM →</button>';
+  }
+  if(item.type==='gem'){
+    actionsHtml += '<button class="vault-inv-act go" onclick="closeBuildingPanel(\'vault\');openBuilding(\'sanctum\')">USE TO ASCEND →</button>';
+  }
+  if(item.type==='currency' && item.id==='soul_shards'){
+    actionsHtml += '<button class="vault-inv-act go" onclick="closeBuildingPanel(\'vault\');openBuilding(\'shard_well\')">SUMMON →</button>';
+  }
+  if(item.type==='chest'){
+    var hasKey = (typeof _chestHasKey === 'function') && _chestHasKey(item.id);
+    if(hasKey){
+      var keyId = (typeof _findKeyForChest === 'function') ? _findKeyForChest(item.id) : null;
+      actionsHtml += '<button class="vault-inv-act go" onclick="openChest(\''+item.id+'\',\''+keyId+'\')">OPEN CHEST</button>';
+    } else {
+      actionsHtml += '<div class="vault-inv-act-locked">Need '+_biomeHint(item.id)+' key to open</div>';
+    }
+  }
+
+  var inspIconHtml;
+  if(item.type === 'gem'){
+    inspIconHtml = gemImgHTML(item.tier,'76px');
+  } else if(item.type === 'relic'){
+    inspIconHtml = relicImgHTML(item.id,'76px');
+  } else {
+    inspIconHtml = '<span class="vault-inv-insp-icon">'+item.icon+'</span>';
+  }
+  return '<div class="vault-inv-insp-icon-wrap">'+inspIconHtml+'</div>'
+    +'<div class="vault-inv-insp-badge">'+badge+'</div>'
+    +'<div class="vault-inv-insp-name">'+item.name+'</div>'
+    +'<div class="vault-inv-insp-qty">×'+item.qty+'</div>'
+    +(desc ? '<div class="vault-inv-insp-desc">'+desc+'</div>' : '')
+    +(actionsHtml ? '<div class="vault-inv-insp-actions">'+actionsHtml+'</div>' : '');
 }
 
 // ── Helpers ──

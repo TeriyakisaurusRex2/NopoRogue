@@ -7,11 +7,10 @@ CREATURES.zombie = {
   name:     'SEWER ZOMBIE',
   icon:     '🧟',
   lore:     'Whatever this was before, it has forgotten. The flesh is grey and waterlogged. The jaw hangs at an angle that suggests it was broken and then continued to be used regardless. It does not feel pain. It does not feel anything. It just keeps coming.',
-  role:     'Attrition / Undying',
   bossOnly: false,
 
-  baseStats: { str:14, agi:6, wis:4 },
-  growth:    { str:2,  agi:0, wis:0 },
+  baseStats: { str:10, agi:10, wis:10 },
+  growth:    { str:2,  agi:1, wis:2 },
 
   innate: {
     id:       'undying',
@@ -27,7 +26,7 @@ CREATURES.zombie = {
 
   // Deck generated from STR + deckOrder (14 cards at base)
   // 14 ÷ 5 = 2 each + 4 remainder → Slam 3, Bite 3, Groan 3, Strike 3, Brace 2
-  deckOrder: ['zombie_slam', 'zombie_bite', 'zombie_groan'],
+  deckOrder: ['zombie_pummel', 'zombie_devour', 'zombie_mend'],
 };
 // Backup: protect triggers array from being stripped
 CREATURES.zombie._innateTriggers = [{"on": "on_lethal", "effect": {"type": "survive_at_1"}}];

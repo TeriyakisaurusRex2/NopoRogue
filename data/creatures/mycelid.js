@@ -7,16 +7,15 @@ CREATURES.mycelid = {
   name:     'MYCELID',
   icon:     '🍄',
   lore:     'The mycelium network extends for miles beneath the swamp floor. The Mycelid is not a creature so much as a node — an expression of the network given shape and purpose. When one falls, the network remembers. The next one arrives angrier.',
-  role:     'Poison Tank / Shield from DoTs',
   bossOnly: false,
 
-  baseStats: { str:14, agi:8, wis:12 },
-  growth:    { str:2,  agi:0, wis:1 },
+  baseStats: { str:12, agi:10, wis:12 },
+  growth:    { str:1,  agi:1,  wis:1 },
 
   innate: {
     id:       'mycelium_network',
     name:     'Mycelium Network',
-    desc:     'Passive: when the opponent takes damage from a DoT tick, gain that amount as [Shield].',
+    desc:     'When enemy takes DoT damage, gain that amount as [Shield].',
     active:   false,
     cost:     0,
     cooldown: 0,

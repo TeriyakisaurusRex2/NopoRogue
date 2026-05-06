@@ -86,8 +86,7 @@ var EXPEDITION_BONUS_DROPS = [
 
 // ── Helper: get current building level ───────────────
 function getExpeditionHallLevel(){
-  var b = PERSIST.town.buildings.expedition_hall;
-  return (b && b.level) || 1;
+  return getBuildingLevel('adventurers_hall');
 }
 
 // ── Helper: how many slots are active at this level ──
@@ -252,9 +251,9 @@ function applyExpeditionReward(reward){
 
 // ── Send an expedition ────────────────────────────────
 function sendExpedition(slotIdx, champId, areaId, typeId, targetMaterial){
-  var b   = PERSIST.town.buildings.expedition_hall; if(!b||!b.unlocked) return;
+  var b   = PERSIST.town.buildings.adventurers_hall; if(!b||!b.unlocked) return;
   var def = EXPEDITION_TYPES[typeId]; if(!def) return;
-  var slot = b.slots[slotIdx]; if(!slot) return;
+  var slot = b.expeditionSlots[slotIdx]; if(!slot) return;
   if(slot.champId) return; // already active
 
   // Lock champion
@@ -271,14 +270,15 @@ function sendExpedition(slotIdx, champId, areaId, typeId, targetMaterial){
 
   savePersist();
   buildTownGrid();
+  playQuestAcceptSfx();
   showTownToast((CREATURES[champId]?CREATURES[champId].name:champId)+' sent on '+def.name+'!');
   refreshExpeditionHallPanel();
 }
 
 // ── Recall an active expedition ───────────────────────
 function recallExpedition(slotIdx){
-  var b = PERSIST.town.buildings.expedition_hall; if(!b||!b.unlocked) return;
-  var slot = b.slots[slotIdx]; if(!slot||!slot.champId) return;
+  var b = PERSIST.town.buildings.adventurers_hall; if(!b||!b.unlocked) return;
+  var slot = b.expeditionSlots[slotIdx]; if(!slot||!slot.champId) return;
 
   var elapsed = Date.now() - slot.startTime;
   var pct     = Math.min(1, elapsed / slot.totalMs);
@@ -316,8 +316,8 @@ function recallExpedition(slotIdx){
 var _pendingExpeditionReward = null; // {slotIdx, reward, champId} — used by UI
 
 function collectExpedition(slotIdx){
-  var b = PERSIST.town.buildings.expedition_hall; if(!b||!b.unlocked) return;
-  var slot = b.slots[slotIdx]; if(!slot||!slot.champId) return;
+  var b = PERSIST.town.buildings.adventurers_hall; if(!b||!b.unlocked) return;
+  var slot = b.expeditionSlots[slotIdx]; if(!slot||!slot.champId) return;
   if(Date.now() < slot.startTime + slot.totalMs) return; // not done
 
   var champId = slot.champId;
@@ -447,25 +447,26 @@ function _closeExpeditionReward(){
 
 // ── Idle tick ─────────────────────────────────────────
 function expeditionTick(){
-  var b=PERSIST.town.buildings.expedition_hall;
-  if(!b||!b.unlocked||!b.slots) return;
+  var b=PERSIST.town.buildings.adventurers_hall;
+  if(!b||!b.unlocked||!b.expeditionSlots) return;
   var anyReady=false;
-  b.slots.forEach(function(slot){
+  b.expeditionSlots.forEach(function(slot){
     if(slot.champId&&slot.startTime&&slot.totalMs){
       if(Date.now()>=slot.startTime+slot.totalMs) anyReady=true;
     }
   });
-  // Update building card badge if panel is closed
-  var panelOpen=document.getElementById('expedition_hall-panel-bg');
-  if(panelOpen&&panelOpen.classList.contains('show')) refreshExpeditionHallPanel();
+  // Update display if panel open + expedition tab active + no popup blocking
+  var panelOpen=document.getElementById('adventurers_hall-panel-bg');
+  var popupOpen=document.getElementById('exp-popup');
+  if(panelOpen&&panelOpen.classList.contains('show')&&_hallTab==='expeditions'&&!popupOpen) _renderHallContent();
   // Update town card glow
-  var anyActive=b.slots.some(function(s){return !!s.champId;});
+  var anyActive=b.expeditionSlots.some(function(s){return !!s.champId;});
   buildTownGrid();
 }
 
 // ── Upgrade building ──────────────────────────────────
 function upgradeExpeditionHall(){
-  var b=PERSIST.town.buildings.expedition_hall; if(!b||!b.unlocked) return;
+  var b=PERSIST.town.buildings.adventurers_hall; if(!b||!b.unlocked) return;
   var currentLevel=b.level||1;
   var nextUpg=EXPEDITION_UPGRADES[currentLevel+1];
   if(!nextUpg){ showTownToast('Already at maximum level!'); return; }
@@ -490,212 +491,168 @@ function upgradeExpeditionHall(){
 }
 
 // ── UI state ──────────────────────────────────────────
-var _expSendSlot=null;     // which slot is in send-flow
-var _expSendStep=null;     // 'champ'|'area'|'type'
-var _expSendChamp=null;
-var _expSendArea=null;
 
 function refreshExpeditionHallPanel(){
-  showLockedBuildingUI('expedition_hall');
-  var b=PERSIST.town.buildings.expedition_hall;
-  if(!b||!b.unlocked) return;
-  var level=b.level||1;
-  var slotCount=getExpeditionSlotCount();
-
-  var inner=document.getElementById('expedition_hall-inner');
-  if(!inner) return;
-
-  // If send flow active, show that instead
-  if(_expSendSlot!==null){ _buildExpSendFlow(); return; }
-
-  var html='';
-
-  // Level and upgrade bar
-  var nextUpg=EXPEDITION_UPGRADES[level+1];
-  html+='<div class="exp-header-row">'
-    +'<div>'
-      +'<span class="exp-level-badge">Lv '+level+'</span>'
-      +'<span style="font-family:Cinzel,serif;font-size:9px;color:#7a5020;margin-left:6px;">'+(EXPEDITION_UPGRADES[level]?EXPEDITION_UPGRADES[level].label:'')+'</span>'
-    +'</div>'
-    +(nextUpg?'<button class="exp-upgrade-btn" onclick="upgradeExpeditionHall()">UPGRADE →</button>':'<span style="font-size:9px;color:#3a2810;">MAX LEVEL</span>')
-    +'</div>';
-
-  // Active slots
-  html+='<div class="exp-slots">';
-  for(var si=0;si<3;si++){
-    var slot=b.slots[si];
-    var unlocked=si<slotCount;
-    if(!unlocked){
-      // Locked slot — show what unlocks it
-      var unlockMsg='Upgrade to Lv '+(si===1?2:4)+' to unlock';
-      html+='<div class="exp-slot locked">'
-        +'<div class="exp-slot-lock">🔒</div>'
-        +'<div class="exp-slot-lock-msg">'+unlockMsg+'</div>'
-        +'</div>';
-      continue;
-    }
-    if(slot.restUntil&&Date.now()<slot.restUntil){
-      // Resting
-      var restLeft=fmtExpTime(slot.restUntil-Date.now());
-      html+='<div class="exp-slot resting">'
-        +'<div class="exp-slot-rest-icon">💤</div>'
-        +'<div class="exp-slot-rest-msg">Resting — '+restLeft+' remaining</div>'
-        +'</div>';
-    } else if(!slot.champId){
-      // Empty — send prompt
-      html+='<div class="exp-slot empty" onclick="_expStartSend('+si+')">'
-        +'<div class="exp-slot-send-icon">+</div>'
-        +'<div class="exp-slot-send-msg">SEND CHAMPION</div>'
-        +'</div>';
-    } else {
-      // Active expedition
-      var ch=CREATURES[slot.champId];
-      var expDef=EXPEDITION_TYPES[slot.type];
-      var area=AREA_DEFS.find(function(a){return a.id===slot.areaId;});
-      var elapsed2=Date.now()-slot.startTime;
-      var pct2=Math.min(100,Math.round((elapsed2/slot.totalMs)*100));
-      var remaining=Math.max(0,slot.startTime+slot.totalMs-Date.now());
-      var isReady=remaining<=0;
-      html+='<div class="exp-slot active'+(isReady?' ready':'')+(remaining>0&&remaining<slot.totalMs*0.1?' almost-ready':'')+(isReady?' onclick="collectExpedition('+si+')"':'')+'" '+(isReady?'onclick="collectExpedition('+si+')" style="cursor:pointer;"':'')+'>'
-        +'<div class="exp-slot-top">'
-          +'<div class="exp-slot-portrait">'+creatureImgHTML(slot.champId,ch?ch.icon:'?','38px')+'</div>'
-          +'<div class="exp-slot-info">'
-            +'<div class="exp-slot-champ">'+(ch?ch.name:slot.champId)+'</div>'
-            +'<div class="exp-slot-area">'+(expDef?expDef.icon:'')+'  '+(expDef?expDef.name:'?')+' · '+(area?area.name:slot.areaId)+'</div>'
-            +(isReady
-              ?'<div class="exp-slot-ready-label">✦ EXPEDITION COMPLETE — COLLECT</div>'
-              :'<div class="exp-slot-eta">'+fmtExpTime(remaining)+' remaining</div>')
-          +'</div>'
-        +'</div>'
-        +(isReady?'':
-          '<div class="exp-prog-wrap"><div class="exp-prog-bar" style="width:'+pct2+'%"></div></div>'
-        )
-        +(!isReady?'<button class="exp-recall-btn" onclick="recallExpedition('+si+')">RECALL ('+Math.round(pct2)+'%)</button>':'')
-        +'</div>';
-    }
-  }
-  html+='</div>';
-
-  // Expedition log
-  if(level>=4&&b.log&&b.log.length){
-    html+='<div class="exp-log-section"><div class="exp-log-label">RECENT EXPEDITIONS</div>';
-    b.log.forEach(function(entry){
-      var c=CREATURES[entry.champId];
-      var a=AREA_DEFS.find(function(x){return x.id===entry.areaId;});
-      var matStr=Object.keys(entry.materials||{}).filter(function(k){return entry.materials[k]>0;}).map(function(k){
-        var m=MATERIALS[k]; return (m?m.icon:'?')+' '+entry.materials[k];
-      }).join('  ');
-      html+='<div class="exp-log-row">'
-        +'<span class="exp-log-champ">'+(c?c.icon:'?')+' '+(c?c.name.split(' ')[1]||c.name:entry.champId)+'</span>'
-        +'<span class="exp-log-area">'+(a?a.name:entry.areaId)+'</span>'
-        +'<span class="exp-log-mats">'+matStr+(entry.gold>0?' ✦'+entry.gold:'')+'</span>'
-        +'</div>';
-    });
-    html+='</div>';
-  }
-
-  // Upgrade info
-  if(nextUpg){
-    var costParts=[];
-    if(nextUpg.cost.gold) costParts.push('✦'+nextUpg.cost.gold);
-    if(nextUpg.cost.mats) Object.keys(nextUpg.cost.mats).forEach(function(k){
-      var m=MATERIALS[k]; costParts.push((m?m.icon:'?')+' '+nextUpg.cost.mats[k]+'× '+(m?m.name:k));
-    });
-    html+='<div class="exp-upgrade-hint">'
-      +'<div style="font-family:Cinzel,serif;font-size:8px;color:#5a4020;letter-spacing:1px;margin-bottom:3px;">NEXT: '+nextUpg.label+'</div>'
-      +'<div style="font-size:10px;color:#3a2810;">'+costParts.join(' · ')+'</div>'
-      +(nextUpg.unlocks?'<div style="font-size:9px;color:#4a3818;margin-top:3px;">Unlocks: '+nextUpg.unlocks.join(', ')+'</div>':'')
-      +'</div>';
-  }
-
-  inner.innerHTML=html;
+  // Delegate to town.js hall rendering pipeline
+  if(typeof _renderHallContent === 'function') _renderHallContent();
 }
 
-// ── Send flow ─────────────────────────────────────────
+// ── Send flow (per-slot popups) ────────────────────────
+var _expSendSlot = null;
+var _expSendChamp = null;
+var _expSendArea = null;
+var _expSendType = null;
+
 function _expStartSend(slotIdx){
-  _expSendSlot=slotIdx; _expSendStep='champ';
-  _expSendChamp=null; _expSendArea=null;
-  _buildExpSendFlow();
+  _expSendSlot = slotIdx;
+  _expSendChamp = null;
+  _expSendArea = null;
+  _expSendType = null;
+  _renderHallContent();
 }
 
 function _expCancelSend(){
-  _expSendSlot=null; _expSendStep=null; _expSendChamp=null; _expSendArea=null;
-  refreshExpeditionHallPanel();
+  _expSendSlot = null;
+  _expSendChamp = null;
+  _expSendArea = null;
+  _expSendType = null;
+  _renderHallContent();
 }
 
-function _expSelectChamp(champId){ _expSendChamp=champId; _expSendStep='area'; _buildExpSendFlow(); }
-function _expSelectArea(areaId){ _expSendArea=areaId; _expSendStep='type'; _buildExpSendFlow(); }
-function _expSelectType(typeId){ sendExpedition(_expSendSlot,_expSendChamp,_expSendArea,typeId); _expSendSlot=null; _expSendStep=null; _expSendChamp=null; _expSendArea=null; }
+function _expPickChamp(){
+  var existing = document.getElementById('exp-popup');
+  if(existing) existing.remove();
 
-function _buildExpSendFlow(){
-  var inner=document.getElementById('expedition_hall-inner'); if(!inner) return;
-  var level=getExpeditionHallLevel();
-  var html='<div class="exp-send-flow">'
-    +'<div class="exp-send-header">'
-      +'<button class="exp-back-btn" onclick="_expCancelSend()">← BACK</button>'
-      +'<span class="exp-send-title">';
-  if(_expSendStep==='champ') html+='SELECT CHAMPION';
-  else if(_expSendStep==='area') html+='SELECT AREA';
-  else html+='SELECT EXPEDITION TYPE';
-  html+='</span></div>';
+  var overlay = document.createElement('div');
+  overlay.id = 'exp-popup';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.8);display:flex;align-items:center;justify-content:center;';
+  overlay.onclick = function(e){ if(e.target===overlay) overlay.remove(); };
 
-  if(_expSendStep==='champ'){
-    // Show available (non-locked) champions
-    var available=PERSIST.unlockedChamps.filter(function(id){
-      var cp=PERSIST.champions[id];
-      return !cp||cp.lockedExpedition===null||cp.lockedExpedition===undefined;
-    });
-    if(!available.length){ html+='<div class="exp-send-empty">All champions are on expedition or unavailable.</div>'; }
-    else {
-      html+='<div class="exp-send-grid">';
-      available.forEach(function(id){
-        var cp=getChampPersist(id); var ch=CREATURES[id]; if(!ch) return;
-        var ascLevel=getAscensionLevel(id);
-        html+='<div class="exp-champ-card" onclick="_expSelectChamp(\''+id+'\')">'
-          +'<div class="exp-champ-portrait">'+creatureImgHTML(id,ch.icon,'44px')+'</div>'
-          +'<div class="exp-champ-name">'+ch.name+'</div>'
-          +'<div class="exp-champ-stats">Lv '+cp.level+' · '+(ascLevel>0?ASCENSION_TIERS[ascLevel-1].tier:'Base')+'</div>'
-          +'<div class="exp-champ-hint">STR:'+cp.stats.str+' AGI:'+cp.stats.agi+' WIS:'+cp.stats.wis+'</div>'
-          +'</div>';
-      });
-      html+='</div>';
-    }
-  } else if(_expSendStep==='area'){
-    // Show visited areas
-    var visited=AREA_DEFS.filter(function(a){return PERSIST.areaRuns&&(PERSIST.areaRuns[a.id]||0)>0;});
-    if(!visited.length){ html+='<div class="exp-send-empty">Explore some areas first to unlock expedition destinations.</div>'; }
-    else {
-      html+='<div class="exp-send-grid">';
-      visited.forEach(function(area){
-        var matGroup=area.materialGroup;
-        var sampleMats=(MATERIAL_DROPS[matGroup]||[]).slice(0,2).map(function(m){return MATERIALS[m.id]?MATERIALS[m.id].icon:'?';}).join(' ');
-        html+='<div class="exp-area-card" onclick="_expSelectArea(\''+area.id+'\')">'
-          +'<div style="font-size:22px;">'+area.icon+'</div>'
-          +'<div class="exp-area-name">'+area.name+'</div>'
-          +'<div class="exp-area-level">Lv '+area.levelRange[0]+'–'+area.levelRange[1]+'</div>'
-          +'<div class="exp-area-mats">'+sampleMats+' materials</div>'
-          +'</div>';
-      });
-      html+='</div>';
-    }
-  } else {
-    // Duration selection
-    html+='<div class="exp-type-list">';
+  var box = document.createElement('div');
+  box.style.cssText = 'background:#1a0f06;border:1px solid #5a3418;border-radius:10px;padding:20px 24px;width:min(600px,90vw);max-height:70vh;overflow-y:auto;box-shadow:0 0 40px rgba(0,0,0,.8);';
+  box.onclick = function(e){ e.stopPropagation(); };
+
+  var available = PERSIST.unlockedChamps.filter(function(id){
+    if(!CREATURES[id] || id==='dojo_tiger') return false;
+    var cp = PERSIST.champions[id];
+    return !cp || cp.lockedExpedition===null || cp.lockedExpedition===undefined;
+  });
+
+  var html = '<div style="font-family:Cinzel,serif;font-size:12px;color:#d4a843;letter-spacing:3px;margin-bottom:14px;">SELECT CHAMPION</div>'
+    +'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;">';
+
+  available.forEach(function(id){
+    var ch = CREATURES[id]; var cp = getChampPersist(id);
+    html += '<div class="exp-pick-option '+getAscensionClass(id)+'" style="position:relative;padding:12px 8px;" onclick="document.getElementById(\'exp-popup\').remove();_expSendChamp=\''+id+'\';_renderHallContent();">'
+      +'<div style="margin-bottom:6px;">'+creatureImgHTML(id,ch.icon,'44px')+'</div>'
+      +'<div style="font-family:Cinzel,serif;font-size:10px;color:#c0a060;">'+ch.name+'</div>'
+      +'<div style="font-size:7px;color:#5a4020;">Lv.'+cp.level+' '+getAscensionChipHTML(id)+'</div>'
+      +'<div style="font-size:7px;color:#4a3020;margin-top:3px;">STR:'+Math.round(cp.stats.str)+' AGI:'+Math.round(cp.stats.agi)+' WIS:'+Math.round(cp.stats.wis)+'</div>'
+      +'</div>';
+  });
+  if(!available.length) html += '<div style="font-size:9px;color:#3a2010;font-style:italic;padding:12px;">All champions are on expedition or unavailable.</div>';
+  html += '</div>';
+
+  box.innerHTML = html;
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
+
+function _expPickArea(){
+  var existing = document.getElementById('exp-popup');
+  if(existing) existing.remove();
+
+  var overlay = document.createElement('div');
+  overlay.id = 'exp-popup';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.8);display:flex;align-items:center;justify-content:center;';
+  overlay.onclick = function(e){ if(e.target===overlay) overlay.remove(); };
+
+  var box = document.createElement('div');
+  box.style.cssText = 'background:#1a0f06;border:1px solid #5a3418;border-radius:10px;padding:20px 24px;width:min(600px,90vw);max-height:70vh;overflow-y:auto;box-shadow:0 0 40px rgba(0,0,0,.8);';
+  box.onclick = function(e){ e.stopPropagation(); };
+
+  var visited = AREA_DEFS.filter(function(a){ return PERSIST.areaRuns && (PERSIST.areaRuns[a.id]||0) > 0; });
+
+  var html = '<div style="font-family:Cinzel,serif;font-size:12px;color:#d4a843;letter-spacing:3px;margin-bottom:14px;">SELECT LOCATION</div>'
+    +'<div style="display:flex;flex-direction:column;gap:8px;">';
+
+  visited.forEach(function(area){
+    var matGroup = area.materialGroup;
+    var mats = (typeof MATERIAL_DROPS !== 'undefined' && MATERIAL_DROPS[matGroup]) ? MATERIAL_DROPS[matGroup] : [];
+    var matHtml = mats.map(function(m){
+      var def = MATERIALS[m.id];
+      var rarity = m.weight >= 6 ? 'Common' : m.weight >= 3 ? 'Uncommon' : 'Rare';
+      var rColor = m.weight >= 6 ? '#7a8060' : m.weight >= 3 ? '#7a9ac0' : '#c09adc';
+      return '<span style="font-size:7px;color:'+rColor+';">'+(def?def.icon:'?')+' '+(def?def.name:m.id)+' <span style="opacity:.6;">('+rarity+')</span></span>';
+    }).join(' · ');
+
+    html += '<div class="exp-pick-option" style="flex-direction:row;align-items:center;padding:12px 16px;gap:14px;cursor:pointer;" onclick="document.getElementById(\'exp-popup\').remove();_expSendArea=\''+area.id+'\';_renderHallContent();">'
+      +'<div style="width:50px;height:50px;background:'+(area.bg||'#1a1208')+';border:1px solid #3a2818;border-radius:6px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">'+areaImgHTML(area.id,area.icon,'36px')+'</div>'
+      +'<div style="flex:1;min-width:0;">'
+        +'<div style="font-family:Cinzel,serif;font-size:11px;color:#c0a060;">'+area.name+'</div>'
+        +'<div style="font-size:8px;color:#5a4020;margin-top:2px;">Lv.'+area.levelRange[0]+'–'+area.levelRange[1]+'</div>'
+        +'<div style="margin-top:4px;line-height:1.8;">'+matHtml+'</div>'
+      +'</div>'
+      +'</div>';
+  });
+  if(!visited.length) html += '<div style="font-size:9px;color:#3a2010;font-style:italic;padding:12px;">Explore areas in combat first to unlock expedition destinations.</div>';
+  html += '</div>';
+
+  box.innerHTML = html;
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
+
+function _expPickType(){
+  var existing = document.getElementById('exp-popup');
+  if(existing) existing.remove();
+
+  var overlay = document.createElement('div');
+  overlay.id = 'exp-popup';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.8);display:flex;align-items:center;justify-content:center;';
+  overlay.onclick = function(e){ if(e.target===overlay) overlay.remove(); };
+
+  var box = document.createElement('div');
+  box.style.cssText = 'background:#1a0f06;border:1px solid #5a3418;border-radius:10px;padding:20px 24px;width:min(500px,90vw);max-height:70vh;overflow-y:auto;box-shadow:0 0 40px rgba(0,0,0,.8);';
+  box.onclick = function(e){ e.stopPropagation(); };
+
+  var html = '<div style="font-family:Cinzel,serif;font-size:12px;color:#d4a843;letter-spacing:3px;margin-bottom:14px;">SELECT DURATION</div>'
+    +'<div style="display:flex;flex-direction:column;gap:6px;">';
+
+  if(typeof EXPEDITION_TYPES !== 'undefined'){
     Object.values(EXPEDITION_TYPES).forEach(function(def){
-      if(!isExpeditionTypeUnlocked(def.id)) return;
-      html+='<div class="exp-type-row" onclick="_expSelectType(\''+def.id+'\')">'
-        +'<span class="exp-type-icon">'+def.icon+'</span>'
-        +'<div class="exp-type-info">'
-          +'<div class="exp-type-name">'+def.name+'</div>'
-          +'<div class="exp-type-desc">'+def.desc+'</div>'
+      var unlocked = isExpeditionTypeUnlocked(def.id);
+      html += '<div class="exp-pick-option'+(unlocked?'':' locked')+'" style="flex-direction:row;align-items:center;padding:12px 16px;gap:12px;'+(unlocked?'cursor:pointer;':'cursor:not-allowed;')+'" '
+        +(unlocked?'onclick="document.getElementById(\'exp-popup\').remove();_expSendType=\''+def.id+'\';_renderHallContent();"':'')+'>'
+        +'<span style="font-size:20px;flex-shrink:0;">'+def.icon+'</span>'
+        +'<div style="flex:1;">'
+          +'<div style="font-family:Cinzel,serif;font-size:11px;color:'+(unlocked?'#c0a060':'#3a2010')+';">'+def.name+'</div>'
+          +'<div style="font-size:8px;color:'+(unlocked?'#5a4020':'#2a1808')+';">'+def.desc+'</div>'
         +'</div>'
-        +'<div class="exp-type-dur">'+fmtExpTime(def.durationMs)+'</div>'
+        +'<div style="font-family:Cinzel,serif;font-size:11px;color:'+(unlocked?'#d4a843':'#3a2010')+';">'+fmtExpTime(def.durationMs)+'</div>'
+        +(unlocked?'':'<div style="font-size:8px;color:#3a2010;margin-left:4px;">🔒</div>')
         +'</div>';
     });
-    html+='</div>';
   }
+  html += '</div>';
 
-  html+='</div>';
-  inner.innerHTML=html;
+  box.innerHTML = html;
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
 }
+
+function _expConfirmSend(){
+  if(!_expSendChamp || !_expSendArea || !_expSendType) return;
+  sendExpedition(_expSendSlot, _expSendChamp, _expSendArea, _expSendType);
+  _expSendSlot = null;
+  _expSendChamp = null;
+  _expSendArea = null;
+  _expSendType = null;
+  _renderHallContent();
+}
+
+
+
+// Aliases for town.js button calls
+function startExpeditionFlow(slotIdx){ _expStartSend(slotIdx); }
 

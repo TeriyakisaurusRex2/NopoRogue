@@ -7,7 +7,6 @@ CREATURES.smuggler = {
   name:     'SMUGGLER',
   icon:     '🗡️',
   lore:     'A professional who has moved contraband through every sewer tunnel in the city. He does not fight with strength. He fights by making sure you have nothing left to fight with by the time you notice what he is doing.',
-  role:     'Mana Thief / Sorcery Burst',
   bossOnly: false,
 
   baseStats: { str:10, agi:14, wis:8 },

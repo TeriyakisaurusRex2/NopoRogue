@@ -14,11 +14,10 @@ CREATURES.infernal_beast = {
   name:     'INFERNAL BEAST',
   icon:     '🔥',
   lore:     'Once a guardian spirit bound to the temple flame. When the sanctum fell, the binding broke. Now it burns without purpose, without restraint, without mercy. It does not guard. It consumes.',
-  role:     'WIS/AGI / Mana Burn / Hellbent',
   bossOnly: false,
 
   baseStats: { str:8, agi:14, wis:16 },
-  growth:    { str:0, agi:2,  wis:2 },
+  growth:    { str:1, agi:2,  wis:2 },
 
   innate: {
     id:       'hellfire',

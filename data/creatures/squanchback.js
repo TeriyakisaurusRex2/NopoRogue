@@ -7,10 +7,9 @@ CREATURES.squanchback = {
   name:     'SQUANCHBACK',
   icon:     '🦔',
   lore:     'Something that was a mammal once and has since revised that decision. The spines grew inward first, then out. It does not appear to be in pain. That is the unsettling part.',
-  role:     'Tank / Thorns Punisher',
   bossOnly: false,
 
-  baseStats: { str:18, agi:10, wis:10 },
+  baseStats: { str:16, agi:10, wis:10 },
   growth:    { str:2,  agi:1,  wis:1 },
 
   innate: {
@@ -18,7 +17,7 @@ CREATURES.squanchback = {
     name:     'Spite Spines',
     desc:     'Convert the oldest card in hand into [Spite] (Ethereal). Deal missing HP ÷ 4 damage.',
     active:   true,
-    cost:     30,
+    cost:     40,
     cooldown: 2000,
     effect: [
       {type: 'convert_oldest_to', cardId: 'squanchback_spite'}

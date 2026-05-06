@@ -7,7 +7,6 @@ CREATURES.druid = {
   name:     'STARCALLER DRUID',
   icon:     '🌙',
   lore:     'The ritual shard is shattered. Whatever was sealed inside it is no longer contained. The druid does not yet understand what was released — only that the sky answers differently now, and the stars have begun to move.',
-  role:     'Mana Engine / Hand Burst',
   bossOnly: false,
 
   baseStats: { str:12, agi:16, wis:20 },

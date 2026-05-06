@@ -7,7 +7,6 @@ CREATURES.rat = {
   name:     'GIANT RAT',
   icon:     '🐀',
   lore:     'A bloated, mean-tempered rodent that thrives in the filth beneath every civilised place. The longer it fights, the faster it gets. Veterans know to end it quick.',
-  role:     'Tempo / Frenzy',
   bossOnly: false,
 
   baseStats: { str:10, agi:15, wis:8 },

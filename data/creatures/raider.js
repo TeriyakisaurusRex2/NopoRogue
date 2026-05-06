@@ -12,16 +12,15 @@ CREATURES.raider = {
   name:     'RAIDER',
   icon:     '⚔️',
   lore:     'They came for the temple\'s treasures. They found ruin. But a raider takes what a raider finds, and what they find now is opportunity. Quick hands, no reverence, no hesitation.',
-  role:     'AGI / Hand Pollution',
   bossOnly: false,
 
-  baseStats: { str:10, agi:16, wis:8 },
+  baseStats: { str:12, agi:13, wis:12 },
   growth:    { str:1,  agi:2,  wis:1 },
 
   innate: {
     id:       'raid',
     name:     'Raid',
-    desc:     'Active: Remove all Shield from opponent. Deal 10+AGI÷4 damage.',
+    desc:     'Strip all [Shield] from enemy. Deal 10+AGI÷4 damage.',
     active:   true,
     cost:     30,
     cooldown: 5000,
