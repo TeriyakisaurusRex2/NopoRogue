@@ -37,6 +37,7 @@ var SFX_FILES = {
   craft_start:    { file:'craft_start',    vol:0.8  },
   craft_done:     { file:'craft_done',     vol:1.0  },
   abandon:        { file:'abandon',        vol:0.8  },
+  well_claim:     { file:'well_claim',     vol:0.9  },  // Round 46 — Shard Well CLAIM
   // ── Deck Editor (de_*) ───────────────────────────────────────
   de_small_click: { file:'de_small_click', vol:0.7  },  // adding a card
   de_remove:      { file:'de_remove',      vol:0.75 },  // removing a card
@@ -135,6 +136,13 @@ var MUSIC_FILES = {
   theme_town:   'theme_town',
   // theme_combat: 'theme_combat',
 };
+// Round 62l: display names for the music tracks so the Settings panel
+// can show a "Now Playing" line. Keep these short and in-character.
+// Add a new entry whenever a new track lands in MUSIC_FILES.
+var MUSIC_NAMES = {
+  menu_theme:   'Adventurer\'s Rest',
+  theme_town:   'The Town at Dusk',
+};
 
 var MUSIC_BASE = 'assets/audio/music/';
 var _musicCurrent = null;  // key of currently playing track
@@ -174,6 +182,16 @@ function stopMusic(){
   _fadeOutMusic(function(){
     _musicCurrent = null;
   });
+}
+
+// Round 62l: returns the display name of the currently-playing track,
+// or null when music is stopped / muted. Used by the Settings panel's
+// AUDIO tab "Now Playing" line. Counts a 0-volume slider as "muted"
+// so the line goes blank instead of lying.
+function getCurrentMusicName(){
+  if(!_musicCurrent) return null;
+  if(!SETTINGS || !SETTINGS.music) return null;
+  return MUSIC_NAMES[_musicCurrent] || null;
 }
 
 function updateMusicVolume(){

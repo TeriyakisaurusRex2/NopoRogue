@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Noporogue</title>
+  <link rel="icon" type="image/png" href="favicon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&family=Press+Start+2P&display=swap" rel="stylesheet">
@@ -23,7 +24,11 @@
       <button class="nav-tab" id="nav-town" onclick="navToTown()">🏘 TOWN<span id="quest-badge"></span></button>
     </div>
     <div class="nav-right">
+      <!-- Round 62f: Soul Shards counter added beside gold so the
+           summoning currency is visible at all times (was previously
+           only readable inside the Shard Well / Summons panel). -->
       <div class="nav-gold" id="nav-gold"></div>
+      <div class="nav-shards" id="nav-shards"></div>
       <button id="btn-return-battle" onclick="returnToBattle()" style="display:none;font-family:'Cinzel',serif;font-size:9px;padding:3px 10px;background:rgba(80,30,10,.7);border:1px solid #c06020;color:#d4a843;border-radius:4px;cursor:pointer;letter-spacing:.5px;">⚔ RETURN TO BATTLE</button>
       <button class="nav-icon-btn" onclick="openSettings()" title="Settings">⚙</button>
     </div>
@@ -35,12 +40,76 @@
 
 <div id="root">
 
+<!-- ════════════════════════════════════════════════════════════
+     LOADING SCREEN — first thing the player sees. Asset preloader
+     runs while this is up; on completion we transition to the login
+     screen. Round 63.
+     ════════════════════════════════════════════════════════════ -->
+<div id="loading-screen" class="screen active">
+  <div class="loading-bg"></div>
+  <div class="loading-content">
+    <div class="loading-title">NOPOROGUE</div>
+    <div class="loading-tag">Loading assets…</div>
+    <div class="loading-bar-wrap">
+      <div class="loading-bar" id="loading-bar"></div>
+    </div>
+    <div class="loading-status" id="loading-status">Preparing…</div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════
+     LOGIN SCREEN — shown after preload. Lets the player continue an
+     existing save or create a new one. Background uses
+     assets/backgrounds/texture.png (animation/img drops in here when
+     ready). Save card is the centrepiece; bottom-left dropdown lists
+     saves; top-right cog opens settings. Round 63.
+     ════════════════════════════════════════════════════════════ -->
+<div id="login-screen" class="screen">
+  <div class="login-bg"></div>
+  <div class="login-shade"></div>
+  <button class="login-settings-btn nav-icon-btn" onclick="openSettings()" title="Settings">⚙</button>
+
+  <div class="login-title-block">
+    <div class="login-title">NOPOROGUE</div>
+    <div class="login-tag">A real-time roguelite deckbuilder</div>
+  </div>
+
+  <!-- Save card — rendered by buildLoginScreen() in game.js. Two
+       variants: existing-save card (champion + stats + while-away)
+       and new-save card (username input + BEGIN). -->
+  <div class="login-card" id="login-card"></div>
+
+  <!-- Bottom-left reverse-dropdown listing saves. Renders when the
+       user clicks the button — anchored above the button so it
+       opens upward. -->
+  <div class="login-saves-anchor">
+    <button class="login-saves-toggle" id="login-saves-toggle" onclick="toggleLoginSavesMenu()">SAVES <span class="login-saves-caret">▴</span></button>
+    <div class="login-saves-menu" id="login-saves-menu" style="display:none;"></div>
+  </div>
+
+  <div class="login-version" id="login-version"></div>
+</div>
+
 <!-- CHAMPION SELECT (adventure tab content) -->
-<div id="select-screen" class="screen active">
+<!-- Round 63: select-screen no longer .active on initial load — the
+     loading screen owns the first paint, then the login screen, then
+     init.js's enterGameFromLogin() switches to this one. -->
+<div id="select-screen" class="screen">
+  <!-- Round 62e: header redesigned.
+       - "CREATURES" → "CHOOSE YOUR CHAMPION" (directive, parallels
+         the area-screen "CHOOSE YOUR DESTINATION" header).
+       - Roster count moved inline with the title as a subtle "· N"
+         (was a barely-visible 8px afterthought on the right).
+       - Gold span dropped — nav-gold in the top nav already shows it.
+       - Favorites-only filter button added next to the sort dropdown
+         (toggles _csFavoritesOnly flag, repaints grid). -->
   <div class="cs-header">
-    <div class="cs-title">CREATURES</div>
+    <div class="cs-title-block">
+      <span class="cs-title">CHOOSE YOUR CHAMPION</span>
+      <span class="cs-total" id="cs-total"></span>
+    </div>
     <div class="cs-controls">
-      <span class="cs-gold" id="cs-gold"></span>
+      <button class="cs-fav-toggle" id="cs-fav-toggle" onclick="toggleCsFavoritesOnly()" title="Show favorites only">☆</button>
       <select class="cs-sort" id="cs-sort" onchange="rebuildChampGrid()">
         <option value="recent">Recently Unlocked</option>
         <option value="level" selected>Highest Level</option>
@@ -50,17 +119,78 @@
         <option value="kills">Most Kills</option>
         <option value="alpha">Alphabetical</option>
       </select>
-      <div class="cs-page-ctrl">
-        <button class="cs-page-btn" id="cs-prev" onclick="csChangePage(-1)">◀</button>
-        <span class="cs-page-lbl" id="cs-page-lbl">1 / 1</span>
-        <button class="cs-page-btn" id="cs-next" onclick="csChangePage(1)">▶</button>
-      </div>
-      <span class="cs-total" id="cs-total"></span>
     </div>
   </div>
-  <div class="champ-grid" id="champ-grid"></div>
-  <div class="select-btn-row">
-    <button class="btn btn-gold" onclick="confirmChampion()">SELECT CHAMPION →</button>
+  <div class="cs-main">
+    <!-- Champion info rail — replaces the per-card (i) button popup.
+         Click any champion card to populate this. Detail sections
+         match the area-screen popup PLUS mastery + relic strips
+         which were missing from the popup. Populated by
+         buildCsChampRail() in game.js. -->
+    <aside class="cs-champ-rail" id="cs-champ-rail" aria-label="Champion details">
+      <div class="cs-cr-empty" id="cs-cr-empty">
+        <div class="cs-cr-empty-icon">👤</div>
+        <div class="cs-cr-empty-line">Click a champion to see details.</div>
+      </div>
+      <div class="cs-cr-body" id="cs-cr-body" style="display:none;">
+        <div class="cs-cr-status" id="cs-cr-status"></div>
+        <div class="cs-cr-portrait" id="cs-cr-portrait"></div>
+        <div class="cs-cr-name" id="cs-cr-name"></div>
+        <div class="cs-cr-asc" id="cs-cr-asc"></div>
+
+        <div class="cs-cr-stats">
+          <div class="cs-cr-stat-cell"><div class="cs-cr-stat-v" id="cs-cr-level">—</div><div class="cs-cr-stat-l">LVL</div></div>
+          <div class="cs-cr-stat-cell"><div class="cs-cr-stat-v str" id="cs-cr-str">—</div><div class="cs-cr-stat-l">STR</div></div>
+          <div class="cs-cr-stat-cell"><div class="cs-cr-stat-v agi" id="cs-cr-agi">—</div><div class="cs-cr-stat-l">AGI</div></div>
+          <div class="cs-cr-stat-cell"><div class="cs-cr-stat-v wis" id="cs-cr-wis">—</div><div class="cs-cr-stat-l">WIS</div></div>
+        </div>
+        <div class="cs-cr-growth" id="cs-cr-growth"></div>
+
+        <div class="cs-cr-section">
+          <div class="cs-cr-row-line"><span>XP</span><span id="cs-cr-xp-txt"></span></div>
+          <div class="cs-cr-bar-wrap"><div class="cs-cr-bar xp" id="cs-cr-xp-bar"></div></div>
+        </div>
+
+        <div class="cs-cr-section">
+          <div class="cs-cr-row-line">
+            <span class="cs-cr-section-label">MASTERY</span>
+            <span id="cs-cr-mastery-toward"></span>
+          </div>
+          <div class="cs-cr-bar-wrap"><div class="cs-cr-bar mastery" id="cs-cr-mastery-bar"></div></div>
+          <div class="cs-cr-bar-frac" id="cs-cr-mastery-frac"></div>
+        </div>
+
+        <div class="cs-cr-section">
+          <div class="cs-cr-section-label">✦ INNATE</div>
+          <div class="cs-cr-innate-name" id="cs-cr-innate-name"></div>
+          <div class="cs-cr-innate-desc" id="cs-cr-innate-desc"></div>
+        </div>
+
+        <div class="cs-cr-section">
+          <div class="cs-cr-section-label">DECK <span id="cs-cr-deck-count" class="cs-cr-section-sub"></span></div>
+          <div class="cs-cr-deck-summary" id="cs-cr-deck-summary"></div>
+        </div>
+
+        <div class="cs-cr-section">
+          <div class="cs-cr-section-label">RELICS <span id="cs-cr-relic-count" class="cs-cr-section-sub"></span></div>
+          <div class="cs-cr-relics" id="cs-cr-relics"></div>
+        </div>
+
+        <div class="cs-cr-actions">
+          <button class="btn btn-dim" id="cs-cr-view-deck" style="font-size:9px;padding:6px;flex:1;">👁 VIEW DECK</button>
+          <button class="btn btn-gold" id="cs-cr-edit-deck" style="font-size:9px;padding:6px;flex:1;">✦ EDIT DECK</button>
+        </div>
+      </div>
+    </aside>
+
+    <div class="cs-grid-col">
+      <div class="champ-grid" id="champ-grid"></div>
+      <div class="select-btn-row">
+        <button class="btn btn-gold" onclick="confirmChampion()">SELECT CHAMPION →</button>
+      </div>
+    </div>
+    <!-- Active quests rail — populated by buildCsQuestRail() in town.js. -->
+    <aside class="cs-quests-rail" id="cs-quests-rail" aria-label="Active quests"></aside>
   </div>
 </div>
 
@@ -198,6 +328,7 @@
         <!-- ENEMY -->
         <div class="combatant" id="combatant-enemy">
           <div class="cname" id="e-name">Enemy</div>
+          <div class="relic-strip-wrap" id="e-relics"></div>
           <div class="combatant-inner">
             <div class="big-hp-wrap" style="flex:1;"><div class="big-hp-inner e" id="e-hp-bar" style="width:100%"></div><div class="shield-bar" id="e-shield-bar" style="width:0%;left:0%;display:none;"><span class="shield-timer" id="e-shield-timer"></span></div></div>
             <div class="hp-txt-big" id="e-hp-txt">8/8</div>
@@ -330,14 +461,20 @@
 
 <!-- TOWN -->
 <div id="town-screen" class="screen">
-  <div class="town-header">
-    <div style="flex:1;text-align:center;">
-      <div class="town-title">THE TOWN</div>
-      <div class="town-subtitle" id="town-subtitle">Your settlement grows...</div>
-    </div>
-    <div class="town-gold" id="town-gold"></div>
+  <!-- Round 62g: town-header trimmed.
+       - "THE TOWN" title removed — the active TOWN tab in the nav
+         already signals where the player is.
+       - town-gold removed — nav-gold in the top nav is the single
+         source of truth for currencies.
+       - town-subtitle remains for flavour line + toast surface
+         (showTownToast paints into it).
+       - The summons banner (#town-summons-banner) now lives in the
+         same row as the subtitle: flavour on the left, SUMMON CTA
+         on the right when shards are available. -->
+  <div class="town-statbar">
+    <div class="town-subtitle" id="town-subtitle">Your settlement grows...</div>
+    <div id="town-summons-banner" style="display:none;"></div>
   </div>
-  <div id="town-summons-banner" style="display:none;flex-shrink:0;"></div>
   <div class="town-grid" id="town-grid"></div>
   <!-- Vault panel (popup) -->
   <div class="town-panel-bg" id="vault-panel-bg" onclick="closeVaultPanel()">
@@ -363,9 +500,9 @@
         <div class="vault-xp-wrap"><div class="vault-xp-bar" id="vault-xp-bar" style="width:0%"></div></div>
         <span class="vault-xp-txt" id="vault-xp-txt"></span>
       </div>
-      <div class="vault-tabs">
-        <div class="vault-tab active" onclick="switchVaultTab('materials')" id="vtab-materials">MATERIALS</div>
-        <div class="vault-tab" onclick="switchVaultTab('inventory')" id="vtab-inventory">INVENTORY</div>
+      <div class="bestiary-tab-row">
+        <button class="bestiary-tab active" onclick="switchVaultTab('materials')" id="vtab-materials"><img src="assets/icons/vault_materials.png" class="bestiary-tab-icon" onerror="this.outerHTML='<span class=&quot;bestiary-tab-emoji&quot;>⚗</span>'">MATERIALS</button>
+        <button class="bestiary-tab" onclick="switchVaultTab('inventory')" id="vtab-inventory"><img src="assets/icons/vault_inventory.png" class="bestiary-tab-icon" onerror="this.outerHTML='<span class=&quot;bestiary-tab-emoji&quot;>📜</span>'">INVENTORY</button>
       </div>
       <div class="town-locked-msg" id="vault-locked-msg" style="display:none;"></div>
       <div id="vault-body-inner" style="flex:1;overflow-y:auto;"></div>
@@ -397,10 +534,10 @@
         <div class="vault-xp-wrap"><div class="vault-xp-bar" id="hall-xp-bar" style="width:0%"></div></div>
         <span class="vault-xp-txt" id="hall-xp-txt"></span>
       </div>
-      <div class="vault-tabs">
-        <div class="vault-tab active" onclick="switchHallTab('quests')" id="htab-quests">QUESTS</div>
-        <div class="vault-tab" onclick="switchHallTab('expeditions')" id="htab-expeditions">EXPEDITIONS</div>
-        <div class="vault-tab" onclick="switchHallTab('achievements')" id="htab-achievements"><span id="htab-achievements-icon" class="hall-tab-icon-slot"></span>ACHIEVEMENTS</div>
+      <div class="bestiary-tab-row">
+        <button class="bestiary-tab active" onclick="switchHallTab('quests')" id="htab-quests"><img src="assets/icons/hall_quests.png" class="bestiary-tab-icon" onerror="this.outerHTML='<span class=&quot;bestiary-tab-emoji&quot;>📋</span>'">QUESTS</button>
+        <button class="bestiary-tab" onclick="switchHallTab('expeditions')" id="htab-expeditions"><img src="assets/icons/hall_expeditions.png" class="bestiary-tab-icon" onerror="this.outerHTML='<span class=&quot;bestiary-tab-emoji&quot;>🏕</span>'">EXPEDITIONS</button>
+        <button class="bestiary-tab" onclick="switchHallTab('achievements')" id="htab-achievements"><span id="htab-achievements-icon" class="hall-tab-icon-slot bestiary-tab-icon"></span>ACHIEVEMENTS</button>
       </div>
       <div class="town-locked-msg" id="adventurers_hall-locked-msg" style="display:none;"></div>
       <div id="hall-body-inner" style="flex:1;overflow-y:auto;min-height:0;"></div>
@@ -539,7 +676,7 @@
         <div class="npc-greeting" id="sanctum-npc-greeting">
           <div class="npc-greeting-sprite"><img src="assets/creatures/sanctum_keeper.png" alt="Keeper" onerror="this.parentNode.textContent='⚗️'"></div>
           <div class="npc-greeting-text">
-            <div class="npc-greeting-name">THEO</div>
+            <div class="npc-greeting-name">KEEPER</div>
             <div class="npc-greeting-msg" id="sanctum-npc-msg"></div>
           </div>
         </div>
@@ -554,9 +691,9 @@
           <!-- Right: profile -->
           <div class="sanctum-profile">
             <div class="bestiary-tab-row">
-              <button class="bestiary-tab active" id="stab-overview" onclick="setSanctumTab('overview')">OVERVIEW</button>
-              <button class="bestiary-tab" id="stab-relics" onclick="setSanctumTab('relics')">RELICS</button>
-              <button class="bestiary-tab" id="stab-deck" onclick="setSanctumTab('deck')">DECK</button>
+              <button class="bestiary-tab active" id="stab-overview" onclick="setSanctumTab('overview')"><img src="assets/icons/sanctum_overview.png" class="bestiary-tab-icon" onerror="this.outerHTML='<span class=&quot;bestiary-tab-emoji&quot;>👤</span>'">OVERVIEW</button>
+              <button class="bestiary-tab" id="stab-relics" onclick="setSanctumTab('relics')"><img src="assets/icons/sanctum_relics.png" class="bestiary-tab-icon" onerror="this.outerHTML='<span class=&quot;bestiary-tab-emoji&quot;>💎</span>'">RELICS</button>
+              <button class="bestiary-tab" id="stab-deck" onclick="setSanctumTab('deck')"><img src="assets/icons/sanctum_deck.png" class="bestiary-tab-icon" onerror="this.outerHTML='<span class=&quot;bestiary-tab-emoji&quot;>🃏</span>'">DECK</button>
             </div>
             <div class="sanctum-tab-content">
               <div id="sanctum-overview-pane" class="sanctum-pane"></div>
@@ -617,9 +754,9 @@
           <span class="market-restock-timer" id="market-restock-timer">RESTOCK: --:--</span>
         </div>
         <div class="bestiary-tab-row">
-          <button class="bestiary-tab active" id="mtab-wares" onclick="setMarketTab('wares')">WARES</button>
-          <button class="bestiary-tab" id="mtab-deals" onclick="setMarketTab('deals')">DEALS</button>
-          <button class="bestiary-tab" id="mtab-rare" onclick="setMarketTab('rare')">RARE FINDS</button>
+          <button class="bestiary-tab active" id="mtab-wares" onclick="setMarketTab('wares')"><img src="assets/icons/market_wares.png" class="bestiary-tab-icon" onerror="this.outerHTML='<span class=&quot;bestiary-tab-emoji&quot;>🛒</span>'">WARES</button>
+          <button class="bestiary-tab" id="mtab-deals" onclick="setMarketTab('deals')"><img src="assets/icons/market_deals.png" class="bestiary-tab-icon" onerror="this.outerHTML='<span class=&quot;bestiary-tab-emoji&quot;>🏷</span>'">DEALS</button>
+          <button class="bestiary-tab" id="mtab-rare" onclick="setMarketTab('rare')"><img src="assets/icons/market_rare.png" class="bestiary-tab-icon" onerror="this.outerHTML='<span class=&quot;bestiary-tab-emoji&quot;>✨</span>'">RARE FINDS</button>
         </div>
         <div class="bestiary-tab-content">
           <div id="market-wares-pane" class="market-pane">
@@ -743,6 +880,55 @@
   </div>
 </div>
 
+<!-- RUN SUMMARY — sequenced reveal of XP, mastery, quest progress -->
+<!-- Shown after the last victory and BEFORE the spoils overlay. The      -->
+<!-- orchestrator (showRunResults in game.js) animates each section in    -->
+<!-- order, then enables CONTINUE which proceeds to spoils.               -->
+<div id="run-results-overlay" style="display:none;position:fixed;inset:0;z-index:195;background:rgba(0,0,0,.82);align-items:center;justify-content:center;">
+  <div class="rr-card">
+    <div class="rr-title">RUN SUMMARY</div>
+    <div class="rr-subtitle" id="rr-subtitle">—</div>
+
+    <!-- XP section -->
+    <div class="rr-section" id="rr-section-xp">
+      <div class="rr-section-head">
+        <span class="rr-section-label">CHAMPION XP</span>
+        <span class="rr-section-detail" id="rr-xp-gain">+0 XP</span>
+      </div>
+      <div class="rr-row">
+        <span class="rr-row-name" id="rr-xp-level">Lv.1</span>
+        <span class="rr-row-detail" id="rr-xp-frac">0 / 80</span>
+      </div>
+      <div class="rr-bar"><div class="rr-bar-fill xp" id="rr-xp-fill"></div></div>
+      <div class="rr-burst" id="rr-xp-burst" style="display:none;">LEVEL UP!</div>
+    </div>
+
+    <!-- Mastery section -->
+    <div class="rr-section" id="rr-section-mastery">
+      <div class="rr-section-head">
+        <span class="rr-section-label">MASTERY</span>
+        <span class="rr-section-detail" id="rr-mastery-gain">+0</span>
+      </div>
+      <div class="rr-row">
+        <span class="rr-row-name" id="rr-mastery-toward">Toward Ruby</span>
+        <span class="rr-row-detail" id="rr-mastery-frac">0 / 100</span>
+      </div>
+      <div class="rr-bar"><div class="rr-bar-fill mastery" id="rr-mastery-fill"></div></div>
+      <div class="rr-burst" id="rr-mastery-burst" style="display:none;">READY TO ASCEND</div>
+    </div>
+
+    <!-- Quests section (only rendered when at least one quest ticked) -->
+    <div class="rr-section" id="rr-section-quests" style="display:none;">
+      <div class="rr-section-head">
+        <span class="rr-section-label">QUEST PROGRESS</span>
+      </div>
+      <div id="rr-quests-list"></div>
+    </div>
+
+    <button class="btn btn-gold" id="rr-continue" style="margin-top:18px;width:100%;font-size:11px;letter-spacing:2.5px;padding:10px;opacity:0;pointer-events:none;transition:opacity .25s;" onclick="_runResultsContinue()">CONTINUE</button>
+  </div>
+</div>
+
 <!-- SPOILS CARD PICK -->
 <div id="spoils-overlay" style="display:none;position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.82);align-items:center;justify-content:center;">
   <div style="background:rgba(10,6,1,.97);border:1px solid #7a5010;border-radius:12px;padding:22px 26px;max-width:480px;width:95%;text-align:center;box-shadow:0 0 40px rgba(0,0,0,.9);">
@@ -798,7 +984,7 @@
 
 <!-- SHARD WELL PANEL -->
 <div class="town-panel-bg" id="shard_well-panel-bg" onclick="closeBuildingPanel('shard_well')">
-  <div class="town-panel" onclick="event.stopPropagation()">
+  <div class="town-panel town-panel-shardwell" onclick="event.stopPropagation()">
     <div class="town-panel-header">
       <div class="town-panel-icon"><img src="assets/icons/buildings/shardwell.png" alt="Shard Well" onerror="this.parentNode.textContent='🔮'"></div>
       <div style="flex:1;">
@@ -811,6 +997,48 @@
     <div id="shard_well-inner">
       <div id="shard-well-display" style="padding:10px 0;"></div>
     </div>
+  </div>
+</div>
+
+<!-- SUMMONS PANEL (Round 60 redesign) — opens from the Shard Well's
+     SUMMON button. Uses standard sibling chrome (town-panel-header +
+     npc-greeting block + body), retiring the Round-1-era cosmic
+     purple full-page overlay. JS fills #summons-inner. -->
+<div class="town-panel-bg" id="summons-panel-bg" onclick="closeSummonsPanel()">
+  <div class="town-panel town-panel-summons" onclick="event.stopPropagation()">
+    <div class="town-panel-header">
+      <div class="town-panel-icon"><img src="assets/icons/soul_shard.png" alt="Summons" onerror="this.parentNode.textContent='🔮'"></div>
+      <div style="flex:1;">
+        <div class="town-panel-name">THE SUMMONS</div>
+        <div class="town-panel-sub">Spend Soul Shards to bind defeated souls to your roster</div>
+      </div>
+      <button class="ach-close-btn" onclick="closeSummonsPanel()">✕</button>
+      <button class="tut-help-btn" onclick="showBuildingTutorial('shard_well')" title="Help">?</button>
+    </div>
+    <div id="summons-inner"></div>
+  </div>
+</div>
+
+<!-- ARENA PANEL — Round 53 revert to standard sibling chrome.
+     Round 52 took the Claude Design handoff too literally and ended
+     up with a custom header that read as a different game. Reverted
+     to match Shard Well / Sanctum / Forge: standard town-panel-header
+     with icon + name + sub + close/help, then JS fills #arena-inner
+     with the npc-greeting block, level row, tabs, and the redesigned
+     content (smoke-card / stable slots / purse band / etc — those
+     visual upgrades stay; the chrome consistency comes back). -->
+<div class="town-panel-bg" id="arena-panel-bg" onclick="closeBuildingPanel('arena')">
+  <div class="town-panel town-panel-arena" onclick="event.stopPropagation()">
+    <div class="town-panel-header">
+      <div class="town-panel-icon"><img src="assets/icons/buildings/arena.png" alt="Arena" onerror="this.parentNode.textContent='⚔️'"></div>
+      <div style="flex:1;">
+        <div class="town-panel-name">THE ARENA</div>
+        <div class="town-panel-sub">Daily matches · champion betting · duels</div>
+      </div>
+      <button class="ach-close-btn" onclick="closeBuildingPanel('arena')">✕</button><button class="tut-help-btn" onclick="showBuildingTutorial('arena')" title="Help">?</button>
+    </div>
+    <div class="town-locked-msg" id="arena-locked-msg" style="display:none;"></div>
+    <div id="arena-inner"></div>
   </div>
 </div>
 
@@ -885,44 +1113,106 @@
   <div class="ach-list" id="ach-list"></div>
 </div>
 
-<button class="settings-btn" onclick="openSettings()">⚙</button>
-<div class="settings-overlay" id="settings-overlay" onclick="if(event.target===this)closeSettings()">
-  <div class="settings-box">
-    <div class="settings-title">SETTINGS</div>
-    <div class="settings-sec">Audio</div>
-    <div class="setting-row"><div class="setting-lbl">Music Volume</div><input class="s-slider" type="range" min="0" max="100" step="5" value="70" id="s-music" oninput="applySetting('music',this.value)"><div class="s-val" id="sv-music">70%</div></div>
-    <div class="setting-row"><div class="setting-lbl">SFX Volume</div><input class="s-slider" type="range" min="0" max="100" step="5" value="85" id="s-sfx" oninput="applySetting('sfx',this.value)"><div class="s-val" id="sv-sfx">85%</div></div>
-    <div class="settings-sec">Gameplay</div>
-    <div class="setting-row"><div class="setting-lbl">Auto-play Speed</div><select class="s-select" id="s-aspeed" onchange="applySetting('aspeed',this.value)"><option value="instant">Instant</option><option value="fast">Fast (0.3s)</option><option value="normal" selected>Normal (0.6s)</option><option value="slow">Slow (1.2s)</option></select></div>
-    <div class="setting-row"><div class="setting-lbl">Combat Log Detail</div><select class="s-select" id="s-logd" onchange="applySetting('logd',this.value)"><option value="brief">Brief</option><option value="normal" selected>Normal</option><option value="verbose">Verbose</option></select></div>
-    <div class="setting-row"><div class="setting-lbl">Confirm Card Play<small>Click once to select, again to play</small></div><label class="toggle"><input type="checkbox" id="s-confirm" onchange="applySetting('confirm',this.checked)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
-    <div class="setting-row"><div class="setting-lbl">Tutorial Tips<small>Show guidance for new systems</small></div><label class="toggle"><input type="checkbox" id="s-tutorial" checked onchange="applySetting('tutorial',this.checked)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label></div>
-    <div class="settings-sec">Save Data</div>
-    <div class="setting-row">
-      <div class="setting-lbl">Export Save<small>Copy save string to clipboard</small></div>
-      <button class="btn btn-dim" style="font-size:9px;padding:4px 10px;" onclick="exportSave()">EXPORT</button>
-    </div>
-    <div style="margin-bottom:10px;">
-      <div class="setting-lbl" style="font-size:10px;color:#c0a060;margin-bottom:5px;">Import Save<small style="display:block;font-size:8px;color:#7a6030;margin-top:1px;">Paste a save string and click Load</small></div>
-      <div style="display:flex;gap:6px;align-items:stretch;">
-        <textarea id="s-import-txt" rows="2" style="flex:1;background:#0e0802;border:1px solid #3a2010;border-radius:4px;color:#c0a060;font-size:9px;padding:5px 7px;resize:none;font-family:monospace;" placeholder="Paste save string here..."></textarea>
-        <button class="btn btn-dim" style="font-size:9px;padding:4px 10px;align-self:stretch;" onclick="importSave()">LOAD</button>
+<!-- Settings access lives in the top nav (nav-icon-btn ⚙) and combat top bar.
+     Round 62l: rebuilt to use the .town-panel-bg overlay family (matching
+     Vault / Forge / etc.) so it visually belongs with the rest of the app.
+     Tabs: AUDIO / GAMEPLAY / SAVE DATA. The dead "Auto-play Speed" setting
+     (no consumer in the codebase) was dropped. -->
+<div class="town-panel-bg settings-panel-bg" id="settings-overlay" onclick="if(event.target===this)closeSettings()">
+  <div class="settings-panel-main" onclick="event.stopPropagation()">
+    <div class="vault-header">
+      <div class="town-panel-icon">⚙</div>
+      <div style="flex:1;">
+        <div class="town-panel-name">SETTINGS</div>
+        <div class="town-panel-sub">Audio, gameplay, and save data</div>
       </div>
-      <div id="s-import-msg" style="font-size:9px;margin-top:4px;min-height:14px;"></div>
+      <button class="ach-close-btn" onclick="closeSettings()">✕</button>
     </div>
-    <div class="setting-row">
-      <div class="setting-lbl">Delete Save<small>Permanently wipe all progress</small></div>
-      <button class="btn btn-red" style="font-size:9px;padding:4px 10px;" id="s-delete-btn" onclick="deleteSaveStep1()">DELETE</button>
+
+    <!-- Tab row — slim, no big icons (settings tabs don't need them) -->
+    <div class="settings-tab-row">
+      <button class="settings-tab active" id="stab-audio"    onclick="switchSettingsTab('audio')">AUDIO</button>
+      <button class="settings-tab"        id="stab-gameplay" onclick="switchSettingsTab('gameplay')">GAMEPLAY</button>
+      <button class="settings-tab"        id="stab-save"     onclick="switchSettingsTab('save')">SAVE DATA</button>
     </div>
-    <div id="s-delete-confirm" style="display:none;background:rgba(80,10,10,.3);border:1px solid #6a1a1a;border-radius:5px;padding:10px 12px;margin-bottom:8px;text-align:center;">
-      <div style="font-family:'Cinzel',serif;font-size:10px;color:#e05050;margin-bottom:4px;">⚠ THIS CANNOT BE UNDONE</div>
-      <div style="font-size:9px;color:#906060;margin-bottom:10px;">All champions, gold, achievements and unlocks will be lost forever.</div>
-      <div style="display:flex;gap:8px;justify-content:center;">
-        <button class="btn btn-red" style="font-size:9px;padding:5px 12px;" onclick="deleteSaveConfirm()">YES, DELETE EVERYTHING</button>
-        <button class="btn btn-dim" style="font-size:9px;padding:5px 12px;" onclick="deleteSaveCancel()">CANCEL</button>
+
+    <!-- Tab bodies -->
+    <div class="settings-body">
+
+      <!-- AUDIO -->
+      <div class="settings-pane" id="spane-audio">
+        <div class="setting-row">
+          <div class="setting-lbl">Music Volume</div>
+          <button class="setting-mute" id="s-music-mute" onclick="toggleMute('music')" title="Mute / unmute">🔊</button>
+          <input class="s-slider" type="range" min="0" max="100" step="5" value="70" id="s-music" oninput="applySetting('music',this.value)">
+          <div class="s-val" id="sv-music">70%</div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-lbl">SFX Volume</div>
+          <button class="setting-mute" id="s-sfx-mute" onclick="toggleMute('sfx')" title="Mute / unmute">🔊</button>
+          <input class="s-slider" type="range" min="0" max="100" step="5" value="85" id="s-sfx" oninput="applySetting('sfx',this.value)">
+          <div class="s-val" id="sv-sfx">85%</div>
+        </div>
+        <div class="settings-divider"></div>
+        <div class="setting-nowplaying" id="s-nowplaying">
+          <span class="setting-nowplaying-lbl">NOW PLAYING</span>
+          <span class="setting-nowplaying-name" id="s-nowplaying-name">—</span>
+        </div>
       </div>
+
+      <!-- GAMEPLAY -->
+      <div class="settings-pane" id="spane-gameplay" style="display:none;">
+        <div class="setting-row">
+          <div class="setting-lbl">Combat Log Detail</div>
+          <select class="s-select" id="s-logd" onchange="applySetting('logd',this.value)">
+            <option value="brief">Brief</option>
+            <option value="normal" selected>Normal</option>
+            <option value="verbose">Verbose</option>
+          </select>
+        </div>
+        <div class="setting-row">
+          <div class="setting-lbl">Confirm Card Play<small>Click once to select, again to play</small></div>
+          <label class="toggle"><input type="checkbox" id="s-confirm" onchange="applySetting('confirm',this.checked)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label>
+        </div>
+        <div class="setting-row">
+          <div class="setting-lbl">Tutorial Tips<small>Show guidance for new systems</small></div>
+          <label class="toggle"><input type="checkbox" id="s-tutorial" checked onchange="applySetting('tutorial',this.checked)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label>
+        </div>
+      </div>
+
+      <!-- SAVE DATA -->
+      <div class="settings-pane" id="spane-save" style="display:none;">
+        <div class="setting-row">
+          <div class="setting-lbl">Export Save<small>Copy save string to clipboard</small></div>
+          <button class="btn btn-dim setting-action-btn" onclick="exportSave()">EXPORT</button>
+        </div>
+        <div class="setting-block">
+          <div class="setting-lbl">Import Save<small>Paste a save string and click Load</small></div>
+          <div class="setting-import-row">
+            <textarea id="s-import-txt" rows="2" class="setting-import-text" placeholder="Paste save string here..."></textarea>
+            <button class="btn btn-dim setting-action-btn" onclick="importSave()">LOAD</button>
+          </div>
+          <div id="s-import-msg" class="setting-import-msg"></div>
+        </div>
+        <div class="settings-divider"></div>
+        <div class="setting-destructive-zone">
+          <div class="setting-destructive-hdr">DANGER ZONE</div>
+          <div class="setting-row" style="margin-bottom:0;">
+            <div class="setting-lbl">Delete Save<small>Permanently wipe all progress</small></div>
+            <button class="btn btn-red setting-action-btn" id="s-delete-btn" onclick="deleteSaveStep1()">DELETE</button>
+          </div>
+          <div id="s-delete-confirm" class="setting-delete-confirm" style="display:none;">
+            <div class="setting-delete-confirm-hdr">⚠ THIS CANNOT BE UNDONE</div>
+            <div class="setting-delete-confirm-body">All champions, gold, achievements and unlocks will be lost forever.</div>
+            <div class="setting-delete-confirm-btns">
+              <button class="btn btn-red" onclick="deleteSaveConfirm()">YES, DELETE EVERYTHING</button>
+              <button class="btn btn-dim" onclick="deleteSaveCancel()">CANCEL</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
     </div>
-    <div class="s-close-row"><button class="btn btn-gold" onclick="closeSettings()">CLOSE</button></div>
   </div>
 </div>
 
@@ -954,6 +1244,7 @@
   <script src="data/expedition.js"></script>
   <!-- quests.js removed — quest logic now lives in town.js -->
   <script src="data/vault.js"></script>
+  <script src="data/arena.js"></script>
 
   <!-- ── Data: one file per creature ──
        Keep this list in sync with the files actually present in
@@ -967,7 +1258,6 @@
   <script src="data/creatures/goblin.js"></script>
   <script src="data/creatures/infernal_beast.js"></script>
   <script src="data/creatures/iron_sentinel.js"></script>
-  <script src="data/creatures/ironsentinel.js"></script>
   <script src="data/creatures/mycelid.js"></script>
   <script src="data/creatures/paladin.js"></script>
   <script src="data/creatures/plagued_one.js"></script>

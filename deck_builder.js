@@ -605,10 +605,13 @@ function _deShowFillerWarning(count, callback){
   var card = document.createElement('div');
   card.className = 'de-filler-card';
   var plural = count > 1 ? 's' : '';
+  // Just a count — no mechanic explanation. The deckbuilder tutorial
+  // (story-quest path) is the canonical place to teach what Dead
+  // Weight is. Until the player has been through that tutorial, we
+  // surface the count as a factual heads-up only.
   card.innerHTML =
     '<div class="de-filler-title">DECK CONTAINS DEAD WEIGHT</div>' +
     '<div class="de-filler-body">Your deck has <strong>'+count+'</strong> Dead Weight card'+plural+'.</div>' +
-    '<div class="de-filler-mech">Dead Weight fills any deck slot you haven\'t assigned. Mechanically: it is a [Sorcery] card that spends all your current mana to draw 1 card; if you have no mana the Sorcery does not fire.</div>' +
     '<label class="de-filler-skip">' +
       '<input type="checkbox" id="de-filler-skip-future"> Don\'t remind me again' +
     '</label>' +

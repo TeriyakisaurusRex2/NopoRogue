@@ -186,6 +186,15 @@ function claimAchievement(achId){
     PERSIST.town.buildings.board.unlocked=true;
     addLog("✦ The Adventurer's Board is now open! Take on quests in Town.",'sys');
   }
+  // Mastery — every achievement claim grants 15 mastery to all unlocked
+  // champions (Round 30 tuning, was 25). Achievements are once-per
+  // milestones — keeping the bump small but meaningful matches their
+  // pacing relative to the new ascension curve.
+  var ACH_MASTERY = 15;
+  if(typeof addMasteryXpToAll === 'function'){
+    addMasteryXpToAll(ACH_MASTERY);
+    addLog('✦ +'+ACH_MASTERY+' mastery to every champion.','sys');
+  }
   savePersist();
   updateAchBadge();
   buildAchList(currentAchFilter);

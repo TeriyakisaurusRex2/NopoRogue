@@ -8,14 +8,14 @@
 
 var KEYWORDS = {
   // ── Damage over time ──
-  Burn:      {cls:'burn',      def:'Deals X damage per second. Non-stacking — reapplication refreshes duration only. Bypasses Shield.'},
-  Poison:    {cls:'poison',    def:'Deals X damage per second. Stacks — each application adds damage and refreshes timer. Bypasses Shield.'},
+  Burn:      {cls:'burn',      def:'Deals X damage per second. Non-stacking; reapplication refreshes duration only. Bypasses Shield.'},
+  Poison:    {cls:'poison',    def:'Deals X damage per second. Stacks; each application adds damage and refreshes timer. Bypasses Shield.'},
 
   // ── Debuffs ──
   Weaken:    {cls:'cursed',    def:'Target deals 15% less damage for the duration.'},
-  Slow:      {cls:'slow',      def:'Draw speed reduced by X% for the duration. Non-stacking — reapplication refreshes.'},
+  Slow:      {cls:'slow',      def:'Draw speed reduced by X% for the duration. Non-stacking; reapplication refreshes.'},
   Stun:      {cls:'slow',      def:'Draw speed reduced by 90% for 1 second. Effectively freezes the creature briefly.'},
-  Bleed:     {cls:'burn',      def:'Deals X damage each time the affected creature plays a card. Non-stacking — reapplication refreshes duration. Bypasses Shield. Punishes fast play speed.'},
+  Bleed:     {cls:'burn',      def:'Deals X damage each time the affected creature plays a card. Non-stacking; reapplication refreshes duration. Bypasses Shield. Punishes fast play speed.'},
 
   // ── Buffs ──
   Shield:    {cls:'shielded',  def:'Temporary HP buffer. Absorbs direct damage before HP. DoTs bypass it. Manabound.'},
@@ -32,7 +32,7 @@ var KEYWORDS = {
   Crit:      {cls:'hastened',  def:'A critical strike that deals double damage. Triggered by chance or special conditions.'},
 
   // ── Card properties ──
-  Ethereal:  {cls:'echo',      def:'This card vanishes when played or discarded — it does not return to the deck. Created temporarily by abilities.'},
+  Ethereal:  {cls:'echo',      def:'This card vanishes when played or discarded. It does not return to the deck. Created temporarily by abilities.'},
   Conjured:  {cls:'echo',      def:'Created during combat. Circulates normally through the deck. Removed at end of battle.'},
   Manabound: {cls:'drain',     def:'This effect is purged immediately if the creature\'s mana hits 0. Applies to Shield, Dodge, Frenzy, Thorns, Haste.'},
   Debuff:    {cls:'cursed',    def:'Any negative status effect (Weaken, Poison, Burn, Slow, etc.).'},

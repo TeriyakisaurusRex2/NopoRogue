@@ -28,8 +28,8 @@ var LOOT_DEFS = {
   chest_bone:       {icon:'📦', name:'Bone Chest',         type:'chest', biome:'boneyard',  color:'#e0e0b0', basePrice:120},
   key_astral:       {icon:'🗝️', name:'Astral Key',        type:'key',   biome:'starmaze',  color:'#8060d0'},
   chest_astral:     {icon:'📦', name:'Astral Chest',      type:'chest', biome:'starmaze',  color:'#a080f0', basePrice:200},
-  key_mist:         {icon:'🗝️', name:'Mistwood Key',      type:'key',   biome:'mistwoods', color:'#607080'},
-  chest_mist:       {icon:'📦', name:'Mistwood Chest',    type:'chest', biome:'mistwoods', color:'#8090b0', basePrice:70},
+  key_mist:         {icon:'🗝️', name:'Mistwood Key',      type:'key',   biome:'mistwood', color:'#607080'},
+  chest_mist:       {icon:'📦', name:'Mistwood Chest',    type:'chest', biome:'mistwood', color:'#8090b0', basePrice:70},
   key_wax:          {icon:'🗝️', name:'Wax Dunes Key',     type:'key',   biome:'waxdunes',  color:'#c09020'},
   chest_wax:        {icon:'📦', name:'Wax Chest',         type:'chest', biome:'waxdunes',  color:'#d4a843', basePrice:45},
   // ── Champion Cards ──
@@ -126,7 +126,10 @@ var BUILDINGS = {
   // Row 2 — Use these (strategic decisions)
   sanctum: {
     id:'sanctum', name:'The Sanctum', icon:'⚗️', sprite:'sanctum_keeper', buildingIcon:'sanctum',
-    npc:{name:'Theo', title:'Ex-Champion', greeting:'Ah, you\'re back. I was just thinking about how good I used to be.', pitch:1.1},
+    // Round 42: Theo moved to the Arena. The Sanctum is now run by the
+    // Keeper — a cryptic armoured cleric, grandiose / poetic / mildly
+    // sycophantic toward the player's power. Grima-Wormtongue energy.
+    npc:{name:'Keeper', title:'Sanctum Keeper', greeting:'You return, ascended one. I felt your approach.', pitch:0.95},
     desc:'Champion management. Ascend, equip relics, view decks.',
     unlocked:false,
   },
@@ -137,14 +140,21 @@ var BUILDINGS = {
     unlocked:true,
   },
   shard_well: {
-    id:'shard_well', name:'The Shard Well', icon:'🔮', sprite:'shard_well_keeper', buildingIcon:'shardwell',
-    npc:{name:'???', title:'Seer', greeting:'The well whispers of new allies.'},
+    id:'shard_well', name:'The Shard Well', icon:'🔮', sprite:'shard_master', buildingIcon:'shardwell',
+    // Round 42: the Shard Master — ominous, few words, cryptic. Doesn't
+    // explain what the shards actually are; spooky implications hang
+    // around the dialogue. Lower pitch to match the tone.
+    npc:{name:'Shard Master', title:'Keeper of the Well', greeting:'They sing, when no one listens. Did you hear?', pitch:0.85},
     desc:'Generates soul shards. Summon new champions.',
     unlocked:false,
   },
   arena: {
     id:'arena', name:'The Arena', icon:'⚔️', sprite:'arena_keeper', buildingIcon:'arena',
-    npc:{name:'???', title:'Arena Master', greeting:'Ready to test your strength?'},
+    // Round 42: Theo (formerly the Sanctum Keeper) now manages the Arena.
+    // Still an ex-champion but NOT retired — he fights sometimes when
+    // the mood takes him. Hot-headed, casually braggy, more action than
+    // reflection. Same casual cadence as before; sharper edges.
+    npc:{name:'Theo', title:'Arena Master', greeting:'You showed up. Good. I was about to fight without you.', pitch:1.1},
     desc:'Challenge imported champion builds. PvP via champion codes.',
     unlocked:false,
   },
@@ -218,7 +228,8 @@ function openTown(){
   showScreen('town-screen');
   playMusic('theme_town');
   updateNavBar('town');
-  document.getElementById('town-gold').innerHTML=goldImgHTML('16px')+' '+PERSIST.gold;
+  // Round 62g: town-gold removed (nav-gold owns it). subtitle stays
+  // as the flavour/toast surface — showTownToast paints into it.
   document.getElementById('town-subtitle').textContent='Your settlement awaits.';
   buildTownCardsStrip();
   buildTownGrid();
@@ -236,8 +247,8 @@ function buildTownCardsStrip(){ /* town card strip UI removed — gem slots depr
 
 // ── Building unlock costs ─────────────────────────────────────────────────
 var BUILDING_UNLOCK_COSTS = {
-  forge:    { achId:'rising_power',  desc:'Reach level 3 — the Forge unlocks automatically.' },
-  adventurers_hall: { achId:'battle_hardened', desc:'Reach level 5 — the Adventurer\'s Hall unlocks automatically.' },
+  forge:    { achId:'rising_power',  desc:'Reach level 3. The Forge unlocks automatically.' },
+  adventurers_hall: { achId:'battle_hardened', desc:'Reach level 5. The Adventurer\'s Hall unlocks automatically.' },
   bestiary: { seenCount:10, gold:100, desc:'Unlocked by encountering 10 different enemies, or purchase for 100 gold.' },
   market:   { gold:150, desc:'Purchase The Market for 150 gold to buy chests.' },
   sanctum:  { gold:250, desc:'Purchase The Sanctum for 250 gold to customise champion decks and relics.' },
@@ -257,7 +268,7 @@ function tryUnlockBuilding(id){
       // Free unlock
     } else if(cost.gold&&PERSIST.gold>=cost.gold){
       PERSIST.gold-=cost.gold;
-      document.getElementById('town-gold').innerHTML=goldImgHTML('16px')+' '+PERSIST.gold;
+      if(typeof refreshNavCurrencies === 'function') refreshNavCurrencies();
     } else {
       showTownToast('See '+(cost.seenCount-seen)+' more enemies, or need '+cost.gold+'g to buy.');
       return;
@@ -271,7 +282,7 @@ function tryUnlockBuilding(id){
   } else if(cost.gold){
     if(PERSIST.gold<cost.gold){ showTownToast('Need ✦'+cost.gold+' gold.'); return; }
     PERSIST.gold-=cost.gold;
-    document.getElementById('town-gold').innerHTML=goldImgHTML('16px')+' '+PERSIST.gold;
+    if(typeof refreshNavCurrencies === 'function') refreshNavCurrencies();
   }
 
   b.unlocked=true;
@@ -318,34 +329,581 @@ function grantAreaClearBuildingXp(areaLevel){
   });
 }
 
-// ── Shard Well panel ──────────────────────────────────────────────────────
+// ── Shard Well: action functions (Round 40) ──────────────────────────────
+var SHARD_WELL_MAX_ROSTER = 3;
+
+// Assign a champion to a specific slot (0..2). If the slot already has
+// someone, they get released first. The champion's lockedShardWell is
+// set to the slot index. Re-renders the panel.
+function _shardWellAssign(slotIdx, champId){
+  var b = PERSIST.town.buildings.shard_well;
+  if(!b) return;
+  if(slotIdx < 0 || slotIdx >= SHARD_WELL_MAX_ROSTER) return;
+  if(!CREATURES[champId]) return;
+  if(typeof isChampLocked === 'function' && isChampLocked(champId)){
+    showTownToast(CREATURES[champId].name + ' is busy elsewhere.');
+    return;
+  }
+  if(!Array.isArray(b.assignedChampIds)) b.assignedChampIds = [];
+  // Release whoever is in that slot
+  var prevId = b.assignedChampIds[slotIdx];
+  if(prevId){
+    var prevCp = PERSIST.champions[prevId];
+    if(prevCp) prevCp.lockedShardWell = null;
+  }
+  // Place the new champion
+  b.assignedChampIds[slotIdx] = champId;
+  var cp = getChampPersist(champId);
+  if(cp) cp.lockedShardWell = slotIdx;
+  savePersist();
+  showTownToast(CREATURES[champId].name + ' assigned to the well.');
+  refreshShardWellPanel();
+}
+
+function _shardWellRelease(slotIdx){
+  var b = PERSIST.town.buildings.shard_well;
+  if(!b || !Array.isArray(b.assignedChampIds)) return;
+  var id = b.assignedChampIds[slotIdx];
+  if(!id) return;
+  var cp = PERSIST.champions[id];
+  if(cp && cp.lockedShardWell !== null && cp.lockedShardWell !== undefined){
+    cp.lockedShardWell = null;
+  }
+  b.assignedChampIds[slotIdx] = null;
+  // Compact array — remove trailing nulls but keep slot indices intact
+  // by leaving in-between nulls. We're treating the array as fixed-length
+  // 3 slots, so just clear in-place.
+  savePersist();
+  if(CREATURES[id]) showTownToast(CREATURES[id].name + ' returned from the well.');
+  refreshShardWellPanel();
+}
+
+// Spend one stat point on rate or cap. Triangle cost: each successive
+// upgrade costs more points, so going to +5 costs 1+2+3+4+5 = 15 points.
+function _shardWellSpendPoint(field){
+  var b = PERSIST.town.buildings.shard_well;
+  if(!b) return;
+  if(field !== 'rate' && field !== 'cap') return;
+  var current = (field === 'rate' ? b.rateLevel : b.capLevel) || 0;
+  var cost = (typeof getShardWellPointCost === 'function') ? getShardWellPointCost(current) : (current + 1);
+  if((b.unspentPoints||0) < cost){
+    showTownToast('Not enough points (need '+cost+').');
+    return;
+  }
+  b.unspentPoints -= cost;
+  if(field === 'rate') b.rateLevel = (b.rateLevel||0) + 1;
+  else                 b.capLevel  = (b.capLevel||0) + 1;
+  savePersist();
+  refreshShardWellPanel();
+}
+
+// Round 44: claim transfers the well's pending pool to the player's
+// global soul-shard pool. Free to call any time; just no-op if there's
+// nothing pending.
+//
+// Round 46: claim now animates the drain in place — bar width to 0%
+// (CSS transition handles the slide), count ticks down via rAF, and
+// the portrait gets a brief glow pulse. Persist state is committed
+// immediately (so the player doesn't lose progress if they close mid-
+// animation), and the full panel refresh is deferred until after the
+// animation finishes so the buttons / mode banner / etc. don't flash.
+function _shardWellClaim(){
+  var b = PERSIST.town.buildings.shard_well;
+  if(!b || !b.unlocked) return;
+  var pending = b.pendingShards || 0;
+  if(pending <= 0){
+    showTownToast('Nothing to claim yet.');
+    return;
+  }
+  var cap = (typeof getShardWellCap === 'function') ? getShardWellCap() : pending;
+
+  // Commit state immediately — animation is purely cosmetic.
+  PERSIST.soulShards = (PERSIST.soulShards || 0) + pending;
+  b.pendingShards = 0;
+
+  // SFX: dedicated well_claim cue (Round 46 — registered in audio.js,
+  // file at assets/audio/sfx/well_claim.mp3). playSfx silently no-ops
+  // if the file isn't present yet.
+  if(typeof playSfx === 'function') playSfx('well_claim');
+
+  showTownToast('+'+pending+' Soul Shard'+(pending===1?'':'s')+' claimed.');
+  savePersist();
+
+  // ── Animation pass ──────────────────────────────────────────────
+  var DUR = 700; // ms — matches the bar's CSS transition (0.6s) + a bit
+  var barEl     = document.getElementById('sw-cap-bar-fill');
+  var countEl   = document.getElementById('sw-hero-count');
+  var portrait  = document.getElementById('sw-hero-portrait');
+  var hasDom = !!(barEl || countEl || portrait);
+
+  if(!hasDom){
+    // Panel not on screen (or DOM missing) — just snap-refresh.
+    refreshShardWellPanel();
+    return;
+  }
+
+  // Bar: drop the .full class (kills the pulsing glow) and shove width
+  // to 0% — existing CSS .sw-cap-bar-fill transition handles the slide.
+  if(barEl){
+    barEl.classList.remove('full');
+    barEl.style.width = '0%';
+  }
+
+  // Portrait pulse — class added now, removed after the animation.
+  if(portrait){
+    portrait.classList.add('sw-claim-pulse');
+  }
+
+  // Count tick-down via rAF.
+  if(countEl){
+    var startTs = null;
+    var startVal = pending;
+    function step(ts){
+      if(startTs === null) startTs = ts;
+      var t = Math.min(1, (ts - startTs) / DUR);
+      // ease-out cubic for a snappier feel
+      var eased = 1 - Math.pow(1 - t, 3);
+      var cur = Math.max(0, Math.round(startVal * (1 - eased)));
+      countEl.textContent = cur + ' / ' + cap;
+      if(t < 1) requestAnimationFrame(step);
+      else countEl.textContent = '0 / ' + cap;
+    }
+    requestAnimationFrame(step);
+  }
+
+  // After the visual settles, re-render to repaint the CTA buttons,
+  // mode banner, time-to-fill, etc.
+  setTimeout(function(){
+    if(portrait) portrait.classList.remove('sw-claim-pulse');
+    refreshShardWellPanel();
+  }, DUR + 60);
+}
+
+// Respec — refunds all spent points to the unspent pool, costs gold scaling
+// with well level. Player can then re-allocate freely.
+function _shardWellRespecCost(){
+  var b = PERSIST.town.buildings.shard_well;
+  if(!b) return 0;
+  return 100 * (b.wellLevel || 1);
+}
+function _shardWellRespec(){
+  var b = PERSIST.town.buildings.shard_well;
+  if(!b) return;
+  var cost = _shardWellRespecCost();
+  if((PERSIST.gold||0) < cost){
+    showTownToast('Need '+cost+' gold to recalibrate.');
+    return;
+  }
+  // Sum up the points to refund: triangle for rate + triangle for cap
+  var refund = 0;
+  for(var r=1; r<=(b.rateLevel||0); r++) refund += r;
+  for(var c=1; c<=(b.capLevel||0); c++)  refund += c;
+  PERSIST.gold -= cost;
+  b.unspentPoints = (b.unspentPoints||0) + refund;
+  b.rateLevel = 0;
+  b.capLevel  = 0;
+  savePersist();
+  showTownToast('Well recalibrated. '+refund+' points refunded.');
+  refreshShardWellPanel();
+}
+
+// ── Shard Well panel (Round 41 layout pass) ─────────────────────────────
+// Matches the chrome other buildings use: NPC greeting → level/XP row →
+// per-building body. Body laid out as:
+//   1. HERO BAND (full width) — soul-shard sprite + cap-fill progress bar
+//                                + rate readout + SUMMON CTA
+//   2. MODE BANNER (full width) — which stat is dominant + flavour line
+//   3. BODY GRID (60/40)
+//        LEFT (60%) — 3 champion slots + combined stats readout
+//        RIGHT (40%) — RATE/CAP dials with [+] + RECALIBRATE
 function refreshShardWellPanel(){
   showLockedBuildingUI('shard_well');
-  var b=PERSIST.town.buildings.shard_well;
-  if(!b||!b.unlocked) return;
-  var inner=document.getElementById('shard_well-inner');
+  var b = PERSIST.town.buildings.shard_well;
+  if(!b || !b.unlocked) return;
+  var inner = document.getElementById('shard_well-inner');
   if(!inner) return;
 
-  var souls=PERSIST.soulShards||0;
-  var rate=getShardWellRate();
-  var canSummon=souls>=SOUL_SHARDS_PER_PULL;
+  // Round 44: pendingShards is the well's own pool (filled by tick,
+  // capped). The player's PERSIST.soulShards is global — also bumped
+  // by run completions and quest rewards. SUMMON spends from
+  // PERSIST.soulShards. The hero band shows both.
+  var pending  = b.pendingShards || 0;
+  var souls    = PERSIST.soulShards || 0;
+  var cap      = getShardWellCap();
+  var secsPer  = getShardWellSecsPerShard();
+  var canSummon = souls >= SOUL_SHARDS_PER_PULL;
+  var canClaim = pending > 0;
+  var atCap    = pending >= cap;
 
-  inner.innerHTML='<div style="padding:12px 14px;">'
-    +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">'
-      +'<span style="font-size:32px;">🔮</span>'
-      +'<div>'
-        +'<div style="font-family:Cinzel,serif;font-size:14px;color:#d4a843;">'+souls+' Soul Shards</div>'
-        +'<div style="font-size:9px;color:#6a5020;margin-top:2px;">Generating 1 every '+(rate/60)+' min</div>'
-      +'</div>'
-    +'</div>'
-    +'<button onclick="doEternalPull()" '+(canSummon?'':'disabled')
-      +' style="font-family:Cinzel,serif;font-size:10px;padding:8px 20px;border-radius:4px;'
-      +'border:1px solid '+(canSummon?'#c09030':'#3a2010')+';background:rgba(30,18,4,.9);'
-      +'color:'+(canSummon?'#d4a843':'#4a3010')+';cursor:'+(canSummon?'pointer':'not-allowed')+';width:100%;">'
-      +(canSummon?'✦ SUMMON ('+SOUL_SHARDS_PER_PULL+' Shards)':'Need '+(SOUL_SHARDS_PER_PULL-souls)+' more Shards')
-    +'</button>'
-    +'<div id="summon-result" style="margin-top:12px;"></div>'
-  +'</div>';
+  if(!Array.isArray(b.assignedChampIds)) b.assignedChampIds = [];
+  var roster = b.assignedChampIds.slice(0, SHARD_WELL_MAX_ROSTER);
+  var effect = champShardWellEffect(roster);
+  var modeKey = effect.eff.mode || 'EMPTY';
+
+  // Mode descriptions
+  var modeCopy = {
+    EMPTY:      { title:'WELL DORMANT',    desc:'Assign champions to channel their stats into the well.' },
+    INVESTMENT: { title:'INVESTMENT MODE', desc:'STR dominant. Well levels up faster, generation modest.' },
+    GENERATION: { title:'GENERATION MODE', desc:'AGI dominant. Shards generate faster.' },
+    CAPACITY:   { title:'CAPACITY MODE',   desc:'WIS dominant. Well holds more before stopping.' },
+    BALANCED:   { title:'BALANCED MODE',   desc:'All stats equal. Every dial benefits at full strength.' },
+    DUAL:       { title:'DUAL MODE',       desc:'Two stats tied for dominance. Both contribute fully.' }
+  }[modeKey] || { title:'EMPTY', desc:'No assignment.' };
+
+  // Time to fill / fill percent — based on the WELL's pending pool,
+  // not the player's total. When at cap, generation has stopped and
+  // the player is prompted to CLAIM.
+  var remaining = Math.max(0, cap - pending);
+  var timeToFill = remaining * secsPer;
+  var ttfStr = atCap ? 'AT CAP. CLAIM TO RESUME' : (
+                 timeToFill < 60   ? Math.ceil(timeToFill)+'s' :
+                 timeToFill < 3600 ? Math.ceil(timeToFill/60)+'m' :
+                 Math.floor(timeToFill/3600)+'h '+Math.ceil((timeToFill%3600)/60)+'m'
+               );
+  var fillPct = cap > 0 ? Math.min(100, Math.round((pending/cap)*100)) : 0;
+
+  // Well-level XP
+  var nextLvXp = getShardWellXpForLevel(b.wellLevel||1);
+  var xpPct    = Math.min(100, Math.round(((b.wellXp||0) / nextLvXp) * 100));
+  var unspent  = b.unspentPoints || 0;
+
+  // Stat-point dials
+  var rateRank = b.rateLevel || 0;
+  var capRank  = b.capLevel  || 0;
+  var rateCost = getShardWellPointCost(rateRank);
+  var capCost  = getShardWellPointCost(capRank);
+  var canBuyRate = unspent >= rateCost;
+  var canBuyCap  = unspent >= capCost;
+
+  // Combined stats + per-stat efficiency
+  var combined = effect.combined;
+  var eff      = effect.eff;
+  function _swEffPct(e){ return Math.round((e||0) * 100); }
+
+  // ── Build markup top-to-bottom ──────────────────────────────────────
+  var html = '';
+
+  // NPC GREETING + LEVEL ROW (matches Forge / Hall / Sanctum chrome)
+  html +=
+      '<div class="npc-greeting" id="shard_well-npc-greeting">'
+    +   '<div class="npc-greeting-sprite"><img src="assets/creatures/shard_master.png" alt="Shard Master" onerror="this.parentNode.textContent=\'🔮\'"></div>'
+    +   '<div class="npc-greeting-text">'
+    +     '<div class="npc-greeting-name">SHARD MASTER</div>'
+    +     '<div class="npc-greeting-msg" id="shard_well-npc-msg"></div>'
+    +   '</div>'
+    + '</div>'
+    + '<div class="vault-level-row">'
+    +   '<span class="vault-level-badge" id="sw-level-badge">WELL Lv.'+(b.wellLevel||1)+'</span>'
+    +   '<div class="vault-xp-wrap"><div class="vault-xp-bar" id="sw-xp-bar" style="width:'+xpPct+'%;"></div></div>'
+    +   '<span class="vault-xp-txt" id="sw-xp-txt">'+Math.floor(b.wellXp||0)+' / '+nextLvXp+' XP'
+    +     (unspent > 0 ? ' · <span style="color:#9adc7e;">'+unspent+' point'+(unspent===1?'':'s')+'</span>' : '')
+    +   '</span>'
+    + '</div>';
+
+  // HERO BAND — visual focus. Headline shows the WELL POOL (pending/
+  // cap) — that's what the player is filling. Beneath it: cap-fill bar
+  // + rate + time-to-fill. CTA column has CLAIM (transfers pending
+  // to player pool) on top, SUMMON below (spends from player pool,
+  // costs SOUL_SHARDS_PER_PULL). Player's global pool count sits
+  // under SUMMON as context. (Round 44.)
+  html +=
+      '<div class="sw-hero">'
+    +   '<div class="sw-hero-portrait" id="sw-hero-portrait">'
+    +     (typeof soulShardImgHTML === 'function' ? soulShardImgHTML('96px') : '<span style="font-size:64px;">🔮</span>')
+    +   '</div>'
+    +   '<div class="sw-hero-main">'
+    +     '<div class="sw-hero-headline">'
+    +       '<span class="sw-hero-count" id="sw-hero-count" data-pending="'+pending+'" data-cap="'+cap+'">'+pending+' / '+cap+'</span>'
+    +       '<span class="sw-hero-label">in the Well</span>'
+    +     '</div>'
+    +     '<div class="sw-cap-bar"><div class="sw-cap-bar-fill'+(atCap?' full':'')+'" id="sw-cap-bar-fill" style="width:'+fillPct+'%;"></div></div>'
+    +     '<div class="sw-hero-meta">'
+    +       '<span>1 shard every '+_swFmtSecs(secsPer)+'</span>'
+    +       '<span>'+ttfStr+'</span>'
+    +     '</div>'
+    +   '</div>'
+    +   '<div class="sw-hero-cta">'
+    +     '<button class="sw-claim-btn" onclick="_shardWellClaim()" '+(canClaim?'':'disabled')+'>'
+    +       '<span class="sw-claim-icon">↓</span>'
+    +       '<span class="sw-claim-label">CLAIM</span>'
+    +       '<span class="sw-claim-amount">'+(canClaim?'+'+pending+' shard'+(pending===1?'':'s'):'nothing yet')+'</span>'
+    +     '</button>'
+    +     '<button class="sw-summon-btn" onclick="openSummonsPanel()">'
+    +       '<span class="sw-summon-icon">✦</span>'
+    +       '<span class="sw-summon-label">SUMMON</span>'
+    +       '<span class="sw-summon-cost">'+souls+' shards</span>'
+    +     '</button>'
+    +   '</div>'
+    + '</div>';
+
+  // MODE BANNER — full width
+  html +=
+      '<div class="sw-mode sw-mode-'+modeKey.toLowerCase()+'">'
+    +   '<div class="sw-mode-title">'+modeCopy.title+'</div>'
+    +   '<div class="sw-mode-desc">'+modeCopy.desc+'</div>'
+    + '</div>';
+
+  // BODY GRID — 60/40 split
+  // ── LEFT: champions roster + combined stats ──
+  var leftHtml = '<div class="sw-body-left">'
+    + '<div class="sw-section-label">CHANNELING CHAMPIONS</div>'
+    + '<div class="sw-roster">';
+  for(var i=0; i<SHARD_WELL_MAX_ROSTER; i++){
+    var champId = roster[i];
+    if(champId && CREATURES[champId]){
+      var ch = CREATURES[champId];
+      var cp = getChampPersist(champId);
+      leftHtml += '<div class="sw-slot sw-slot-filled" onclick="_shardWellPickForSlot('+i+')">'
+        + '<div class="sw-slot-portrait">'+creatureImgHTML(champId, ch.icon, '64px')+'</div>'
+        + '<div class="sw-slot-name">'+ch.name+'</div>'
+        + '<div class="sw-slot-stats">'
+        +   '<span class="sw-stat str">STR '+Math.round(cp.stats.str)+'</span> '
+        +   '<span class="sw-stat agi">AGI '+Math.round(cp.stats.agi)+'</span> '
+        +   '<span class="sw-stat wis">WIS '+Math.round(cp.stats.wis)+'</span>'
+        + '</div>'
+        + '<button class="sw-slot-x" onclick="event.stopPropagation();_shardWellRelease('+i+');" title="Release">×</button>'
+        + '</div>';
+    } else {
+      leftHtml += '<div class="sw-slot sw-slot-empty" onclick="_shardWellPickForSlot('+i+')">'
+        + '<div class="sw-slot-plus">+</div>'
+        + '<div class="sw-slot-empty-label">SLOT '+(i+1)+'</div>'
+        + '<div class="sw-slot-empty-hint">tap to assign</div>'
+        + '</div>';
+    }
+  }
+  leftHtml += '</div>'
+    + '<div class="sw-combined">'
+    +   '<div class="sw-combined-label">COMBINED · EFFICIENCY</div>'
+    +   '<div class="sw-combined-row">'
+    +     '<span class="sw-combined-cell"><span class="sw-stat str">STR</span> '+combined.str+' <span class="sw-eff">('+_swEffPct(eff.str)+'%)</span></span>'
+    +     '<span class="sw-combined-cell"><span class="sw-stat agi">AGI</span> '+combined.agi+' <span class="sw-eff">('+_swEffPct(eff.agi)+'%)</span></span>'
+    +     '<span class="sw-combined-cell"><span class="sw-stat wis">WIS</span> '+combined.wis+' <span class="sw-eff">('+_swEffPct(eff.wis)+'%)</span></span>'
+    +   '</div>'
+    + '</div>'
+    + '</div>';
+
+  // ── RIGHT: dials + recalibrate ──
+  var rightHtml = '<div class="sw-body-right">'
+    + '<div class="sw-section-label">UPGRADES'+(unspent > 0 ? ' · <span style="color:#9adc7e;">'+unspent+' to spend</span>' : '')+'</div>'
+    + '<div class="sw-dial-card">'
+    +   '<div class="sw-dial-row">'
+    +     '<span class="sw-dial-label">RATE</span>'
+    +     '<span class="sw-dial-rank">+'+rateRank+'</span>'
+    +     '<button class="sw-plus" '+(canBuyRate?'':'disabled')+' onclick="_shardWellSpendPoint(\'rate\')" title="Cost: '+rateCost+' point'+(rateCost===1?'':'s')+'">+ '+rateCost+'</button>'
+    +   '</div>'
+    +   '<div class="sw-dial-extra">'+(SHARD_WELL_RATE_PT_PCT*100).toFixed(0)+'% faster generation per level</div>'
+    + '</div>'
+    + '<div class="sw-dial-card">'
+    +   '<div class="sw-dial-row">'
+    +     '<span class="sw-dial-label">CAP</span>'
+    +     '<span class="sw-dial-rank">+'+capRank+'</span>'
+    +     '<button class="sw-plus" '+(canBuyCap?'':'disabled')+' onclick="_shardWellSpendPoint(\'cap\')" title="Cost: '+capCost+' point'+(capCost===1?'':'s')+'">+ '+capCost+'</button>'
+    +   '</div>'
+    +   '<div class="sw-dial-extra">+1 shard storage per level</div>'
+    + '</div>'
+    + '<div class="sw-respec-card">'
+    +   '<button class="sw-respec-btn" onclick="_shardWellRespec()">↺ Recalibrate</button>'
+    +   '<div class="sw-respec-meta">Refunds all spent points · '+_shardWellRespecCost()+' g</div>'
+    + '</div>'
+    + '</div>';
+
+  html += '<div class="sw-body-grid">' + leftHtml + rightHtml + '</div>'
+    + '<div id="summon-result" style="margin-top:12px;"></div>';
+
+  inner.innerHTML = html;
+
+  // Trigger NPC greeting once the markup is mounted (typewriter effect).
+  // Uses the shared playNpcGreeting helper so the well plays nice with
+  // the NPC dialogue system. opts.once so it doesn't re-greet on every
+  // refresh (panel re-renders frequently as XP fills).
+  if(typeof playNpcGreeting === 'function'){
+    playNpcGreeting('shard_well', {once:true});
+  }
+
+  // Round 63 followup: if offline progress accumulated well XP and the
+  // animation hasn't played yet, replay it now so the player SEES
+  // the gain land. Marks `wellAnimated` immediately to gate against
+  // double-play on a quick close/reopen.
+  _maybePlayWellXpAnimation();
+}
+
+// Animate the Shard Well's XP bar from its pre-offline state to the
+// post-offline state. Handles multi-level-up by walking forward
+// through the level chain — the bar visually wraps each time it
+// hits its threshold. Linear progress against a duration that
+// scales with the magnitude of XP gained (so a small bump is quick,
+// a big offline session takes ~2.5s).
+function _maybePlayWellXpAnimation(){
+  if(typeof getOfflineGains !== 'function') return;
+  var g = getOfflineGains();
+  if(!g || g.wellAnimated) return;
+  var beforeLevel = g.wellLevelBefore || 1;
+  var beforeXp    = g.wellXpBefore || 0;
+  var afterLevel  = g.wellLevelAfter || beforeLevel;
+  var afterXp     = g.wellXpAfter || 0;
+  if(beforeLevel === afterLevel && Math.abs(afterXp - beforeXp) < 0.5) return;
+
+  // Mark immediately so re-entries during animation don't double-run.
+  g.wellAnimated = true;
+
+  var bar      = document.getElementById('sw-xp-bar');
+  var lvlBadge = document.getElementById('sw-level-badge');
+  var xpTxt    = document.getElementById('sw-xp-txt');
+  if(!bar) return;
+
+  // Total XP gained across the chain.
+  var totalGained = 0;
+  if(afterLevel > beforeLevel){
+    totalGained += getShardWellXpForLevel(beforeLevel) - beforeXp;
+    for(var l = beforeLevel + 1; l < afterLevel; l++){
+      totalGained += getShardWellXpForLevel(l);
+    }
+    totalGained += afterXp;
+  } else {
+    totalGained = Math.max(0, afterXp - beforeXp);
+  }
+  if(totalGained <= 0) return;
+
+  // Paint pre-offline state immediately so the animation starts there.
+  var startThresh = getShardWellXpForLevel(beforeLevel);
+  var startPct = Math.min(100, (beforeXp / startThresh) * 100);
+  bar.style.transition = 'none';
+  bar.style.width = startPct + '%';
+  if(lvlBadge) lvlBadge.textContent = 'WELL Lv.' + beforeLevel;
+  if(xpTxt)    xpTxt.textContent    = Math.floor(beforeXp) + ' / ' + startThresh + ' XP';
+
+  // Duration scales with how much XP was gained — log curve keeps it
+  // snappy for small gains but doesn't drag forever for huge ones.
+  var duration = Math.max(800, Math.min(2500, 700 + Math.log2(totalGained + 2) * 250));
+  var startTime = performance.now();
+
+  function frame(now){
+    var p = Math.min(1, (now - startTime) / duration);
+    // Quadratic ease-out feels nice — fast at first, slows into final
+    var eased = 1 - (1 - p) * (1 - p);
+    var consumed = totalGained * eased;
+
+    // Walk forward from before-state.
+    var v  = beforeXp + consumed;
+    var lv = beforeLevel;
+    var safety = 32;
+    while(safety-- > 0 && v >= getShardWellXpForLevel(lv)){
+      v -= getShardWellXpForLevel(lv);
+      lv += 1;
+    }
+    var thresh = getShardWellXpForLevel(lv);
+    var pct = Math.min(100, (v / thresh) * 100);
+    bar.style.width = pct + '%';
+    if(lvlBadge) lvlBadge.textContent = 'WELL Lv.' + lv;
+    if(xpTxt)    xpTxt.textContent    = Math.floor(v) + ' / ' + thresh + ' XP';
+
+    if(p < 1) requestAnimationFrame(frame);
+    else {
+      // Restore the transition so future tick-driven width changes
+      // animate smoothly again.
+      bar.style.transition = '';
+    }
+  }
+  // Defer to next frame so the "set start state" paint happens first
+  // (without it the browser would batch start+animate into one frame).
+  requestAnimationFrame(function(){ requestAnimationFrame(frame); });
+}
+
+// Format seconds as the player would understand it. Used for the
+// "1 shard every X" line in the well header.
+function _swFmtSecs(s){
+  if(s < 60) return s + 's';
+  if(s < 3600) return Math.round(s/60*10)/10 + 'm';
+  return (Math.round(s/360)/10) + 'h';
+}
+
+// Champion picker for the well — single slot at a time. Filters out
+// champions already locked elsewhere (forge / expedition / other well
+// slot). Click a champion to assign to slot N. If a champion is already
+// in slot N, clicking the slot calls release first via the panel button.
+function _shardWellPickForSlot(slotIdx){
+  var b = PERSIST.town.buildings.shard_well;
+  if(!b || !b.unlocked) return;
+  if(slotIdx < 0 || slotIdx >= SHARD_WELL_MAX_ROSTER) return;
+
+  // If slot is filled, the [×] on the slot already releases; clicking
+  // the body opens the picker to swap. We always show the picker and
+  // let the user choose someone else (or close to keep current).
+  var existing = document.getElementById('exp-popup');
+  if(existing) existing.remove();
+
+  var overlay = document.createElement('div');
+  overlay.id = 'exp-popup';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.8);display:flex;align-items:center;justify-content:center;';
+  overlay.onclick = function(e){ if(e.target===overlay) overlay.remove(); };
+
+  var box = document.createElement('div');
+  box.style.cssText = 'background:#1a0f06;border:1px solid #5a3418;border-radius:10px;padding:20px 24px;width:min(620px,90vw);max-height:75vh;overflow-y:auto;box-shadow:0 0 40px rgba(0,0,0,.8);';
+  box.onclick = function(e){ e.stopPropagation(); };
+
+  // Available = unlocked champions not currently locked elsewhere.
+  // Champion already in THIS slot is shown so the player can re-pick
+  // the same one (no-op) or someone else.
+  var currentInSlot = (b.assignedChampIds||[])[slotIdx] || null;
+  var available = (PERSIST.unlockedChamps||[]).filter(function(id){
+    if(!CREATURES[id] || id === 'dojo_tiger') return false;
+    if(id === currentInSlot) return true; // always show whoever's already in slot
+    var cp = PERSIST.champions[id];
+    if(!cp) return true;
+    if(cp.lockedExpedition !== null && cp.lockedExpedition !== undefined) return false;
+    if(cp.lockedForge      !== null && cp.lockedForge      !== undefined) return false;
+    if(cp.lockedShardWell  !== null && cp.lockedShardWell  !== undefined) return false;
+    return true;
+  });
+
+  // Sort by total stats desc — gives a sense of "strongest first" but
+  // doesn't bias toward any particular stat (player may want any).
+  available.sort(function(a, b){
+    var ca = getChampPersist(a), cb = getChampPersist(b);
+    var sa = (ca.stats.str||0) + (ca.stats.agi||0) + (ca.stats.wis||0);
+    var sb = (cb.stats.str||0) + (cb.stats.agi||0) + (cb.stats.wis||0);
+    return sb - sa;
+  });
+
+  // Round 59: formula hint ("STR builds well XP · AGI speeds generation
+  // · WIS raises cap") removed. Mechanics live in the Shard Well
+  // tutorial; the picker is for choosing a champion, not for re-teaching.
+  var html = '<div style="font-family:Cinzel,serif;font-size:12px;color:#d4a843;letter-spacing:3px;margin-bottom:14px;">ASSIGN TO SLOT '+(slotIdx+1)+'</div>'
+    + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;">';
+
+  available.forEach(function(id){
+    var ch = CREATURES[id]; var cp = getChampPersist(id);
+    var isCurrent = id === currentInSlot;
+    html += '<div class="exp-pick-option '+getAscensionClass(id)+(isCurrent?' selected':'')+'" style="position:relative;padding:12px 8px;" onclick="document.getElementById(\'exp-popup\').remove();_shardWellAssign('+slotIdx+',\''+id+'\');">'
+      + (isCurrent?'<div style="position:absolute;top:4px;right:6px;font-size:11px;color:#9adc7e;">✓</div>':'')
+      + '<div style="margin-bottom:6px;">'+creatureImgHTML(id,ch.icon,'44px')+'</div>'
+      + '<div style="font-family:Cinzel,serif;font-size:10px;color:#c0a060;">'+ch.name+'</div>'
+      + '<div style="font-size:7px;color:#5a4020;">Lv.'+cp.level+' '+getAscensionChipHTML(id)+'</div>'
+      + '<div style="font-size:7px;color:#4a3020;margin-top:3px;">'
+      +   '<span style="color:#e88060;">STR</span>:'+Math.round(cp.stats.str)+' '
+      +   '<span style="color:#9adc7e;">AGI</span>:'+Math.round(cp.stats.agi)+' '
+      +   '<span style="color:#9ad8e8;">WIS</span>:'+Math.round(cp.stats.wis)
+      + '</div>'
+      + '</div>';
+  });
+  if(!available.length){
+    html += '<div style="font-size:9px;color:#3a2010;font-style:italic;padding:12px;">All champions are busy elsewhere.</div>';
+  }
+  html += '</div>';
+
+  // Cancel / clear-slot row at the bottom
+  html += '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">';
+  if(currentInSlot){
+    html += '<button onclick="document.getElementById(\'exp-popup\').remove();_shardWellRelease('+slotIdx+');" '
+      + 'style="font-family:Cinzel,serif;font-size:9px;padding:7px 14px;border-radius:3px;border:1px solid #5a2020;background:transparent;color:#a04040;cursor:pointer;letter-spacing:1px;">CLEAR SLOT</button>';
+  }
+  html += '<button onclick="document.getElementById(\'exp-popup\').remove();" '
+    + 'style="font-family:Cinzel,serif;font-size:9px;padding:7px 14px;border-radius:3px;border:1px solid #5a3a18;background:transparent;color:#a08858;cursor:pointer;letter-spacing:1px;">CANCEL</button>';
+  html += '</div>';
+
+  box.innerHTML = html;
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
 }
 
 
@@ -365,7 +923,12 @@ function refreshBuildingPanel(id){
 // Placeholder panels for buildings not yet implemented
 function refreshAdventurersHallPanel(){ _renderHallContent(); }
 
-function refreshArenaPanel(){}
+// Round 48: refreshArenaPanel was relocated to data/arena.js — single
+// source of truth lives there alongside the rest of the Arena code
+// (sparring tick, challenge code decode, etc.). town.js still calls it
+// via refreshBuildingPanel(id) dispatch above; arena.js loads after
+// town.js so the canonical version is defined by the time anything
+// triggers it. See data/arena.js for the body.
 
 var _hallTab = 'quests';
 
@@ -560,11 +1123,42 @@ var NPC_CONDITIONS = {
   sanctum: [
     {id:'can_ascend', check:function(){
       return PERSIST.unlockedChamps.some(function(id){ return canAscend(id); });
-    }, lines:['One of your champions is ready to ascend. Don\'t keep them waiting. I never liked waiting.','The mastery bar is full. You know what to do. I certainly did, back in my day.']},
+    }, lines:[
+      'One of your champions stands at the threshold, my lord. The rite waits only for you.',
+      'A champion is ready. The gem-light has chosen, and so, in turn, must you.',
+      'I sense one ripe for ascension. Speak the word, and the rite begins.'
+    ]},
     {id:'has_relics', check:function(){
       var relics = PERSIST.town.relics||{};
       return Object.keys(relics).some(function(id){ return relics[id]>0; });
-    }, lines:['You\'ve got relics sitting in inventory. Equip them! I never left slots empty. That\'s amateur hour.']},
+    }, lines:[
+      'Relics rest unbound, my lord. They long for a hand worthy of them. Yours, perhaps.',
+      'Treasures sit idle in your vault. They sing softly. They wait to be worn.',
+      'Unequipped relics, my lord; a small sin against ones so deserving. I would never presume to hurry you.'
+    ]},
+  ],
+  // Round 45: M'bur's stateful lines. Terse reactions to current
+  // forge state — slot fullness, ready-to-collect, etc.
+  forge: [
+    {id:'slot_ready', check:function(){
+      var b = PERSIST.town.buildings.forge;
+      if(!b || !b.queue) return false;
+      var now = Date.now();
+      return b.queue.some(function(j){
+        return j && j.startTime && j.totalMs && (now - j.startTime) >= j.totalMs;
+      });
+    }, lines:[
+      "Something's done. Pick it up before it cools."
+    ]},
+    {id:'all_slots_busy', check:function(){
+      var b = PERSIST.town.buildings.forge;
+      if(!b || !b.queue) return false;
+      var slots = (typeof getForgeSlotCount === 'function') ? getForgeSlotCount() : 1;
+      return b.queue.length >= slots;
+    }, lines:[
+      "Slots are full. Something has to finish before I start more.",
+      "All forges going. You'll have to wait or take what's done."
+    ]},
   ],
 };
 
@@ -636,16 +1230,66 @@ var NPC_RANDOM_LINES = {
     'The rare shelf? Oh, that\'s... special. Very special.',
   ],
   sanctum: [
-    'Ah, you\'re back. I was just thinking about how good I used to be.',
-    'I retired undefeated, you know. Well... mostly undefeated.',
-    'Your champions have potential. Not as much as I had, obviously.',
-    'Relics are nice. But talent? That\'s what really matters. I should know.',
-    'Ascension changes you. Trust me. I\'ve been through it... a few times.',
-    'I could still fight if I wanted to. I just choose not to. Very deliberately.',
-    'Back in my day, we didn\'t need seven relic slots. I only needed two. Maybe three.',
-    'The mastery bar fills faster if you actually win fights. Just a tip. From experience.',
-    'Don\'t worry about the stats. Worry about the player behind them. That\'s what I always say.',
-    'You remind me of me. Before I got good. I mean — you\'re doing great.',
+    'You return, ascended one. The hall has missed your footstep.',
+    'How brightly your champions burn. I tend the flame, nothing more.',
+    'Ascension is no small thing. And yet you wear it as a coat.',
+    'Speak, lord, and the Sanctum listens. As do I.',
+    'The relics know your hand already. They sing when you draw near.',
+    'I have served three keepers before me. None matched the quiet you bring.',
+    'A worthier soul has not crossed this threshold in an age. Truly.',
+    'The mastery comes only to those the gems already favour. As they favour you.',
+    'Forgive my plainness, my lord. Words betray what your champions have already proven.',
+    'Tell me which to ascend, and it shall be so. Your wisdom is my office.',
+    'I dreamt of your roster last night. The dream was kind.',
+    'Even the gem-light bends toward you. I notice these things.',
+  ],
+  shard_well: [
+    'You came back. They knew you would.',
+    'Listen. ...No, don\'t. It\'s better that way.',
+    'The well is full again. Or empty. The difference is small.',
+    'They sing when no one listens. I listen anyway.',
+    'Take what you need. They don\'t mind. They wouldn\'t.',
+    'I was warned not to dream near it. So I don\'t sleep.',
+    'Three voices, three doors. They open inward.',
+    'Some shards remember. Most have forgotten what they were.',
+    'Don\'t ask where they come from. Just take them.',
+    'It hums tonight. That is not always a good sign.',
+    'The previous keeper left a note. I burned it.',
+    'They want to be carried. So carry them.',
+  ],
+  // M'bur — Forge keeper. Terse, fire-themed, gruff but not unkind.
+  // Strikes don't waste words. Heat metaphors throughout. (Round 45:
+  // migrated from the legacy FORGE_NPC_LINES system to the unified
+  // playNpcGreeting pipeline; expanded from 5 lines to 12.)
+  forge: [
+    "The fire likes you today. Don't ask why.",
+    "Bring me ore, bring me bones. Both burn.",
+    "Patience. Steel does not hurry.",
+    "I made a relic once that cried. Won't do that again.",
+    "Strike while it's hot. Wait while it's hotter.",
+    "Hands on the bellows. Let me work.",
+    "A relic forged in haste cracks in haste.",
+    "Heat does the heavy lifting. I just point it.",
+    "Each champion forges different. Some loud. Some quiet. None pretty.",
+    "The forge knows your name now. Took long enough.",
+    "Bring me a sapphire and we'll talk about something interesting.",
+    "If it breaks, it was always going to break. If it sings, I made it right.",
+  ],
+  // Round 42: Theo's Arena lines. Hot-headed ex-champion, still fights
+  // when the mood takes him, casually braggy, more action than reflection.
+  arena: [
+    'You showed up. Good. I was about to fight without you.',
+    'Stands are empty today. They\'ll fill up. They always do.',
+    'I sparred with two of mine yesterday. Won one. Lost the other. Still standing.',
+    'Champions tighten up if they don\'t fight someone who hits back. Bring them.',
+    'Retired? Who told you that. I just don\'t do it daily anymore.',
+    'You want to gamble? Fine. I\'ll take the wager. I always take the wager.',
+    'Mind a few scars. They\'re payment for stories.',
+    'I can still throw a man across this hall. I won\'t. But I can.',
+    'The Sanctum can have its candles. I\'ll be here, by the sand.',
+    'WIS pays better odds, supposedly. I\'ve never met a smart fighter who lost less.',
+    'Bring whoever you trust. If they break, that\'s data.',
+    'I taught one of yours a trick last week. Don\'t ask which.',
   ],
 };
 
@@ -654,7 +1298,10 @@ var NPC_RARE_LINES = {
   adventurers_hall: {chance:0.08, lines:[LEONA_RARE]},
   bestiary: {chance:0.08, lines:['Sometimes I dream about creatures I\'ve never seen. Is that weird? ...Don\'t answer that.']},
   market: {chance:0.08, lines:['Between you and me... I once sold a lure to a king. He caught something that ate his castle. Good times.']},
-  sanctum: {chance:0.08, lines:['I once ascended so fast the gem cracked mid-ceremony. The Keeper before me fainted. Good times.']},
+  sanctum: {chance:0.08, lines:['Few have walked this hall and remained themselves. You wear it lightly, as the great ones do.']},
+  shard_well: {chance:0.08, lines:['I watched a champion lean too close, once. They never spoke of it. They no longer speak at all.']},
+  arena: {chance:0.08, lines:['Old keeper got soft, started ascending people instead of hitting them. Not me. I\'m exactly the right amount of hard.']},
+  forge: {chance:0.08, lines:['I forged for a king once. Bad commission. Bad king. Good steel.']},
 };
 
 var NPC_VERY_RARE_LINES = {
@@ -669,9 +1316,49 @@ var NPC_VERY_RARE_LINES = {
     'I wasn\'t always a merchant. I used to be an adventurer. Then I discovered profit margins.',
   ]},
   sanctum: {chance:0.02, lines:[
-    '...Sometimes I miss it. The fighting. The winning. Mostly the winning.',
+    'Three keepers have stood here before me, my lord. None served one as luminous as you. ...They knew, in the end. They went quietly.',
+  ]},
+  forge: {chance:0.02, lines:[
+    'Sometimes I think the metal remembers. The iron in your blood. The steel that ends up in your edge. Same source.',
   ]},
 };
+
+// Building IDs whose `<id>-npc-msg` element actually uses a different DOM
+// prefix. Currently just one — the Adventurer's Hall HTML uses 'hall' for
+// brevity but the building id is 'adventurers_hall'.
+var NPC_DOM_PREFIX = { adventurers_hall: 'hall' };
+
+// Single helper that owns the "greet the player when entering a building"
+// pattern. Replaces the 5 inline copies that used to do
+//   var msgEl = document.getElementById(id+'-npc-msg');
+//   if(msgEl){ npcTypewriter(msgEl, getNpcGreeting(id), {pitch:...}); }
+// across vault.js, town.js (hall, bestiary, sanctum, market).
+//
+// opts:
+//   once   — if true, mark the msg element so subsequent calls during
+//            the same panel-open cycle don't re-greet. Used by sanctum
+//            and market where refresh runs frequently.
+// Round 44: greeting flag is now JS-side (not on the DOM element). Some
+// buildings rebuild their inner DOM wholesale on every refresh — the
+// Shard Well's panel is rebuilt every shardWellTick (~every few seconds)
+// — so the old `msgEl._greeted` flag was being lost and the greeting
+// re-fired with the typewriter sound, which was annoying. Now the flag
+// is keyed by building id in `_npcGreetedThisOpen`, survives DOM
+// rebuilds, and is reset by closeBuildingPanel(). Refresh code can
+// safely call playNpcGreeting(id, {once:true}) without re-greeting.
+var _npcGreetedThisOpen = {};
+
+function playNpcGreeting(buildingId, opts){
+  opts = opts || {};
+  if(opts.once && _npcGreetedThisOpen[buildingId]) return;
+  var prefix = NPC_DOM_PREFIX[buildingId] || buildingId;
+  var msgEl = document.getElementById(prefix + '-npc-msg');
+  if(!msgEl) return;
+  var msg = getNpcGreeting(buildingId);
+  var pitch = (BUILDINGS[buildingId] && BUILDINGS[buildingId].npc && BUILDINGS[buildingId].npc.pitch) || 1.0;
+  if(typeof npcTypewriter === 'function') npcTypewriter(msgEl, msg, {pitch: pitch});
+  if(opts.once) _npcGreetedThisOpen[buildingId] = true;
+}
 
 function getNpcGreeting(buildingId){
   // Check very rare first
@@ -708,16 +1395,25 @@ function getNpcGreeting(buildingId){
     } catch(e){}
   }
 
-  // Fallback to random
+  // Fallback to random pool — but avoid repeating the immediately-
+  // previous line so the player never hears the same line twice in
+  // a row. (Round 44.) If the pool only has one line, just return it.
   var pool = NPC_RANDOM_LINES[buildingId] || ['...'];
-  return pool[Math.floor(Math.random() * pool.length)];
+  if(pool.length <= 1) return pool[0];
+  var lastLine = _lastNpcLine[buildingId];
+  var available = lastLine ? pool.filter(function(l){ return l !== lastLine; }) : pool;
+  if(!available.length) available = pool; // defensive — shouldn't hit
+  var pick = available[Math.floor(Math.random() * available.length)];
+  _lastNpcLine[buildingId] = pick;
+  return pick;
 }
+
+// Round 44: tracks the last greeting line shown per building so we
+// can avoid repeating it back-to-back. Cleared per-building when
+// getNpcGreeting picks a new one.
+var _lastNpcLine = {};
 function openAdventurersHall(){
-  var msgEl = document.getElementById('hall-npc-msg');
-  if(msgEl){
-    var msg = getNpcGreeting('adventurers_hall');
-    npcTypewriter(msgEl, msg, {pitch: BUILDINGS.adventurers_hall.npc.pitch || 1.5});
-  }
+  playNpcGreeting('adventurers_hall');
   // Refresh level bar
   var hallLv = getBuildingLevel('adventurers_hall');
   var hallXp = (PERSIST.town.buildingXp && PERSIST.town.buildingXp.adventurers_hall) || 0;
@@ -740,7 +1436,9 @@ function closeAdventurersHall(){
 
 function switchHallTab(tab){
   _hallTab = tab;
-  document.querySelectorAll('#adventurers_hall-panel-bg .vault-tab').forEach(function(el){ el.classList.remove('active'); });
+  // Hall tabs use the chunky .bestiary-tab style as of Round 36 (was
+  // .vault-tab). Same selector logic, different class.
+  document.querySelectorAll('#adventurers_hall-panel-bg .bestiary-tab').forEach(function(el){ el.classList.remove('active'); });
   var tabEl = document.getElementById('htab-' + tab);
   if(tabEl) tabEl.classList.add('active');
   _renderHallContent();
@@ -857,6 +1555,169 @@ function _renderAchievementsTab(){
 
   html += '<div class="hall-ach-grid">' + cardsHtml + '</div>';
   return html;
+}
+
+// ─── Chip-link helpers ──────────────────────────────────────────────
+// Inline clickable chips for proper nouns in quest text (and anywhere
+// else we want "click for more info"). Each chip routes to the system
+// that owns that information — bestiary for creatures/areas/keywords,
+// champion panel for champions. Per the project philosophy: don't tell
+// players where to go, give them a link to the info that lets them
+// figure it out.
+
+function bestiaryCreatureLinkHTML(creatureId, label){
+  var name = label || (CREATURES[creatureId] ? CREATURES[creatureId].name : creatureId);
+  if(!creatureId || !CREATURES[creatureId]) return _csqEsc(name);
+  return '<span class="qchip qchip-creature" onclick="event.stopPropagation();openBestiaryCreature(\''+creatureId+'\');" title="View in Bestiary">'+_csqEsc(name)+'</span>';
+}
+
+function bestiaryAreaLinkHTML(areaId, label){
+  var area = (typeof AREA_DEFS !== 'undefined') ? AREA_DEFS.find(function(a){return a.id===areaId;}) : null;
+  var name = label || (area ? area.name : areaId);
+  if(!areaId || !area) return _csqEsc(name);
+  return '<span class="qchip qchip-area" onclick="event.stopPropagation();openLocationInBestiary(\''+areaId+'\');" title="View in Bestiary">'+_csqEsc(name)+'</span>';
+}
+
+function bestiaryGlossaryLinkHTML(keyword, label){
+  var name = label || keyword;
+  if(!keyword) return _csqEsc(name);
+  // data-kw lets the existing card kw-tooltip listener (cards.js) show
+  // the keyword definition on hover; click navigates to the glossary.
+  return '<span class="qchip qchip-keyword kw" data-kw="'+_csqEsc(keyword)+'" onclick="event.stopPropagation();openBestiaryGlossary(\''+keyword+'\');" title="Click to open Glossary">'+_csqEsc(name)+'</span>';
+}
+
+function championLinkHTML(champId, label){
+  var name = label || (CREATURES[champId] ? CREATURES[champId].name : champId);
+  if(!champId || !CREATURES[champId]) return _csqEsc(name);
+  return '<span class="qchip qchip-champion" onclick="event.stopPropagation();openChampPanelFor(\''+champId+'\');" title="View champion">'+_csqEsc(name)+'</span>';
+}
+
+// ─── Quest action-line composer ─────────────────────────────────────
+// Build the human-readable action line for a quest, embedding chip links
+// for proper nouns. Defensive across the existing quest types (kill /
+// clear) and pre-wired for the upcoming variants (kill_any, apply_keyword,
+// kill_with_champ). Falls back to the quest description if the type is
+// unrecognised.
+function _questActionHtml(quest){
+  if(!quest) return '';
+  var t = quest.type;
+  var n = quest.target || 0;
+  if(t === 'kill' && quest.enemyId){
+    return 'Defeat ' + n + ' ' + bestiaryCreatureLinkHTML(quest.enemyId);
+  }
+  if(t === 'clear' && quest.areaId){
+    return 'Clear ' + bestiaryAreaLinkHTML(quest.areaId);
+  }
+  if(t === 'runs'){
+    // Existing template type — "complete N runs, any area"
+    return 'Complete ' + n + ' runs';
+  }
+  if(t === 'kill_any'){
+    return 'Defeat ' + n + ' enemies';
+  }
+  if(t === 'apply_keyword' && quest.keyword){
+    return 'Apply ' + bestiaryGlossaryLinkHTML(quest.keyword) + ' ' + n + ' times';
+  }
+  if(t === 'kill_with_champ' && quest.enemyId && quest.champId){
+    return 'Defeat ' + n + ' ' + bestiaryCreatureLinkHTML(quest.enemyId)
+      + ' with ' + championLinkHTML(quest.champId);
+  }
+  // Round 48: arena_fight quests have an embedded fight payload. The
+  // creature chip routes to the bestiary as usual; the player visits
+  // the Arena building to pick up the INCOMING MATCH card and BEGIN.
+  if(t === 'arena_fight' && quest.fight && quest.fight.id){
+    var prefix = (n > 1) ? ('Defeat ' + n + ' times in the Arena: ') : 'Defeat in the Arena: ';
+    return prefix + bestiaryCreatureLinkHTML(quest.fight.id);
+  }
+  // Fallback: use the description as-is (escaped). Bracketed [Keywords]
+  // are passed through renderKeywords so card-style keyword styling still
+  // works for hand-authored quest copy.
+  var raw = quest.desc || quest.title || '';
+  if(typeof renderKeywords === 'function') return renderKeywords(_csqEsc(raw));
+  return _csqEsc(raw);
+}
+
+// ─── Quest reward strip ─────────────────────────────────────────────
+// Compact one-line rewards rendering — meant to fit inside a 240px rail
+// row. Long labels are dropped in favour of icons and amounts; full names
+// stay visible in the Hall card.
+function _questRewardChipsHTML(quest){
+  var rewards = (quest && quest.rewards) || [];
+  if(!rewards.length) return '';
+  var parts = rewards.map(function(r){
+    if(!r) return '';
+    if(r.type === 'gold') return '<span class="qrwd">+'+r.amount+'g</span>';
+    if(r.type === 'soul_shards') return '<span class="qrwd">+'+r.amount+' ✦</span>';
+    if(r.type === 'mastery_xp') return '<span class="qrwd">+'+r.amount+' mastery</span>';
+    if(r.type === 'material'){
+      // Quest templates carry icon directly on the reward (no r.id lookup
+      // required). Fall back to MATERIALS lookup and finally a generic
+      // chunk glyph if neither is provided.
+      var icon = r.icon
+        || ((typeof MATERIALS !== 'undefined' && r.id && MATERIALS[r.id]) ? MATERIALS[r.id].icon : null)
+        || '🪨';
+      return '<span class="qrwd">'+icon+' '+r.amount+'</span>';
+    }
+    return '<span class="qrwd">+'+r.amount+' '+_csqEsc(r.label || r.type)+'</span>';
+  }).filter(Boolean);
+  return '<div class="qrwd-strip">'+parts.join(' ')+'</div>';
+}
+
+// Render the active-quests rail on the champion-select screen. Reads
+// PERSIST.town.quests.active and pulls each entry's def out of .offered
+// so we can show title/issuer/target. Rebuilt by rebuildChampGrid each
+// time the screen refreshes — no separate ticker needed.
+function buildCsQuestRail(){
+  var rail = document.getElementById('cs-quests-rail');
+  if(!rail) return;
+  var quests = (PERSIST.town && PERSIST.town.quests) ? PERSIST.town.quests : null;
+  var active = (quests && Array.isArray(quests.active)) ? quests.active : [];
+  var offered = (quests && Array.isArray(quests.offered)) ? quests.offered : [];
+
+  var maxActive = (typeof getMaxActiveQuests === 'function') ? getMaxActiveQuests() : 3;
+  var head =
+      '<div class="cs-quests-rail-title">ACTIVE QUESTS</div>'
+    + '<div class="cs-quests-rail-sub">Tracking '+active.length+' of '+maxActive+'.</div>';
+
+  if(!active.length){
+    rail.innerHTML = head
+      + '<div class="cs-quests-rail-empty">No quests in motion.<br>Visit the Adventurer\'s Hall to pick one up.</div>'
+      + '<a class="cs-quests-rail-link" onclick="navToTown();">OPEN ADVENTURER\'S HALL</a>';
+    return;
+  }
+
+  var rows = '';
+  active.forEach(function(a){
+    var def = offered.find(function(o){ return o.id === a.id; });
+    if(!def) return; // defensive — quest may have been removed
+    var prog = a.progress || 0;
+    var target = def.target || 1;
+    var pct = Math.min(100, Math.round((prog/target)*100));
+    var complete = prog >= target;
+    // Story quests (chained, hand-authored) get a distinct visual frame.
+    // Currently flagged via def.isStory or def.chain — both fields are
+    // optional today, present once Round-32-or-later wires the questline
+    // infrastructure. Random bounties from _generateBounties have neither.
+    var storyCls = (def.isStory || def.chain) ? ' cs-q-row-story' : '';
+    var titlePrefix = storyCls ? '<span class="cs-q-star">★</span> ' : '';
+    rows +=
+        '<div class="cs-q-row'+storyCls+'">'
+      +   '<div class="cs-q-row-head">'
+      +     '<span class="cs-q-name">'+titlePrefix+_csqEsc(def.title || a.id)+'</span>'
+      +     '<span class="cs-q-frac'+(complete?' complete':'')+'">'+prog+' / '+target+'</span>'
+      +   '</div>'
+      +   '<div class="cs-q-action">'+_questActionHtml(def)+'</div>'
+      +   '<div class="cs-q-bar"><div class="cs-q-bar-fill'+(complete?' complete':'')+'" style="width:'+pct+'%;"></div></div>'
+      +   _questRewardChipsHTML(def)
+      + '</div>';
+  });
+
+  rail.innerHTML = head + rows
+    + '<a class="cs-quests-rail-link" onclick="navToTown();">OPEN HALL FOR DETAILS →</a>';
+}
+
+function _csqEsc(s){
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
 function _renderQuestsTab(){
@@ -996,12 +1857,14 @@ function _renderExpeditionsTab(){
     var isLocked = i >= maxSlots;
 
     if(isLocked){
-      html += '<div class="exp-row exp-locked">'
-        +'<div class="exp-card exp-card-empty" style="opacity:.3;">🔒</div>'
-        +'<div class="exp-card exp-card-empty" style="opacity:.3;">🔒</div>'
-        +'<div class="exp-card exp-card-empty" style="opacity:.3;">🔒</div>'
-        +'<div class="exp-bar-area"><div style="font-size:8px;color:#3a2010;text-align:center;font-family:Cinzel,serif;letter-spacing:1px;">HALL Lv.'+(2+i*2)+' TO UNLOCK</div></div>'
-        +'</div>';
+      html += _expL1RenderLocked(2 + i*2);
+      continue;
+    }
+
+    // Resting sub-state: no champ but a rest timer is still ticking down
+    var nowMs = Date.now();
+    if(!slot.champId && slot.restUntil && slot.restUntil > nowMs){
+      html += _expL1RenderResting(slot, i);
       continue;
     }
 
@@ -1009,123 +1872,327 @@ function _renderExpeditionsTab(){
       // Auto-activate first empty slot for dispatch
       if(_expSendSlot === null && i < maxSlots) _expSendSlot = i;
       var isBuilding = _expSendSlot === i;
-
       if(isBuilding){
-        var champCh = _expSendChamp ? CREATURES[_expSendChamp] : null;
-        var champCp = _expSendChamp ? getChampPersist(_expSendChamp) : null;
-        var areaObj = _expSendArea ? AREA_DEFS.find(function(a){ return a.id===_expSendArea; }) : null;
-        var typeObj = _expSendType && typeof EXPEDITION_TYPES!=='undefined' ? EXPEDITION_TYPES[_expSendType] : null;
-        var canConfirm = _expSendChamp && _expSendArea && _expSendType;
-
-        html += '<div class="exp-row exp-building">';
-        // Champion card
-        html += '<div class="exp-card'+(champCh?' exp-card-filled':' exp-card-empty')+'" style="cursor:pointer;" onclick="_expPickChamp()">';
-        if(champCh){
-          html += '<div style="margin-bottom:4px;">'+creatureImgHTML(_expSendChamp,champCh.icon,'40px')+'</div>'
-            +'<div style="font-family:Cinzel,serif;font-size:9px;color:#c0a060;">'+champCh.name+'</div>'
-            +'<div style="font-size:7px;color:#5a4020;">Lv.'+champCp.level+'</div>';
-        } else {
-          html += '<div style="font-size:24px;color:#5a3818;">+</div>'
-            +'<div style="font-family:Cinzel,serif;font-size:8px;color:#5a4020;">CHAMPION</div>';
-        }
-        html += '</div>';
-        // Location card
-        html += '<div class="exp-card'+(areaObj?' exp-card-filled':' exp-card-empty')+'" style="cursor:pointer;'+(areaObj?'background:'+(areaObj.bg||'#1a1208')+';':'')+ '" onclick="_expPickArea()">';
-        if(areaObj){
-          html += '<div style="margin-bottom:4px;">'+areaImgHTML(areaObj.id,areaObj.icon,'36px')+'</div>'
-            +'<div style="font-family:Cinzel,serif;font-size:9px;color:#e8d7a8;text-shadow:0 1px 2px #000;">'+areaObj.name+'</div>'
-            +'<div style="font-size:7px;color:#b0a080;">Lv.'+areaObj.levelRange[0]+'–'+areaObj.levelRange[1]+'</div>';
-        } else {
-          html += '<div style="font-size:24px;color:#3a2818;">↗</div>'
-            +'<div style="font-family:Cinzel,serif;font-size:8px;color:#5a4020;">LOCATION</div>';
-        }
-        html += '</div>';
-        // Duration card
-        html += '<div class="exp-card'+(typeObj?' exp-card-filled':' exp-card-empty')+'" style="cursor:pointer;" onclick="_expPickType()">';
-        if(typeObj){
-          html += '<div style="font-size:20px;margin-bottom:4px;color:#c0a060;">'+typeObj.icon+'</div>'
-            +'<div style="font-family:Cinzel,serif;font-size:9px;color:#c0a060;">'+typeObj.name+'</div>'
-            +'<div style="font-size:7px;color:#5a4020;">'+_formatMs(typeObj.durationMs)+'</div>';
-        } else {
-          html += '<div style="font-size:24px;color:#3a2818;">⏱</div>'
-            +'<div style="font-family:Cinzel,serif;font-size:8px;color:#5a4020;">DURATION</div>';
-        }
-        html += '</div>';
-        // Confirm bar
-        html += '<div class="exp-bar-area" style="display:flex;gap:8px;">'
-          +'<button class="exp-dispatch-btn" style="flex:1;'+(canConfirm?'':'opacity:.4;cursor:not-allowed;')+'" '
-            +(canConfirm?'onclick="_expConfirmSend()"':'disabled')+'>CONFIRM DISPATCH</button>'
-          +'</div>';
-        html += '</div>';
+        html += _expL1RenderBuilder(i);
       } else {
-        // Additional empty slot (not the active builder)
-        html += '<div class="exp-row exp-empty" onclick="_expSendSlot='+i+';_expSendChamp=null;_expSendArea=null;_expSendType=null;_renderHallContent();">'
-          +'<div class="exp-card exp-card-empty" style="grid-column:1/-1;cursor:pointer;">'
-            +'<div style="font-size:20px;color:#3a2818;">+</div>'
-            +'<div style="font-family:Cinzel,serif;font-size:8px;color:#4a3020;letter-spacing:1px;">DISPATCH TO SLOT '+(i+1)+'</div>'
-          +'</div>'
-          +'</div>';
+        html += _expL1RenderEmptyBar(i);
       }
       continue;
     }
 
-    // Active or complete
-    var elapsed = Date.now() - slot.startTime;
+    // Active or ready
+    var elapsed = nowMs - slot.startTime;
     var total = slot.totalMs || 1;
-    var isComplete = elapsed >= total;
-    var pct = Math.min(100, Math.round((elapsed / total) * 100));
-    var remaining = Math.max(0, total - elapsed);
-    var timeStr = _formatMs(remaining);
-
-    var champ = CREATURES[slot.champId];
-    var champName = champ ? champ.name : slot.champId;
-    var area = AREA_DEFS.find(function(a){ return a.id === slot.areaId; });
-    var areaName = area ? area.name : slot.areaId;
-    var typeDef = typeof EXPEDITION_TYPES !== 'undefined' ? EXPEDITION_TYPES[slot.type] : null;
-    var typeName = typeDef ? typeDef.name : (slot.type || 'Scout');
-
-    html += '<div class="exp-row'+(isComplete?' exp-complete':' exp-active')+'">';
-
-    // Champion card
-    html += '<div class="exp-card '+getAscensionClass(slot.champId)+'" style="position:relative;">'
-      +'<div style="margin-bottom:4px;">'+creatureImgHTML(slot.champId, champ?champ.icon:'?', '40px')+'</div>'
-      +'<div style="font-family:Cinzel,serif;font-size:9px;color:#c0a060;">'+champName+'</div>'
-      +'<div style="font-size:7px;color:#5a4020;">'+getAscensionChipHTML(slot.champId)+'</div>'
-      +'</div>';
-
-    // Location card
-    html += '<div class="exp-card">'
-      +'<div style="margin-bottom:4px;">'+(area?areaImgHTML(area.id,area.icon,'32px'):'↗')+'</div>'
-      +'<div style="font-family:Cinzel,serif;font-size:9px;color:#c0a060;">'+areaName+'</div>'
-      +'<div style="font-size:7px;color:#5a4020;">Lv.'+(area?area.levelRange[0]+'-'+area.levelRange[1]:'?')+'</div>'
-      +'</div>';
-
-    // Duration card
-    html += '<div class="exp-card">'
-      +'<div style="font-size:20px;margin-bottom:4px;color:'+(isComplete?'#d4a843':'#5a4020')+';">⏱</div>'
-      +'<div style="font-family:Cinzel,serif;font-size:9px;color:#c0a060;">'+typeName+'</div>'
-      +'<div style="font-size:7px;color:#5a4020;">'+_formatMs(total)+'</div>'
-      +'</div>';
-
-    // Progress bar area
-    html += '<div class="exp-bar-area">'
-      +'<div class="exp-progress-wrap"><div class="exp-progress-fill'+(isComplete?' complete':'')+'" style="width:'+pct+'%"></div></div>'
-      +'<div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">'
-        +'<span style="font-size:8px;color:'+(isComplete?'#d4a843':'#5a4020')+';font-family:Cinzel,serif;">'
-          +(isComplete?'✦ READY TO COLLECT':'Returning in '+timeStr)
-        +'</span>';
-
-    if(isComplete){
-      html += '<button class="exp-collect-btn" onclick="collectExpedition('+i+')">COLLECT</button>';
+    var isReady = elapsed >= total;
+    if(isReady){
+      html += _expL1RenderReady(slot, i);
     } else {
-      html += '<button class="exp-recall-btn" onclick="recallExpedition('+i+')">RECALL</button>';
+      html += _expL1RenderActive(slot, i, elapsed, total);
     }
-    html += '</div></div>';
-    html += '</div>';
   }
 
   html += '</div>';
   return html;
+}
+
+// ── Layout 1 row helpers ────────────────────────────────────────────
+// Each helper returns an HTML string for one slot row in a specific
+// state. Keep these small so future variants (multi-champ, difficulty
+// matching, fit chip color states) can grow without bloating the
+// dispatch loop above.
+
+function _expL1RenderLocked(unlockLv){
+  return '<div class="exp-row locked">'
+    + '<div class="exp-locked-icon">🔒</div>'
+    + '<div class="exp-locked-label">HALL Lv.'+unlockLv+' TO UNLOCK</div>'
+    + '</div>';
+}
+
+function _expL1RenderEmptyBar(slotIdx){
+  return '<div class="exp-row-empty-bar" onclick="_expSendSlot='+slotIdx+';_expSendChamps=[];_expSendArea=null;_expSendType=null;_renderHallContent();">'
+    + '+ DISPATCH TO SLOT '+(slotIdx+1)
+    + '</div>';
+}
+
+function _expL1RenderBuilder(slotIdx){
+  var roster  = (Array.isArray(_expSendChamps)?_expSendChamps:[]).slice();
+  var areaObj = _expSendArea ? AREA_DEFS.find(function(a){ return a.id===_expSendArea; }) : null;
+  var typeObj = _expSendType && typeof EXPEDITION_TYPES!=='undefined' ? EXPEDITION_TYPES[_expSendType] : null;
+  var canConfirm = roster.length > 0 && _expSendArea && _expSendType;
+  var maxRoster = (typeof EXP_MAX_ROSTER !== 'undefined') ? EXP_MAX_ROSTER : 3;
+
+  // Champion column — chip-list with optional + ADD
+  var champCol;
+  if(roster.length){
+    var chips = '';
+    roster.forEach(function(id){ chips += _expL1ChampChip(id, true); });
+    var canAdd = roster.length < maxRoster;
+    var addBtn = canAdd
+      ? '<button class="exp-champ-add active" onclick="event.stopPropagation();_expPickChamp();" title="Add another champion to the roster">+ ADD</button>'
+      : '<span class="exp-champ-add-cap">FULL</span>';
+    champCol = '<div class="exp-pill" onclick="_expPickChamp()">'
+      + '<div class="exp-pill-label">CHAMPIONS · '+roster.length+' of '+maxRoster+'</div>'
+      + '<div class="exp-champ-chips">'+chips+addBtn+'</div>'
+      + '</div>';
+  } else {
+    champCol = '<div class="exp-pill empty" onclick="_expPickChamp()">'
+      + '<div class="exp-pill-label">CHAMPIONS</div>'
+      + '<div class="exp-pill-empty-text">tap to pick</div>'
+      + '</div>';
+  }
+
+  // Location column
+  var locCol;
+  if(areaObj){
+    locCol = '<div class="exp-pill" onclick="_expPickArea()">'
+      + '<div class="exp-pill-label">LOCATION</div>'
+      + '<div class="exp-pill-value"><span class="exp-pill-value-icon">◬</span>'+areaObj.name.toUpperCase()+'</div>'
+      + '<div class="exp-pill-sub">Lv.'+areaObj.levelRange[0]+'–'+areaObj.levelRange[1]+'</div>'
+      + '</div>';
+  } else {
+    locCol = '<div class="exp-pill empty" onclick="_expPickArea()">'
+      + '<div class="exp-pill-label">LOCATION</div>'
+      + '<div class="exp-pill-empty-text">tap to pick</div>'
+      + '</div>';
+  }
+
+  // Duration column
+  var durCol;
+  if(typeObj){
+    durCol = '<div class="exp-pill" onclick="_expPickType()">'
+      + '<div class="exp-pill-label">DURATION</div>'
+      + '<div class="exp-pill-value"><span class="exp-pill-value-icon">'+(typeObj.icon||'⏱')+'</span>'+typeObj.name.toUpperCase()+' · '+_formatMs(typeObj.durationMs)+'</div>'
+      + '<div class="exp-pill-sub">'+(typeObj.restMs?_formatMs(typeObj.restMs)+' rest':'no rest')+(typeObj.durationMult?' · '+typeObj.durationMult+'× yield':'')+'</div>'
+      + '</div>';
+  } else {
+    durCol = '<div class="exp-pill empty" onclick="_expPickType()">'
+      + '<div class="exp-pill-label">DURATION</div>'
+      + '<div class="exp-pill-empty-text">tap to pick</div>'
+      + '</div>';
+  }
+
+  // Dispatch CTA
+  var cta = '<button class="exp-cta exp-cta-dispatch"'+(canConfirm?'':' disabled')+(canConfirm?' onclick="_expConfirmSend()"':'')+'>DISPATCH</button>';
+
+  // Footer strip (live fit chip + AGI pill + est. line)
+  var footer = '<div class="exp-row-footer">'
+    + _expL1FitChip(roster, _expSendArea, _expSendType)
+    + (roster.length ? _expL1AgiPill(roster) : '')
+    + _expL1EstLine(roster, typeObj)
+    + '</div>';
+
+  return '<div class="exp-row builder">'
+    + '<div class="exp-row-top">'+champCol+locCol+durCol+cta+'</div>'
+    + footer
+    + '</div>';
+}
+
+function _expL1RenderActive(slot, slotIdx, elapsed, total){
+  var pct = Math.min(100, Math.max(0, (elapsed / total) * 100));
+  var remaining = Math.max(0, total - elapsed);
+  var area = AREA_DEFS.find(function(a){ return a.id === slot.areaId; });
+  var typeDef = typeof EXPEDITION_TYPES !== 'undefined' ? EXPEDITION_TYPES[slot.type] : null;
+  var champIds = _expL1SlotChampIds(slot);
+
+  return '<div class="exp-row active">'
+    + '<div class="exp-row-top">'
+      + _expL1ChampPartyBlock(champIds)
+      + _expL1ReadOnlyPill('LOCATION', '◬', (area?area.name.toUpperCase():'?'), 'Lv.'+(area?area.levelRange[0]+'–'+area.levelRange[1]:'?'))
+      + _expL1ReadOnlyPill('DURATION', (typeDef&&typeDef.icon)||'⏱', (typeDef?typeDef.name.toUpperCase():(slot.type||'?').toUpperCase())+' · '+_formatMs(total), (typeDef&&typeDef.durationMult?typeDef.durationMult+'× yield':''))
+      + '<button class="exp-cta exp-cta-recall" onclick="recallExpedition('+slotIdx+')">RECALL</button>'
+    + '</div>'
+    + '<div class="exp-progress-row">'
+      + '<div class="exp-progress-bar"><div class="exp-progress-fill" style="width:'+pct+'%;"></div></div>'
+      + '<span class="exp-progress-text">'+_formatMs(remaining)+' LEFT · '+Math.round(pct)+'%</span>'
+    + '</div>'
+    + '</div>';
+}
+
+function _expL1RenderReady(slot, slotIdx){
+  var area = AREA_DEFS.find(function(a){ return a.id === slot.areaId; });
+  var typeDef = typeof EXPEDITION_TYPES !== 'undefined' ? EXPEDITION_TYPES[slot.type] : null;
+  var champIds = _expL1SlotChampIds(slot);
+  var fitPct = (typeof slot.fitPct === 'number') ? slot.fitPct : 100;
+  return '<div class="exp-row ready">'
+    + '<div class="exp-row-top">'
+      + _expL1ChampPartyBlock(champIds, 'RETURNED')
+      + _expL1ReadOnlyPill('LOCATION', '◬', (area?area.name.toUpperCase():'?'), '')
+      + _expL1ReadOnlyPill('DURATION', (typeDef&&typeDef.icon)||'⏱', (typeDef?typeDef.name.toUpperCase():(slot.type||'?').toUpperCase())+' · DONE', '')
+      + '<button class="exp-cta exp-cta-collect" onclick="collectExpedition('+slotIdx+')">COLLECT</button>'
+    + '</div>'
+    + '<div class="exp-progress-row">'
+      + '<div class="exp-progress-bar"><div class="exp-progress-fill ready" style="width:100%;"></div></div>'
+      + '<span class="exp-progress-text" style="color:#7fc06a;">READY TO COLLECT · YIELD '+fitPct+'%</span>'
+    + '</div>'
+    + '</div>';
+}
+
+function _expL1RenderResting(slot, slotIdx){
+  // Resting = previous run finished, slot is on a rest hangover before
+  // it can dispatch again. We use slot.lastChampIds / lastAreaId / lastType
+  // (preserved by _clearExpeditionSlot) so the row can show "who just got
+  // back from where" instead of an empty placeholder.
+  var lastChampIds = (Array.isArray(slot.lastChampIds) && slot.lastChampIds.length) ? slot.lastChampIds : [];
+  var lastAreaId   = slot.lastAreaId;
+  var lastType     = slot.lastType;
+  var area = lastAreaId ? AREA_DEFS.find(function(a){ return a.id === lastAreaId; }) : null;
+  var typeDef = (lastType && typeof EXPEDITION_TYPES !== 'undefined') ? EXPEDITION_TYPES[lastType] : null;
+  var restMs = Math.max(0, slot.restUntil - Date.now());
+
+  // Champion column — show roster as small chips, "RESTING" status line
+  var champCol;
+  if(lastChampIds.length){
+    var chips = '';
+    lastChampIds.forEach(function(id){ chips += _expL1ChampChip(id, false); });
+    champCol = '<div class="exp-pill readonly">'
+      + '<div class="exp-pill-label">CHAMPIONS · RESTING</div>'
+      + '<div class="exp-champ-chips">'+chips+'</div>'
+      + '</div>';
+  } else {
+    champCol = '<div class="exp-pill readonly"><div class="exp-pill-label">CHAMPIONS</div><div class="exp-pill-empty-text">resting</div></div>';
+  }
+
+  return '<div class="exp-row resting">'
+    + '<div class="exp-row-top">'
+      + champCol
+      + _expL1ReadOnlyPill('LOCATION', '◬', area?area.name.toUpperCase():'—', '')
+      + _expL1ReadOnlyPill('DURATION', (typeDef&&typeDef.icon)||'⏱', typeDef?typeDef.name.toUpperCase()+' · DONE':'—', '')
+      + '<button class="exp-cta exp-cta-redispatch" disabled>REDISPATCH</button>'
+    + '</div>'
+    + '<div class="exp-rest-strip">'
+      + '<span class="exp-rest-label">SLOT RESTING</span>'
+      + '<span class="exp-rest-time">'+_formatMs(restMs)+' REMAINING'+(typeDef?' · '+typeDef.name.toUpperCase()+' HANGOVER':'')+'</span>'
+    + '</div>'
+    + '</div>';
+}
+
+// ── Small Layout 1 building blocks ─────────────────────────────────
+
+// Read champion roster from a slot, falling back through the various
+// shapes (new array / legacy single id / pre-rest last roster).
+function _expL1SlotChampIds(slot){
+  if(!slot) return [];
+  if(Array.isArray(slot.champIds) && slot.champIds.length) return slot.champIds.slice();
+  if(slot.champId) return [slot.champId];
+  return [];
+}
+
+function _expL1ChampChip(champId, withRemove){
+  var ch = CREATURES[champId]; if(!ch) return '';
+  var cp = getChampPersist(champId);
+  return '<div class="exp-champ-chip">'
+    + creatureImgHTML(champId, ch.icon, '22px')
+    + '<span class="exp-champ-chip-name">'+ch.name+'</span>'
+    + '<span class="exp-champ-chip-stat">AGI '+Math.round(cp.stats.agi)+'</span>'
+    + (withRemove ? '<span class="exp-champ-chip-x" onclick="event.stopPropagation();_expToggleChamp(\''+champId+'\');" title="Remove">×</span>' : '')
+    + '</div>';
+}
+
+// Renders a roster (1-3 champions) compactly inside the CHAMPIONS column.
+// Single champion → portrait + name + AGI line (preserves the look from the
+// pre-multi-champ active state). Multi-champion → stacked mini-strip.
+function _expL1ChampPartyBlock(champIds, statOverride){
+  if(!champIds || !champIds.length) return '<div class="exp-champ-active"></div>';
+  if(champIds.length === 1) return _expL1ChampActiveBlock(champIds[0], statOverride);
+
+  // Multi-champion roster: header + chip list
+  var roster = champIds.filter(function(id){ return !!CREATURES[id]; });
+  var fit = (typeof rosterActivitySpeedBonus === 'function')
+    ? rosterActivitySpeedBonus(roster, 'AGI')
+    : { effectiveStat:0, speedBonus:0 };
+  var statLine = statOverride
+    ? statOverride
+    : 'PARTY · AGI '+Math.round(fit.effectiveStat);
+  var chips = '';
+  roster.forEach(function(id){ chips += _expL1ChampChip(id, false); });
+  return '<div class="exp-champ-active" style="flex-direction:column;align-items:stretch;gap:5px;padding:6px 10px;">'
+    + '<div class="exp-champ-active-stat">'+statLine+'</div>'
+    + '<div class="exp-champ-chips">'+chips+'</div>'
+    + '</div>';
+}
+
+function _expL1ChampActiveBlock(champId, statOverride){
+  var ch = CREATURES[champId]; if(!ch) return '<div class="exp-champ-active"></div>';
+  var cp = getChampPersist(champId);
+  var statLine = statOverride
+    ? statOverride
+    : 'AGI '+Math.round(cp.stats.agi)+' · LV.'+cp.level;
+  return '<div class="exp-champ-active">'
+    + creatureImgHTML(champId, ch.icon, '36px')
+    + '<div class="exp-champ-active-info">'
+      + '<div class="exp-champ-active-name">'+ch.name+'</div>'
+      + '<div class="exp-champ-active-stat">'+statLine+'</div>'
+    + '</div>'
+    + '</div>';
+}
+
+function _expL1ReadOnlyPill(label, icon, value, sub){
+  return '<div class="exp-pill readonly">'
+    + '<div class="exp-pill-label">'+label+'</div>'
+    + '<div class="exp-pill-value"><span class="exp-pill-value-icon">'+icon+'</span>'+value+'</div>'
+    + (sub ? '<div class="exp-pill-sub">'+sub+'</div>' : '')
+    + '</div>';
+}
+
+// AGI pill for a roster (or single champion). Shows combined effective AGI
+// + the speed-bonus % time reduction.
+function _expL1AgiPill(champIds){
+  var arr = Array.isArray(champIds) ? champIds : (champIds ? [champIds] : []);
+  if(!arr.length) return '';
+  var fit = (typeof rosterActivitySpeedBonus === 'function')
+    ? rosterActivitySpeedBonus(arr, 'AGI')
+    : { speedBonus:0, effectiveStat:0 };
+  return '<span class="exp-agi-pill">'
+    + '<span class="exp-agi-pill-stat">AGI '+Math.round(fit.effectiveStat)+'</span>'
+    + '<span class="exp-agi-pill-sep"></span>'
+    + '<span class="exp-agi-pill-bonus">−'+Math.round(fit.speedBonus*100)+'% TIME</span>'
+    + '</span>';
+}
+
+// Live fit chip — graded color + dots based on roster vs (area, type)
+// difficulty. Returns the neutral placeholder when any of the three
+// ingredients is missing.
+function _expL1FitChip(champIds, areaId, typeId){
+  var arr = Array.isArray(champIds) ? champIds : (champIds ? [champIds] : []);
+  if(!arr.length || !areaId || !typeId){
+    return '<span class="exp-fit-chip" title="Pick all three to see fit grade.">'
+      + '<span class="exp-fit-dots">'
+        + '<span class="exp-fit-dot"></span>'
+        + '<span class="exp-fit-dot"></span>'
+        + '<span class="exp-fit-dot"></span>'
+      + '</span>'
+      + '<span class="exp-fit-label">FIT —</span>'
+      + '</span>';
+  }
+  var fit = (typeof expFitFor === 'function')
+    ? expFitFor(arr, areaId, typeId)
+    : { label:'—', pct:0, severity:'neutral', desc:'' };
+  // Map severity to dot colors: success=3 green, warn=2 yellow, danger=1 red
+  var dots;
+  if(fit.severity === 'success'){
+    dots = '<span class="exp-fit-dot success"></span><span class="exp-fit-dot success"></span><span class="exp-fit-dot success"></span>';
+  } else if(fit.severity === 'warn'){
+    dots = '<span class="exp-fit-dot warn"></span><span class="exp-fit-dot warn"></span><span class="exp-fit-dot"></span>';
+  } else if(fit.severity === 'danger'){
+    dots = '<span class="exp-fit-dot danger"></span><span class="exp-fit-dot"></span><span class="exp-fit-dot"></span>';
+  } else {
+    dots = '<span class="exp-fit-dot"></span><span class="exp-fit-dot"></span><span class="exp-fit-dot"></span>';
+  }
+  var cls = 'exp-fit-chip ' + fit.severity;
+  return '<span class="'+cls+'" title="'+(fit.desc||'')+'">'
+    + '<span class="exp-fit-dots">'+dots+'</span>'
+    + '<span class="exp-fit-label">'+fit.label+' · '+fit.pct+'%</span>'
+    + '</span>';
+}
+
+function _expL1EstLine(champIds, typeObj){
+  var arr = Array.isArray(champIds) ? champIds : (champIds ? [champIds] : []);
+  if(!arr.length || !typeObj) return '<span class="exp-est">EST. — · YIELD —</span>';
+  var fit = (typeof rosterActivitySpeedBonus === 'function')
+    ? rosterActivitySpeedBonus(arr, 'AGI')
+    : { speedBonus:0 };
+  var estMs = Math.round(typeObj.durationMs * (1 - fit.speedBonus));
+  return '<span class="exp-est">EST. '+_formatMs(estMs)+' · BASE YIELD '+(typeObj.durationMult||1)+'×</span>';
 }
 
 function _formatMs(ms){
@@ -1209,6 +2276,12 @@ function checkQuestProgress(eventType, ctx){
     if(eventType === 'kill' && q.type === 'kill' && q.enemyId === ctx.enemyId) advance = true;
     else if(eventType === 'area_clear' && q.type === 'clear' && q.areaId === ctx.areaId) advance = true;
     else if(eventType === 'run_complete' && q.type === 'runs') advance = true;
+    // Round 48: arena_fight quests advance on arena_win events. If the
+    // quest's fight payload specifies an enemy id, only matching wins
+    // count; otherwise any arena win progresses the quest.
+    else if(eventType === 'arena_win' && q.type === 'arena_fight'){
+      if(!q.fight || !q.fight.id || q.fight.id === ctx.enemyId) advance = true;
+    }
 
     if(advance){
       active.progress = (active.progress||0) + 1;
@@ -1349,6 +2422,9 @@ function openBuilding(id){
 
 function closeBuildingPanel(id){
   npcTypewriterStop();
+  // Round 44: reset the once-per-open greeting flag so the next time
+  // this building is opened, the NPC greets again with a fresh line.
+  if(id) delete _npcGreetedThisOpen[id];
   var panelBg=document.getElementById(id+'-panel-bg');
   if(panelBg) panelBg.classList.remove('show');
   buildTownCardsStrip();
@@ -1437,7 +2513,7 @@ function buildTownGrid(){
         var fq=(PERSIST.town.buildings.forge.queue||[]);
         if(fq.length>0){
           var fi=fq[0]; var fpct=Math.min(100,Math.round(((Date.now()-fi.startTime)/fi.totalMs)*100));
-          statusTxt='CRAFTING — '+fpct+'%'; statusCls='active';
+          statusTxt='CRAFTING '+fpct+'%'; statusCls='active';
         } else { statusTxt='READY TO CRAFT'; statusCls='empty'; }
       } else if(bdef.id==='market'){
         var mb=PERSIST.town.buildings.market;
@@ -1471,7 +2547,40 @@ function buildTownGrid(){
           statusTxt=activeExp.length+' EXPEDITION'+(activeExp.length>1?'S':'')+''; statusCls='active';
         } else { statusTxt='CHECK BOARD'; statusCls='empty'; }
       } else if(bdef.id==='arena'){
-        statusTxt='COMING SOON'; statusCls='locked';
+        // Round 59: real arena status. Priority cascade mirroring
+        // Hall's pattern: claimable winnings first (highest urgency),
+        // then daily availability, then active gambling count, then idle.
+        var arB = PERSIST.town.buildings.arena;
+        var arPending = (arB && arB.pendingGold) || 0;
+        var arActiveCount = 0;
+        if(arB && Array.isArray(arB.sparringSlots)){
+          arActiveCount = arB.sparringSlots.filter(function(s){ return s && typeof s === 'object' && s.champId; }).length;
+        }
+        var arHasQuest = false;
+        if(PERSIST.town.quests && Array.isArray(PERSIST.town.quests.active) && PERSIST.town.quests.active.length){
+          var offered = PERSIST.town.quests.offered || [];
+          arHasQuest = PERSIST.town.quests.active.some(function(a){
+            var q = offered.find(function(o){ return o.id === a.id; });
+            return q && q.type === 'arena_fight';
+          });
+        }
+        var dailyOpen = arB && arB.dailyChallenge && !arB.dailyCompleted;
+        if(arPending > 0){
+          statusTxt = '✦ ' + arPending + 'g TO COLLECT';
+          statusCls = 'active';
+        } else if(arHasQuest){
+          statusTxt = 'QUEST ACTIVE';
+          statusCls = 'active';
+        } else if(dailyOpen){
+          statusTxt = 'DAILY AVAILABLE';
+          statusCls = 'active';
+        } else if(arActiveCount > 0){
+          statusTxt = arActiveCount + ' BETTING';
+          statusCls = 'active';
+        } else {
+          statusTxt = 'OPEN';
+          statusCls = 'empty';
+        }
       }
     }
 
@@ -1496,7 +2605,7 @@ function buildTownGrid(){
     if(!unlocked&&cost){
       if(cost.gold){
         hintHtml='<div class="bc-status '+(canAfford?'active':'locked')+'">'+
-          (canAfford?'UNLOCK — ✦'+cost.gold+'g':'✦'+cost.gold+'g TO UNLOCK')+'</div>';
+          (canAfford?'UNLOCK · ✦'+cost.gold+'g':'✦'+cost.gold+'g TO UNLOCK')+'</div>';
       }
     }
 
@@ -1542,10 +2651,10 @@ function buildBestiaryGlossary(){
       {word:'AGI', tone:'agi', def:'Agility. Determines draw speed. Cards with AGI affinity focus on speed, multi-hit attacks, and evasion.'},
       {word:'WIS', tone:'wis', def:'Wisdom. Determines mana pool (WIS × 5) and regen (~WIS × 0.8 + 2/s). Cards with WIS affinity focus on mana effects and debuffs.'},
     ]},
-    {title:'Status — Damage Over Time', sub:'Effects that deal damage each second', tone:'burn', items:[]},
-    {title:'Status — Control', sub:'Effects that impair the opponent', tone:'control', items:[]},
-    {title:'Defense — Manabound', sub:'Protective effects that use mana', tone:'defense', items:[]},
-    {title:'Tempo — Manabound', sub:'Speed and action modifiers', tone:'tempo', items:[]},
+    {title:'Status · Damage Over Time', sub:'Effects that deal damage each second', tone:'burn', items:[]},
+    {title:'Status · Control', sub:'Effects that impair the opponent', tone:'control', items:[]},
+    {title:'Defense · Manabound', sub:'Protective effects that use mana', tone:'defense', items:[]},
+    {title:'Tempo · Manabound', sub:'Speed and action modifiers', tone:'tempo', items:[]},
     {title:'Conditional Triggers', sub:'Effects that fire when conditions are met', tone:'trigger', items:[]},
     {title:'Card Lifecycle', sub:'How cards move between zones', tone:'lifecycle', items:[]},
     {title:'Meta', sub:'Cross-cutting mechanics', tone:'meta', items:[]},
@@ -1553,10 +2662,10 @@ function buildBestiaryGlossary(){
 
   // Categorise keywords
   var catMap = {
-    'Burn':'Status — Damage Over Time', 'Poison':'Status — Damage Over Time', 'Bleed':'Status — Damage Over Time',
-    'Weaken':'Status — Control', 'Slow':'Status — Control', 'Stun':'Status — Control',
-    'Shield':'Defense — Manabound', 'Dodge':'Defense — Manabound', 'Thorns':'Defense — Manabound',
-    'Haste':'Tempo — Manabound', 'Frenzy':'Tempo — Manabound',
+    'Burn':'Status · Damage Over Time', 'Poison':'Status · Damage Over Time', 'Bleed':'Status · Damage Over Time',
+    'Weaken':'Status · Control', 'Slow':'Status · Control', 'Stun':'Status · Control',
+    'Shield':'Defense · Manabound', 'Dodge':'Defense · Manabound', 'Thorns':'Defense · Manabound',
+    'Haste':'Tempo · Manabound', 'Frenzy':'Tempo · Manabound',
     'Sorcery':'Conditional Triggers', 'Hellbent':'Conditional Triggers', 'Echo':'Conditional Triggers', 'Crit':'Conditional Triggers',
     'Churn':'Card Lifecycle', 'Ethereal':'Card Lifecycle', 'Conjured':'Card Lifecycle',
     'Manabound':'Meta', 'Debuff':'Meta',
@@ -1613,12 +2722,9 @@ function refreshBestiaryPanel(){
   var el2 = document.getElementById('bestiary-xp-bar'); if(el2) el2.style.width = Math.min(100, Math.round((xp/xpNext)*100)) + '%';
   var el3 = document.getElementById('bestiary-xp-txt'); if(el3) el3.textContent = xp + '/' + xpNext + ' XP';
 
-  // Hoot greeting
-  var msgEl = document.getElementById('bestiary-npc-msg');
-  if(msgEl){
-    var msg = getNpcGreeting('bestiary');
-    npcTypewriter(msgEl, msg, {pitch: BUILDINGS.bestiary.npc.pitch || 1.4});
-  }
+  // Hoot greeting — once per open cycle (Round 44: refresh fires
+  // multiple times during normal browsing, {once} prevents re-greet).
+  playNpcGreeting('bestiary', {once:true});
 
   buildBestiaryCreatures();
   buildBestiaryLocations();
@@ -2166,14 +3272,148 @@ function openCreatureFromLocation(id){
   buildBestiaryCreatures();
 }
 
+// True iff the town-screen is the active screen. Used to gate "open
+// building panel" actions: openBuilding only renders the panel overlay
+// over the town-screen, so calling it from elsewhere silently sets state
+// without showing anything. The qnav popup below routes around that.
+function _onTownScreen(){
+  var t = document.getElementById('town-screen');
+  return !!(t && t.classList.contains('active'));
+}
+
+// Generic confirm-then-navigate modal. Used by the bestiary entry points
+// when the player clicks a quest chip from a non-town screen — we ask
+// before pulling them out of champ/area select. opts:
+//   { title, line, confirm, cancel, onConfirm }
+function _quickNavConfirm(opts){
+  opts = opts || {};
+  var existing = document.getElementById('qnav-overlay');
+  if(existing && existing.parentNode) existing.parentNode.removeChild(existing);
+  var ov = document.createElement('div');
+  ov.id = 'qnav-overlay';
+  ov.className = 'qnav-overlay';
+  var card = document.createElement('div');
+  card.className = 'qnav-card';
+  card.innerHTML =
+      '<div class="qnav-title">'+(opts.title||'CONFIRM')+'</div>'
+    + '<div class="qnav-line">'+(opts.line||'')+'</div>'
+    + '<div class="qnav-btns">'
+    +   '<button class="qnav-btn" id="qnav-cancel">'+(opts.cancel||'STAY')+'</button>'
+    +   '<button class="qnav-btn qnav-btn-confirm" id="qnav-confirm">'+(opts.confirm||'GO')+'</button>'
+    + '</div>';
+  ov.appendChild(card);
+  document.body.appendChild(ov);
+  function close(go){
+    if(ov.parentNode) ov.parentNode.removeChild(ov);
+    if(go && typeof opts.onConfirm === 'function') opts.onConfirm();
+  }
+  document.getElementById('qnav-cancel').onclick = function(){ close(false); };
+  document.getElementById('qnav-confirm').onclick = function(){ close(true); };
+  ov.onclick = function(e){ if(e.target === ov) close(false); };
+}
+
+// Helper: navigate to town, then run `fn` once the town-screen has had
+// a moment to mount its DOM. The 200ms gives openTown's screen-switch
+// + buildTownGrid pass time to land before we open a building panel.
+function _navToTownThen(fn){
+  if(typeof navTo === 'function') navTo('town');
+  setTimeout(fn, 200);
+}
+
 // Entry point used by the area info button and area select screen
 function openLocationInBestiary(areaId){
-  _locSelected = areaId;
-  openBuilding('bestiary');
-  setTimeout(function(){
-    setBestiaryTab('locations');
-    buildBestiaryLocations();
-  }, 80);
+  if(!areaId) return;
+  var go = function(){
+    _locSelected = areaId;
+    openBuilding('bestiary');
+    setTimeout(function(){
+      setBestiaryTab('locations');
+      buildBestiaryLocations();
+    }, 80);
+  };
+  if(_onTownScreen()){ go(); return; }
+  var area = (typeof AREA_DEFS !== 'undefined') ? AREA_DEFS.find(function(a){return a.id===areaId;}) : null;
+  var name = area ? area.name : areaId;
+  _quickNavConfirm({
+    title:   'OPEN IN BESTIARY?',
+    line:    'View <strong>'+_csqEsc(name)+'</strong> in the Bestiary. This leaves the current screen.',
+    confirm: 'GO TO TOWN',
+    cancel:  'STAY HERE',
+    onConfirm: function(){ _navToTownThen(go); }
+  });
+}
+
+// Open the Bestiary panel scrolled to a specific creature. Any caller that
+// wants "show me what this thing is and where it lives" should route here
+// instead of synthesising location lists themselves — the bestiary is the
+// canonical source of truth.
+function openBestiaryCreature(creatureId){
+  if(!creatureId || !CREATURES[creatureId]) return;
+  var go = function(){
+    openBuilding('bestiary');
+    setTimeout(function(){
+      setBestiaryTab('creatures');
+      if(typeof selectBestiaryCreature === 'function') selectBestiaryCreature(creatureId);
+    }, 80);
+  };
+  if(_onTownScreen()){ go(); return; }
+  var name = CREATURES[creatureId].name;
+  _quickNavConfirm({
+    title:   'OPEN IN BESTIARY?',
+    line:    'View <strong>'+_csqEsc(name)+'</strong> in the Bestiary. This leaves the current screen.',
+    confirm: 'GO TO TOWN',
+    cancel:  'STAY HERE',
+    onConfirm: function(){ _navToTownThen(go); }
+  });
+}
+
+// Open the Bestiary panel on the Glossary tab. If `keyword` is supplied,
+// scroll the matching glossary item into view and flash it briefly so
+// the link feels "landed" rather than just opening a generic tab.
+function openBestiaryGlossary(keyword){
+  var go = function(){
+    openBuilding('bestiary');
+    setTimeout(function(){
+      setBestiaryTab('glossary');
+      if(keyword) _bestiaryFlashGlossary(keyword);
+    }, 100);
+  };
+  if(_onTownScreen()){ go(); return; }
+  var label = keyword ? ('the entry for <strong>'+_csqEsc(keyword)+'</strong>') : 'the Glossary';
+  _quickNavConfirm({
+    title:   'OPEN GLOSSARY?',
+    line:    'View '+label+' in the Bestiary. This leaves the current screen.',
+    confirm: 'GO TO TOWN',
+    cancel:  'STAY HERE',
+    onConfirm: function(){ _navToTownThen(go); }
+  });
+}
+
+function _bestiaryFlashGlossary(keyword){
+  var grid = document.getElementById('bestiary-glossary-grid');
+  if(!grid) return;
+  var items = grid.querySelectorAll('.glossary-item');
+  for(var i=0;i<items.length;i++){
+    var label = items[i].querySelector('.glossary-item-word, .glossary-item-label');
+    var text  = (label ? label.textContent : items[i].textContent).trim();
+    if(text.toLowerCase().indexOf(String(keyword).toLowerCase()) === 0){
+      items[i].scrollIntoView({behavior:'smooth', block:'center'});
+      items[i].classList.add('glossary-flash');
+      (function(el){
+        setTimeout(function(){ el.classList.remove('glossary-flash'); }, 1600);
+      })(items[i]);
+      return;
+    }
+  }
+}
+
+// Open the Champion info panel for a specific champion id. Bypasses the
+// combat-lock check that selectChamp does — this is purely the info panel,
+// not "set the active champion for combat".
+function openChampPanelFor(champId){
+  if(!champId || !CREATURES[champId]) return;
+  if(typeof selectedChampId !== 'undefined') selectedChampId = champId;
+  if(typeof openChampPanel === 'function') openChampPanel();
 }
 
 
@@ -2226,13 +3466,8 @@ function refreshSanctumPanel(){
   var b=PERSIST.town.buildings.sanctum;
   if(!b||!b.unlocked) return;
 
-  // NPC greeting
-  var msgEl = document.getElementById('sanctum-npc-msg');
-  if(msgEl && !msgEl._greeted){
-    var msg = getNpcGreeting('sanctum');
-    npcTypewriter(msgEl, msg, {pitch: BUILDINGS.sanctum.npc.pitch || 1.3});
-    msgEl._greeted = true;
-  }
+  // NPC greeting (once per panel-open cycle — refreshes here are frequent)
+  playNpcGreeting('sanctum', {once:true});
 
   // Level + XP
   var lvl = getBuildingLevel('sanctum');
@@ -2341,15 +3576,22 @@ function buildSanctumRelicsPane(){
         var r = RELICS[relicId];
         var removeLabel = hasBackpack ? 'UNEQUIP' : 'DESTROY';
         var removeColor = hasBackpack ? '#9a7030' : '#d05858';
-        html += '<div style="padding:10px;background:#2a1808;border:1px solid #5a3a1a;border-radius:6px;display:grid;grid-template-columns:36px 1fr auto;gap:8px;align-items:center;">'
-          +'<div style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;background:rgba(212,168,67,.08);border:1px solid #5a3a1a;border-radius:4px;">'+relicImgHTML(relicId,'32px')+'</div>'
+        // Round 40: removed the inline DESTROY/UNEQUIP button from the
+        // grid (was overlapping the relic name on long titles). It's
+        // now a small X chip in the top-right corner of the tile —
+        // tooltip carries the full label so the action is still
+        // discoverable. Tile padding-right grew to leave clear space
+        // for the corner button.
+        html += '<div class="sr-equipped-tile" style="padding:10px 36px 10px 10px;background:#2a1808;border:1px solid #5a3a1a;border-radius:6px;display:grid;grid-template-columns:56px 1fr;gap:10px;align-items:center;position:relative;">'
+          +'<div style="width:56px;height:56px;display:flex;align-items:center;justify-content:center;background:rgba(212,168,67,.08);border:1px solid #5a3a1a;border-radius:4px;">'+relicImgHTML(relicId,'48px')+'</div>'
           +'<div style="min-width:0;">'
           +'<div style="font-size:7px;color:#5a4020;font-family:Cinzel,serif;letter-spacing:1px;">SLOT '+(i+1)+'</div>'
-          +'<div style="font-family:Cinzel,serif;font-size:10px;color:#c0a060;">'+r.name+'</div>'
+          +'<div style="font-family:Cinzel,serif;font-size:10px;color:#c0a060;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+r.name+'</div>'
           +'</div>'
-          +'<button class="sr-remove-btn" onclick="srClickSlot('+i+')" title="'+(hasBackpack?'Return to inventory':'Destroy this relic — no refund')+'" '
-          +'style="font-family:Cinzel,serif;font-size:7px;letter-spacing:1px;padding:5px 8px;background:transparent;color:'+removeColor+';border:1px solid '+removeColor+';border-radius:3px;cursor:pointer;">'
-          +removeLabel+'</button>'
+          +'<button class="sr-remove-corner" onclick="srClickSlot('+i+')" '
+          +'title="'+(hasBackpack?'UNEQUIP · return to inventory':'DESTROY · no refund')+'" '
+          +'aria-label="'+removeLabel+'" '
+          +'style="color:'+removeColor+';border-color:'+removeColor+';">×</button>'
           +'</div>';
       } else {
         html += '<div style="padding:14px;background:#0e0802;border:1px dashed #3a2818;border-radius:6px;text-align:center;">'
@@ -2378,8 +3620,8 @@ function buildSanctumRelicsPane(){
       ownedIds.forEach(function(relicId){
         var r = RELICS[relicId];
         var canEquip = equipped.length < totalSlots && equipped.indexOf(relicId) === -1;
-        html += '<div style="padding:10px 12px;background:#1a1208;border:1px solid #2a1808;border-left:3px solid #5a3a1a;border-radius:4px;margin-bottom:6px;display:grid;grid-template-columns:36px 1fr auto;gap:10px;align-items:center;">'
-          +'<div style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;background:rgba(212,168,67,.06);border:1px solid #3a2818;border-radius:4px;">'+relicImgHTML(relicId,'32px')+'</div>'
+        html += '<div style="padding:10px 12px;background:#1a1208;border:1px solid #2a1808;border-left:3px solid #5a3a1a;border-radius:4px;margin-bottom:6px;display:grid;grid-template-columns:56px 1fr auto;gap:10px;align-items:center;">'
+          +'<div style="width:56px;height:56px;display:flex;align-items:center;justify-content:center;background:rgba(212,168,67,.06);border:1px solid #3a2818;border-radius:4px;">'+relicImgHTML(relicId,'48px')+'</div>'
           +'<div>'
           +'<div style="font-family:Cinzel,serif;font-size:11px;color:#c0a060;">'+r.name+'</div>'
           +'<div style="font-size:8px;color:#5a4020;margin-top:2px;">'+r.desc+'</div>'
@@ -2520,6 +3762,9 @@ function buildSanctumOverviewPane(){
     +'<div style="display:flex;justify-content:space-between;font-size:9px;color:#5a4020;font-family:Cinzel,serif;">'
     +'<span>'+masteryXp+(nextTier?' / '+masteryReq:'')+'</span>'
     +'<span>'+masteryPct+'%</span>'
+    +'</div>'
+    +'<div style="font-size:8px;color:#5a4020;font-family:\'Crimson Text\',serif;font-style:italic;margin-top:6px;line-height:1.5;">'
+      +'Earned from combat, expedition completion, forge work, and achievement claims.'
     +'</div>';
 
   if(nextTier){
@@ -2613,7 +3858,7 @@ function doAscensionCeremony(champId){
     +'<span style="font-size:22px;color:'+toColor+';text-shadow:0 0 10px '+toColor+'88;">◇</span>'
     +'<div>'
     +'<div style="font-family:Cinzel,serif;font-size:10px;letter-spacing:3px;color:'+toColor+';">RELIC SLOT UNLOCKED</div>'
-    +'<div style="font-size:10px;color:#c8b888;margin-top:2px;">Slot '+(fromLevel+1)+' now available — equip a relic in the Sanctum.</div>'
+    +'<div style="font-size:10px;color:#c8b888;margin-top:2px;">Slot '+(fromLevel+1)+' now available. Equip a relic in the Sanctum.</div>'
     +'</div></div>';
 
   // Continue button (hidden)
@@ -2829,7 +4074,11 @@ function buildSanctumUpgradesPane(){
       var matKey=cost.sparks?'sparks':cost.embers?'embers':'flameShards';
       var matAmt=cost.sparks||cost.embers||cost.flameShards||0;
       var matHave=PERSIST.town.materials[matKey]||0;
-      var matIcon={'sparks':'✨','embers':'🔥','flameShards':gemImgHTML('ruby','16px')}[matKey]||'';
+      // Round 38: was gemImgHTML('ruby','16px') — gemImgHTML now floors
+      // at 48px, so used emoji here to match the row's dense 16px
+      // sparks/embers icons. When a real flameShards.png lands, swap
+      // back to an asset rendering at 48px and bump the row layout.
+      var matIcon={'sparks':'✨','embers':'🔥','flameShards':'💎'}[matKey]||'';
       var hasFrags=frags>=cost.fragments;
       var hasMats=matHave>=matAmt;
       var canAfford=active&&hasFrags&&hasMats;
@@ -3036,13 +4285,8 @@ function refreshMarketPanel(){
   var b = PERSIST.town.buildings.market;
   if(!b.unlocked) return;
 
-  // NPC greeting
-  var msgEl = document.getElementById('market-npc-msg');
-  if(msgEl && !msgEl._greeted){
-    var msg = getNpcGreeting('market');
-    npcTypewriter(msgEl, msg, {pitch: BUILDINGS.market.npc.pitch || 1.2});
-    msgEl._greeted = true;
-  }
+  // NPC greeting (once per panel-open cycle)
+  playNpcGreeting('market', {once:true});
 
   // Level + XP bar
   var lvl = getBuildingLevel('market');
@@ -3537,7 +4781,7 @@ function _renderPermanentInspector(itemId){
     +'</div>';
   html += '<div class="market-insp-desc">'+def.desc+'</div>';
   html += '<div class="market-insp-detail"><span class="market-insp-detail-label">Type</span><span class="market-insp-detail-val" style="color:#c89adc;">One-time purchase</span></div>';
-  html += '<div class="market-insp-detail"><span class="market-insp-detail-label">Effect</span><span class="market-insp-detail-val">Permanent — never expires</span></div>';
+  html += '<div class="market-insp-detail"><span class="market-insp-detail-label">Effect</span><span class="market-insp-detail-val">Permanent · never expires</span></div>';
   html += '<div class="market-insp-footer">'
     +'<div class="market-insp-price'+(canAfford?'':' cant-afford')+'" style="color:#c89adc;">'+goldImgHTML('14px')+' '+def.price+'g</div>'
     +'<button class="market-buy-btn" '+(canAfford?'onclick="buyPermanentItem(\''+def.id+'\')"':'disabled')+' style="border-color:#7858a0;color:#c89adc;">ACQUIRE</button>'
@@ -3682,7 +4926,7 @@ var VAULT_XP_THRESHOLDS=[50,150,300,500,750,1050,1400,1800];
 var VAULT_LEVEL_UNLOCKS=[
   'Item names, type, and count',
   'Flavour text revealed',
-  'Source info — where items are found',
+  'Source info · where items are found',
   'Roll counts and key bonus details',
   'Material usage info for the Forge',
   'Cross-references (matching keys/chests)',
@@ -3734,21 +4978,21 @@ var AREA_INTEL={VISITED:1, PARTIAL_ENEMIES:3, FULL_ENEMIES:5, THREAT_NOTES:10};
 
 var THREAT_NOTES={
   sewers:     'Plague carriers inflict stacking poison. Watch your HP carefully.',
-  sewers_deep:'Lurkers hide until struck — the first hit triggers ambush.',
+  sewers_deep:'Lurkers hide until struck. The first hit triggers ambush.',
   sewers_foul:'Watchers drain mana. The Amalgam grows more resistant each fight.',
   swamp:      'Bog Wisps ignore armor. Toad King can summon reinforcements.',
-  crypt:      'Skeletons have Undying — finish them twice. Witches curse your stats.',
+  crypt:      'Skeletons have Undying; finish them twice. Witches curse your stats.',
   forest:     'Trolls regenerate if given time. Harpies attack before you can react.',
   cave:       'Harpies swoop for +50% first-strike damage. Golems have Stone Skin.',
   ruins:      'Knights counter on block. Orcs grow stronger when wounded.',
   dragonsnest:'Wyrms apply fire DoT stacks. The Elder Dragon\'s breath is lethal.',
   boneyard:   'The Lich returns from death once. Witches here have Curse Mastery.',
-  starmaze:   'Astral Wisps are ethereal — reduced damage. Liches are unpredictable.',
-  mistwoods:    'Luna Sciurids become lethal below half HP — burst them before the threshold. Orbweavers web-trap you on heavy hits; use light, rapid strikes. Foghasts drain mana on every hit; save your spells.',
-  waxdunes:     'Wax Hounds trigger Brittle Shell below 20% HP — a sudden heal and speed burst, finish them fast. The Wax Effigy opens with a random card from your discard pile. The Wax Oasis cannot be killed — maximise damage in 45 seconds for a gold bonus.',
-  fungalwarren: 'Spore Puffs release Poison on death — finish fights quickly. Mycelids punish every 3rd card you play. Tunnel Ants survive once at 5 HP — watch for it.',
-  sunkenhabour: 'Tide Crabs absorb small hits — use burst damage. Drowned Sailors hit slowly but devastatingly — manage your HP. Sirens reduce your draw speed while alive: kill them first. Shark Knights enter Feeding Frenzy below 50% HP — burst them down.',
-  charmines:    'Flame Sprites deal Burn on death — plan kills carefully. Ember Golems ignite at 50% HP, gaining speed and Burn on hits. Mine Ghouls ramp damage after 6s — fight fast. Lava Crawlers stack Burn every 5s — keep moving.',
+  starmaze:   'Astral Wisps are ethereal; reduced damage. Liches are unpredictable.',
+  mistwood:     'Luna Sciurids become lethal below half HP; burst them before the threshold. Orbweavers web-trap you on heavy hits; use light, rapid strikes. Foghasts drain mana on every hit; save your spells.',
+  waxdunes:     'Wax Hounds trigger Brittle Shell below 20% HP (a sudden heal and speed burst); finish them fast. The Wax Effigy opens with a random card from your discard pile. The Wax Oasis cannot be killed; maximise damage in 45 seconds for a gold bonus.',
+  fungalwarren: 'Spore Puffs release Poison on death; finish fights quickly. Mycelids punish every 3rd card you play. Tunnel Ants survive once at 5 HP; watch for it.',
+  sunkenharbour:'Tide Crabs absorb small hits; use burst damage. Drowned Sailors hit slowly but devastatingly; manage your HP. Sirens reduce your draw speed while alive: kill them first. Shark Knights enter Feeding Frenzy below 50% HP; burst them down.',
+  charmines:    'Flame Sprites deal Burn on death; plan kills carefully. Ember Golems ignite at 50% HP, gaining speed and Burn on hits. Mine Ghouls ramp damage after 6s; fight fast. Lava Crawlers stack Burn every 5s; keep moving.',
   blackpool:    'The Harbourmaster attacks at half speed but deals triple damage. Survive the first hit, then burst it down before it lands a second blow.',
 };
 
@@ -3784,18 +5028,25 @@ function vaultTick(seconds){
   var b=PERSIST.town.buildings.vault;
   if(!b||!b.unlocked) return;
 
-  // ── XP gain for levelling (keep existing) ──
+  // ── XP gain for levelling ──
+  // Round 47: level-up wrapped in while-loop so a 12h offline catch-up
+  // tick that lands enough XP for multiple thresholds resolves them all
+  // (previously the single `if` would consume only one level's worth
+  // and discard the rest). Bounded by VAULT_XP_THRESHOLDS length — at
+  // max vault level, XP gain halts entirely.
   var lv=PERSIST.town.vaultLevel||1;
   if(lv<VAULT_XP_THRESHOLDS.length+1){
     var xpGain=seconds/10;
     PERSIST.town.vaultXp=(PERSIST.town.vaultXp||0)+xpGain;
     PERSIST.town.vaultXpTotal=(PERSIST.town.vaultXpTotal||0)+xpGain;
     var thresh=VAULT_XP_THRESHOLDS[lv-1]||9999;
-    if(PERSIST.town.vaultXp>=thresh){
+    while(PERSIST.town.vaultXp>=thresh && lv<VAULT_XP_THRESHOLDS.length+1){
       PERSIST.town.vaultXp-=thresh;
       PERSIST.town.vaultLevel=lv+1;
       var unlockMsg=VAULT_LEVEL_UNLOCKS[lv]||'';
       showTownToast('✦ Vault reached Lv.'+(lv+1)+'!'+(unlockMsg?' '+unlockMsg:''));
+      lv=PERSIST.town.vaultLevel;
+      thresh=VAULT_XP_THRESHOLDS[lv-1]||9999;
     }
   }
 }
@@ -3819,14 +5070,12 @@ function getForgeSlotCount(){
   return 1;
 }
 
-// M'bur — typewritten lines, cycled in the NPC greeting.
-var FORGE_NPC_LINES = [
-  "The fire likes you today. Don't ask why.",
-  "Bring me ore, bring me bones — both burn.",
-  "Patience. Steel does not hurry.",
-  "I made a relic once that cried. Won't do that again.",
-  "Strike while it's hot. Wait while it's hotter."
-];
+// (Round 45: legacy FORGE_NPC_LINES removed. M'bur's dialogue lives
+//  in the unified NPC system — see NPC_RANDOM_LINES.forge,
+//  NPC_RARE_LINES.forge, NPC_VERY_RARE_LINES.forge, and
+//  NPC_CONDITIONS.forge above. _forgePickNpcLine helper also
+//  deleted; refreshForgePanel now calls playNpcGreeting('forge',
+//  {once:true}) like every other building.)
 
 // Forge tick — runs every 5s from the unified idle interval.
 // Doesn't auto-collect: jobs that hit zero just stay in the queue with
@@ -3841,23 +5090,9 @@ function forgeTick(){
 
 // ── Forge state helpers ──────────────────────────────────────────────
 var _forgeSelectedRecipe = null;     // currently inspected recipe id
-var _forgeNpcLineIdx = -1;           // current line in FORGE_NPC_LINES
-var _forgeNpcLastChange = 0;         // timestamp of last line change
-
-function _forgePickNpcLine(){
-  // Cycle to a new line every ~6s of panel time. Random-but-not-repeat.
-  var now = Date.now();
-  if(_forgeNpcLineIdx === -1 || now - _forgeNpcLastChange > 6000){
-    var prev = _forgeNpcLineIdx;
-    var next = prev;
-    while(next === prev && FORGE_NPC_LINES.length > 1){
-      next = Math.floor(Math.random() * FORGE_NPC_LINES.length);
-    }
-    _forgeNpcLineIdx = next;
-    _forgeNpcLastChange = now;
-  }
-  return FORGE_NPC_LINES[_forgeNpcLineIdx] || '';
-}
+// (Round 45: _forgeNpcLineIdx, _forgeNpcLastChange, _forgePickNpcLine
+//  all deleted — replaced by playNpcGreeting('forge', {once:true}) in
+//  refreshForgePanel.)
 
 // Material-affordability check for a recipe.
 function _forgeCanAfford(relicId){
@@ -3911,9 +5146,12 @@ function refreshForgePanel(){
     _forgeSelectedRecipe = _forgeDefaultRecipeId();
   }
 
-  // NPC dialogue + level/XP bar
-  var msgEl = document.getElementById('forge-npc-msg');
-  if(msgEl) msgEl.textContent = _forgePickNpcLine();
+  // NPC dialogue + level/XP bar.
+  // Round 45: migrated to the unified playNpcGreeting pipeline so M'bur
+  // greets ONCE on open (with typewriter SFX) and doesn't auto-cycle
+  // mid-menu like the old _forgePickNpcLine did. Same close-and-reopen
+  // for a fresh line, never repeating the immediately previous one.
+  if(typeof playNpcGreeting === 'function') playNpcGreeting('forge', {once:true});
   var lvl = getBuildingLevel('forge');
   var xp = (PERSIST.town.buildingXp && PERSIST.town.buildingXp.forge) || 0;
   var xpNext = getBuildingXpToNext(lvl);
@@ -3962,15 +5200,45 @@ function _forgeRenderQueue(){
       continue;
     }
     // Active slot
+    _forgeMigrateJob(job);
     var relic = RELICS[job.relicId];
     var tColor = FORGE_TIER_COLOR[(relic&&relic.tier)||'base'] || '#a89373';
     var elapsed = Date.now() - job.startTime;
     var pct = Math.min(100, Math.max(0, (elapsed/job.totalMs)*100));
     var ready = elapsed >= job.totalMs;
     var remaining = Math.max(0, job.totalMs - elapsed);
-    html += '<div class="forge-slot forge-slot-active'+(ready?' forge-slot-ready':'')+'" '
+
+    // Champion strip — between info and actions. Assigned champion shows
+    // as portrait + bonus chip; empty shows as faded "ASSIGN +" button.
+    var champHtml;
+    if(job.champId && CREATURES[job.champId]){
+      var bonusPct = Math.round((job.champBonus||0) * 100);
+      var champName = CREATURES[job.champId].name;
+      champHtml =
+        '<div class="forge-slot-champ assigned" title="'+champName+' is helping (−'+bonusPct+'% time). Click to release." onclick="releaseChampFromForge('+i+')">'
+        + '<div class="forge-slot-champ-portrait">'+creatureImgHTML(job.champId, CREATURES[job.champId].icon, '28px')+'</div>'
+        + '<div class="forge-slot-champ-info">'
+          + '<div class="forge-slot-champ-name">'+champName+'</div>'
+          + '<div class="forge-slot-champ-bonus">−'+bonusPct+'%</div>'
+        + '</div>'
+        + '<div class="forge-slot-champ-x" title="Release">×</div>'
+        + '</div>';
+    } else if(!ready){
+      champHtml =
+        '<div class="forge-slot-champ empty" title="Assign a champion to speed up this craft (STR primary)" onclick="_forgePickChampForSlot('+i+')">'
+        + '<div class="forge-slot-champ-plus">+</div>'
+        + '<div class="forge-slot-champ-info">'
+          + '<div class="forge-slot-champ-name">ASSIGN CHAMPION</div>'
+          + '<div class="forge-slot-champ-bonus" style="color:#7a6030;">STR speeds the craft</div>'
+        + '</div>'
+        + '</div>';
+    } else {
+      champHtml = ''; // no champ slot when ready — collect button takes the space
+    }
+
+    html += '<div class="forge-slot forge-slot-active'+(ready?' forge-slot-ready':'')+(job.champId?' has-champ':'')+'" '
       + 'style="border-color:'+tColor+'88;">'
-      + '<div class="forge-slot-icon" style="border-color:'+tColor+';background:radial-gradient(circle at 50% 60%,'+tColor+'55,transparent 70%);'+(ready?'':'animation:frgEmberPulse 2.2s ease-in-out infinite;')+'">'+(relic?relicImgHTML(job.relicId,'30px'):'⚗')+'</div>'
+      + '<div class="forge-slot-icon" style="border-color:'+tColor+';background:radial-gradient(circle at 50% 60%,'+tColor+'55,transparent 70%);'+(ready?'':'animation:frgEmberPulse 2.2s ease-in-out infinite;')+'">'+(relic?relicImgHTML(job.relicId,'48px'):'⚗')+'</div>'
       + '<div class="forge-slot-info">'
         + '<div class="forge-slot-name">'+(relic?relic.name:job.relicId)+'</div>'
         + '<div class="forge-slot-bar"><div class="forge-slot-bar-fill'+(ready?' ready':'')+'" style="width:'+pct+'%;"></div></div>'
@@ -3978,11 +5246,12 @@ function _forgeRenderQueue(){
           + '<span>'+(ready?'READY':_forgeTimeFmt(remaining)+' REMAINING')+'</span>'
           + '<span class="forge-slot-pct">'+Math.round(pct)+'%</span>'
         + '</div>'
+        + champHtml
       + '</div>'
       + '<div class="forge-slot-actions">'
         + (ready
             ? '<button class="forge-collect-btn" onclick="collectForgeCraft('+i+')">COLLECT</button>'
-            : '<button class="forge-cancel-btn" onclick="cancelForgeCraft('+i+')" title="Cancel — materials are NOT refunded">✕</button>')
+            : '<button class="forge-cancel-btn" onclick="cancelForgeCraft('+i+')" title="Cancel · materials are NOT refunded">✕</button>')
       + '</div>'
       + '</div>';
   }
@@ -4029,22 +5298,26 @@ function _forgeRenderRecipeList(){
       if(!recipe || !relic) return;
       var can = _forgeCanAfford(id);
       var selected = (_forgeSelectedRecipe === id);
+      // Round 39: dropped the .forge-mat-chips inline materials list and
+      // the "MATERIALS LOW" hint — both lived on the recipe row. Recipes
+      // can have many materials and the row got busy. The right-hand
+      // inspector still shows the full materials list when a recipe
+      // is selected. The row's visual state (default tint vs dim
+      // .insufficient) communicates craftability without explicit text.
       html += '<div class="forge-recipe-row'+(selected?' selected':'')+(can?'':' insufficient')+'" '
         + 'onclick="_forgeSelectRecipe(\''+id+'\')" '
         + 'style="--tier:'+color+';">'
         + (selected?'<div class="forge-recipe-stripe" style="background:'+color+';box-shadow:0 0 8px '+color+';"></div>':'')
-        + '<div class="forge-recipe-icon" style="border-color:'+color+'88;background:radial-gradient(circle at 50% 60%,'+color+'44,transparent 70%);">'+relicImgHTML(id,'34px')+'</div>'
+        + '<div class="forge-recipe-icon" style="border-color:'+color+'88;background:radial-gradient(circle at 50% 60%,'+color+'44,transparent 70%);">'+relicImgHTML(id,'48px')+'</div>'
         + '<div class="forge-recipe-body">'
           + '<div class="forge-recipe-row-title">'
             + '<span class="forge-recipe-name">'+relic.name+'</span>'
             + '<span class="forge-recipe-tier" style="color:'+color+';border-color:'+color+'88;background:'+color+'11;">'+label+'</span>'
           + '</div>'
-          + '<div class="forge-mat-chips">' + _forgeMatChipsHTML(recipe.mats) + '</div>'
         + '</div>'
         + '<div class="forge-recipe-time">'
           + '<div class="forge-recipe-time-label">CRAFT TIME</div>'
           + '<div class="forge-recipe-time-val">'+_forgeTimeFmt((RELIC_CRAFT_TIMES[recipe.tier]||0)*1000)+'</div>'
-          + (can?'':'<div class="forge-recipe-low">MATERIALS LOW</div>')
         + '</div>'
         + '</div>';
     });
@@ -4137,7 +5410,10 @@ function _forgeRenderInspector(){
     ctaHtml = '<button class="forge-craft-btn" onclick="startForgeCraft(\''+id+'\')">⚒ BEGIN FORGING</button>';
   }
 
-  var flavor = recipe.flavor || relic.flavor || '';
+  // Round 39: dropped the flavour/lore line — keep relics' inspector
+  // focused on mechanics. Effect description below is the canonical
+  // "what does this do" surface; the lore can return later when we
+  // have a place that frames it (relic codex / bestiary).
   insp.innerHTML =
     // Hero
     '<div class="forge-insp-hero" style="background:radial-gradient(ellipse at 50% 0%,'+color+'33,transparent 60%);">'
@@ -4147,7 +5423,6 @@ function _forgeRenderInspector(){
       + '</div>'
       + '<div class="forge-insp-hero-tier" style="color:'+color+';">'+label+' TIER · RELIC RECIPE</div>'
       + '<div class="forge-insp-hero-name">'+relic.name+'</div>'
-      + (flavor?'<div class="forge-insp-hero-flavor">'+flavor+'</div>':'')
     + '</div>'
     // Effect
     + '<div class="forge-insp-section">'
@@ -4192,9 +5467,21 @@ function startForgeCraft(relicId){
     PERSIST.town.materials[k] = (PERSIST.town.materials[k]||0) - recipe.mats[k];
   });
 
-  // Push job — totalMs derived from tier's craft time (in seconds)
+  // Push job. baseTotalMs is the unmodified craft time; totalMs is what the
+  // bar/timer actually counts down to. They diverge when a champion is
+  // assigned (totalMs = baseTotalMs * (1 - speedBonus)). champId/champBonus
+  // are null until an explicit assign — start unassigned so the player has
+  // to make the choice.
   var totalSec = (RELIC_CRAFT_TIMES[recipe.tier] || 600);
-  b.queue.push({ relicId: relicId, startTime: Date.now(), totalMs: totalSec * 1000 });
+  var totalMs  = totalSec * 1000;
+  b.queue.push({
+    relicId:     relicId,
+    startTime:   Date.now(),
+    totalMs:     totalMs,
+    baseTotalMs: totalMs,
+    champId:     null,
+    champBonus:  0
+  });
 
   if(typeof playCraftStartSfx === 'function') playCraftStartSfx();
   showTownToast('Forging '+RELICS[relicId].name+'…');
@@ -4202,56 +5489,439 @@ function startForgeCraft(relicId){
   refreshForgePanel();
 }
 
+// ── Forge: champion assignment ───────────────────────────────────────
+// Stat-fit speed bonus for Forge (primary STR). Snapshot at assign time
+// so level-ups during craft don't change the timer mid-flight.
+function _forgeMigrateJob(job){
+  if(!job) return;
+  if(job.baseTotalMs === undefined) job.baseTotalMs = job.totalMs;
+  if(job.champId === undefined)     job.champId     = null;
+  if(job.champBonus === undefined)  job.champBonus  = 0;
+}
+
+function assignChampToForge(slotIdx, champId){
+  var b = PERSIST.town.buildings.forge;
+  if(!b || !b.queue || !b.queue[slotIdx]) return;
+  if(!CREATURES[champId]) return;
+  if(typeof isChampLocked === 'function' && isChampLocked(champId)){
+    showTownToast(CREATURES[champId].name + ' is busy elsewhere.');
+    return;
+  }
+  var job = b.queue[slotIdx];
+  _forgeMigrateJob(job);
+
+  // If the slot already had someone, release them first
+  if(job.champId) _forgeReleaseChampInternal(job);
+
+  var fit = champActivitySpeedBonus(champId, 'STR');
+  var bonus = fit.speedBonus;
+
+  // Recompute totalMs from base, preserve current pct so the bar doesn't jump
+  var now = Date.now();
+  var pct = Math.min(1, Math.max(0, (now - job.startTime) / job.totalMs));
+  var newTotal = Math.max(1, Math.round(job.baseTotalMs * (1 - bonus)));
+  job.totalMs    = newTotal;
+  job.startTime  = now - newTotal * pct;
+  job.champId    = champId;
+  job.champBonus = bonus;
+
+  // Lock the champion
+  var cp = getChampPersist(champId);
+  if(cp) cp.lockedForge = slotIdx;
+
+  showTownToast(CREATURES[champId].name + ' is helping at the forge (−' + Math.round(bonus*100) + '%).');
+  savePersist();
+  refreshForgePanel();
+}
+
+// Internal: release without saving / re-rendering. Used by assign-swap and
+// the public release/cancel/collect paths.
+function _forgeReleaseChampInternal(job){
+  if(!job || !job.champId) return;
+  var champId = job.champId;
+  // Restore unmodified time, preserve current pct
+  var now = Date.now();
+  var pct = Math.min(1, Math.max(0, (now - job.startTime) / job.totalMs));
+  job.startTime  = now - job.baseTotalMs * pct;
+  job.totalMs    = job.baseTotalMs;
+  job.champId    = null;
+  job.champBonus = 0;
+  // Unlock champion
+  var cp = PERSIST.champions[champId];
+  if(cp && cp.lockedForge !== null && cp.lockedForge !== undefined){
+    cp.lockedForge = null;
+  }
+}
+
+function releaseChampFromForge(slotIdx){
+  var b = PERSIST.town.buildings.forge;
+  if(!b || !b.queue || !b.queue[slotIdx]) return;
+  var job = b.queue[slotIdx];
+  _forgeMigrateJob(job);
+  if(!job.champId) return;
+  var name = CREATURES[job.champId] ? CREATURES[job.champId].name : 'Champion';
+  _forgeReleaseChampInternal(job);
+  showTownToast(name + ' returned to town.');
+  savePersist();
+  refreshForgePanel();
+}
+
+// M'bur cancel-craft lines — gruff, practical, no comfort. One picked
+// at random per modal open so confirmations don't feel canned.
+var FORGE_CANCEL_LINES = [
+  "Heat wasted. Mats are ash. Your call.",
+  "Steel's already cooling. Sure?",
+  "Mats burned. Time burned. Speak.",
+  "I don't refund. You know that. Confirm.",
+  "Fire doesn't take back what it ate."
+];
+
 function cancelForgeCraft(slotIdx){
   var b = PERSIST.town.buildings.forge;
   if(!b || !b.queue || !b.queue[slotIdx]) return;
   var job = b.queue[slotIdx];
   var relic = RELICS[job.relicId];
-  var name = relic ? relic.name : job.relicId;
-  var msg = 'Cancel forging '+name+'?\n\nMaterials are NOT refunded.';
-  if(!confirm(msg)) return;
-  b.queue.splice(slotIdx, 1);
-  showTownToast('Forge cancelled. Materials lost.');
-  savePersist();
-  refreshForgePanel();
+  var recipe = RELIC_RECIPES[job.relicId];
+  if(!relic || !recipe) return;
+  var elapsed = Date.now() - job.startTime;
+  var pct = Math.min(99, Math.floor((elapsed / job.totalMs) * 100));
+  // Materials-lost summary
+  var matsLost = Object.keys(recipe.mats).map(function(k){
+    var m = MATERIALS && MATERIALS[k];
+    var icon = m ? m.icon : '?';
+    var name = m ? m.name : k;
+    return icon + ' ' + recipe.mats[k] + '× ' + name;
+  }).join(' · ');
+
+  var line = FORGE_CANCEL_LINES[Math.floor(Math.random() * FORGE_CANCEL_LINES.length)];
+  _forgeShowMburConfirm({
+    title: 'ABANDON CRAFT?',
+    line:  line,
+    body:  '<div class="forge-mbur-row"><span class="forge-mbur-label">FORGING</span> <span class="forge-mbur-val">' + relic.name + '</span></div>'
+         + '<div class="forge-mbur-row"><span class="forge-mbur-label">PROGRESS LOST</span> <span class="forge-mbur-val">' + pct + '%</span></div>'
+         + '<div class="forge-mbur-row"><span class="forge-mbur-label">MATERIALS LOST</span> <span class="forge-mbur-val">' + matsLost + '</span></div>',
+    confirmLabel: 'ABANDON CRAFT',
+    confirmDestructive: true,
+    onConfirm: function(){
+      // Release any assigned champion before clearing the slot
+      _forgeReleaseChampInternal(b.queue[slotIdx]);
+      b.queue.splice(slotIdx, 1);
+      showTownToast('Forge abandoned. Materials lost.');
+      savePersist();
+      refreshForgePanel();
+    }
+  });
+}
+
+// Reusable M'bur-styled confirmation modal for Forge dialogs. Any future
+// Forge prompts (e.g. clearing a queue, abandoning multiple slots) should
+// route through here so they stay in-character.
+//   opts: { title, line, body, confirmLabel, confirmDestructive, onConfirm }
+function _forgeShowMburConfirm(opts){
+  opts = opts || {};
+  var existing = document.getElementById('forge-mbur-overlay');
+  if(existing) existing.parentNode.removeChild(existing);
+
+  var overlay = document.createElement('div');
+  overlay.id = 'forge-mbur-overlay';
+  overlay.className = 'forge-mbur-overlay';
+
+  var card = document.createElement('div');
+  card.className = 'forge-mbur-card';
+  var confirmCls = opts.confirmDestructive ? 'forge-mbur-btn forge-mbur-btn-danger' : 'forge-mbur-btn forge-mbur-btn-confirm';
+  card.innerHTML =
+    '<div class="forge-mbur-title">' + (opts.title || 'CONFIRM') + '</div>' +
+    '<div class="forge-mbur-strip">' +
+      '<div class="forge-mbur-portrait"><img src="assets/creatures/blacksmith.png" alt="M\'bur" onerror="this.parentNode.textContent=\'⚒\'"></div>' +
+      '<div class="forge-mbur-bubble">' +
+        '<div class="forge-mbur-bubble-name">M\'BUR · FORGE KEEPER</div>' +
+        '<div class="forge-mbur-bubble-line">' + (opts.line || '') + '</div>' +
+      '</div>' +
+    '</div>' +
+    (opts.body ? '<div class="forge-mbur-body">' + opts.body + '</div>' : '') +
+    '<div class="forge-mbur-btns">' +
+      '<button class="forge-mbur-btn" id="forge-mbur-cancel">KEEP CRAFTING</button>' +
+      '<button class="' + confirmCls + '" id="forge-mbur-confirm">' + (opts.confirmLabel || 'CONFIRM') + '</button>' +
+    '</div>';
+
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+
+  function close(confirmed){
+    if(overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    if(confirmed && typeof opts.onConfirm === 'function') opts.onConfirm();
+  }
+  document.getElementById('forge-mbur-cancel').onclick  = function(){ close(false); };
+  document.getElementById('forge-mbur-confirm').onclick = function(){ close(true); };
+  // Click outside the card cancels (matches deck-editor leave modal)
+  overlay.onclick = function(e){ if(e.target === overlay) close(false); };
+}
+
+// ── Forge: champion picker modal ─────────────────────────────────────
+// M'bur introduces the assignment, then a grid of available champions
+// with their STR-fit (primary) speed bonus surfaced. Champions on
+// expedition or already at another forge slot are hidden — the lock
+// model excludes them upstream via the picker filter.
+var FORGE_ASSIGN_LINES = [
+  "Hands. Real ones. Show me who.",
+  "Whose arms am I getting today?",
+  "Strong back, faster steel. Pick.",
+  "Anyone with a pulse and a grip will do.",
+  "Send me someone who's not afraid of fire."
+];
+
+function _forgePickChampForSlot(slotIdx){
+  var b = PERSIST.town.buildings.forge;
+  if(!b || !b.queue || !b.queue[slotIdx]) return;
+  var job = b.queue[slotIdx];
+  _forgeMigrateJob(job);
+  if(job.champId){ releaseChampFromForge(slotIdx); return; }
+
+  var existing = document.getElementById('forge-mbur-overlay');
+  if(existing) existing.parentNode.removeChild(existing);
+
+  // Eligible champions: unlocked, alive (or undefined alive flag), not
+  // dojo_tiger, not currently locked elsewhere (expedition / forge / well).
+  var available = (PERSIST.unlockedChamps||[]).filter(function(id){
+    if(!CREATURES[id] || id==='dojo_tiger') return false;
+    var cp = PERSIST.champions[id];
+    if(!cp) return true;
+    if(cp.lockedExpedition !== null && cp.lockedExpedition !== undefined) return false;
+    if(cp.lockedForge      !== null && cp.lockedForge      !== undefined) return false;
+    if(cp.lockedShardWell  !== null && cp.lockedShardWell  !== undefined) return false;
+    return true;
+  });
+
+  // Sort by STR-fit speedBonus desc so best fits surface first
+  available.sort(function(a, b){
+    var fa = champActivitySpeedBonus(a, 'STR').speedBonus;
+    var fb = champActivitySpeedBonus(b, 'STR').speedBonus;
+    return fb - fa;
+  });
+
+  var line = FORGE_ASSIGN_LINES[Math.floor(Math.random() * FORGE_ASSIGN_LINES.length)];
+  var relic = RELICS[job.relicId];
+
+  var gridHtml = '';
+  if(!available.length){
+    gridHtml = '<div class="forge-mbur-empty">No champions available. They\'re all elsewhere.</div>';
+  } else {
+    gridHtml = '<div class="forge-mbur-grid">';
+    available.forEach(function(id){
+      var ch = CREATURES[id];
+      var cp = getChampPersist(id);
+      var fit = champActivitySpeedBonus(id, 'STR');
+      var bonusPct = Math.round(fit.speedBonus * 100);
+      var bonusColor = bonusPct >= 33 ? '#9adc7e' : bonusPct >= 18 ? '#c0a060' : '#7a6030';
+      gridHtml +=
+        '<div class="forge-mbur-grid-item" onclick="_forgeAssignFromPicker(' + slotIdx + ',\'' + id + '\')">'
+        + '<div class="forge-mbur-grid-portrait">' + creatureImgHTML(id, ch.icon, '44px') + '</div>'
+        + '<div class="forge-mbur-grid-name">' + ch.name + '</div>'
+        + '<div class="forge-mbur-grid-lvl">Lv.' + cp.level + '</div>'
+        + '<div class="forge-mbur-grid-stats">'
+          + '<span style="color:#e88060;">STR ' + Math.round(cp.stats.str) + '</span> '
+          + '<span style="color:#9adc7e;opacity:.6;">AGI ' + Math.round(cp.stats.agi) + '</span> '
+          + '<span style="color:#9ad8e8;opacity:.6;">WIS ' + Math.round(cp.stats.wis) + '</span>'
+        + '</div>'
+        + '<div class="forge-mbur-grid-bonus" style="color:' + bonusColor + ';">−' + bonusPct + '% TIME</div>'
+        + '</div>';
+    });
+    gridHtml += '</div>';
+  }
+
+  var overlay = document.createElement('div');
+  overlay.id = 'forge-mbur-overlay';
+  overlay.className = 'forge-mbur-overlay';
+
+  var card = document.createElement('div');
+  card.className = 'forge-mbur-card forge-mbur-picker-card';
+  card.innerHTML =
+    '<div class="forge-mbur-title">ASSIGN A CHAMPION</div>' +
+    '<div class="forge-mbur-strip">' +
+      '<div class="forge-mbur-portrait"><img src="assets/creatures/blacksmith.png" alt="M\'bur" onerror="this.parentNode.textContent=\'⚒\'"></div>' +
+      '<div class="forge-mbur-bubble">' +
+        '<div class="forge-mbur-bubble-name">M\'BUR · FORGE KEEPER</div>' +
+        '<div class="forge-mbur-bubble-line">' + line + '</div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="forge-mbur-body">' +
+      '<div class="forge-mbur-row"><span class="forge-mbur-label">FORGING</span> <span class="forge-mbur-val">' + (relic?relic.name:job.relicId) + '</span></div>' +
+      '<div class="forge-mbur-row" style="font-size:8px;color:#7a6030;letter-spacing:1px;">PRIMARY <span style="color:#e88060;">STR</span> · SECONDARIES AT 25%</div>' +
+    '</div>' +
+    gridHtml +
+    '<div class="forge-mbur-btns">' +
+      '<button class="forge-mbur-btn" id="forge-mbur-cancel">CLOSE</button>' +
+    '</div>';
+
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+
+  function close(){ if(overlay.parentNode) overlay.parentNode.removeChild(overlay); }
+  document.getElementById('forge-mbur-cancel').onclick = close;
+  overlay.onclick = function(e){ if(e.target === overlay) close(); };
+}
+
+// Picker → assign handler. Closes the modal and assigns.
+function _forgeAssignFromPicker(slotIdx, champId){
+  var ov = document.getElementById('forge-mbur-overlay');
+  if(ov && ov.parentNode) ov.parentNode.removeChild(ov);
+  assignChampToForge(slotIdx, champId);
 }
 
 function collectForgeCraft(slotIdx){
   var b = PERSIST.town.buildings.forge;
   if(!b || !b.queue || !b.queue[slotIdx]) return;
   var job = b.queue[slotIdx];
+  _forgeMigrateJob(job);
   var elapsed = Date.now() - job.startTime;
   if(elapsed < job.totalMs) return; // not ready
   var relic = RELICS[job.relicId];
   if(!PERSIST.town.relics) PERSIST.town.relics = {};
   PERSIST.town.relics[job.relicId] = (PERSIST.town.relics[job.relicId]||0) + 1;
+  // Capture the assigned champion BEFORE releasing the lock — the release
+  // helper zeros job.champId.
+  var assignedChampId = job.champId || null;
+  // Release assigned champion (if any) before clearing the slot
+  _forgeReleaseChampInternal(job);
   b.queue.splice(slotIdx, 1);
+  // Award Forge XP based on craft time. Use baseTotalMs so champion-shortened
+  // crafts don't pay less XP than a slow self-craft of the same recipe.
+  //   base    600s →  60 XP
+  //   ruby   1800s → 180 XP
+  //   emerald 7200s → 720 XP
+  var xpGained = Math.max(10, Math.round(job.baseTotalMs / 10000));
+  if(typeof addBuildingXp === 'function') addBuildingXp('forge', xpGained);
+  // Mastery to the assigned champion (if any). Scaled by craft duration.
+  // Round 30 retuning lowered the scalar so Forge crafts are a steady
+  // accelerator, not a primary mastery source:
+  //   base    10min →  8 mastery
+  //   ruby    30min → 18 mastery
+  //   emerald  2hr  → 63 mastery
+  // Champion does the work, champion gets the growth — same justification
+  // as the activity stat-fit speed bonus.
+  var masteryGain = 0;
+  if(assignedChampId && CREATURES[assignedChampId]){
+    masteryGain = 3 + Math.round(job.baseTotalMs / 120000);
+    addMasteryXp(assignedChampId, masteryGain);
+  }
   if(typeof playCraftDoneSfx === 'function') playCraftDoneSfx();
   showTownToast('✦ '+(relic?relic.name:'Relic')+' added to inventory!');
-  addLog('✦ Forge complete: '+(relic?relic.name:job.relicId)+' added to inventory.','sys');
+  var masteryNote = (masteryGain > 0)
+    ? ' (+'+xpGained+' Forge XP · +'+masteryGain+' mastery to '+CREATURES[assignedChampId].name+')'
+    : ' (+'+xpGained+' Forge XP)';
+  addLog('✦ Forge complete: '+(relic?relic.name:job.relicId)+' added to inventory.'+masteryNote,'sys');
   savePersist();
   refreshForgePanel();
 }
 
 // ── Shard Well tick ───────────────────────────────────────────────────
-var SHARD_WELL_BASE_SECS=300;
-function getShardWellRate(){
-  var b=PERSIST.town.buildings.shard_well;
-  if(!b||!b.unlocked) return 0;
-  return 120; // 1 shard per 2 min
+// ── Shard Well: tick + helpers (Round 40 rewrite) ──
+// Base values, modified by champion assignments + permanent stat-point
+// upgrades. All numbers tunable; this is a first-cut balance pass.
+var SHARD_WELL_BASE_SECS = 120;   // baseline: 1 shard / 2 min (unmodified)
+var SHARD_WELL_BASE_CAP  = 25;    // baseline cap (unmodified)
+var SHARD_WELL_RATE_PT_PCT = 0.05; // each rateLevel point = +5% rate
+var SHARD_WELL_CAP_PT_VAL  = 1;    // each capLevel point = +1 cap
+
+// Effective seconds-per-shard given the well's current state.
+// Lower number = faster generation. Floored at 5s so we don't go silly.
+function getShardWellSecsPerShard(){
+  var b = PERSIST.town.buildings.shard_well;
+  if(!b || !b.unlocked) return 0;
+  var effect = (typeof champShardWellEffect === 'function')
+    ? champShardWellEffect(b.assignedChampIds||[])
+    : { rateMult:1.0 };
+  var rateMult = effect.rateMult * (1 + (b.rateLevel||0) * SHARD_WELL_RATE_PT_PCT);
+  return Math.max(5, Math.round(SHARD_WELL_BASE_SECS / rateMult));
 }
 
+// Effective cap given current state. Floor at base.
+function getShardWellCap(){
+  var b = PERSIST.town.buildings.shard_well;
+  if(!b || !b.unlocked) return SHARD_WELL_BASE_CAP;
+  var effect = (typeof champShardWellEffect === 'function')
+    ? champShardWellEffect(b.assignedChampIds||[])
+    : { capBonus:0 };
+  return SHARD_WELL_BASE_CAP + (effect.capBonus||0) + (b.capLevel||0) * SHARD_WELL_CAP_PT_VAL;
+}
+
+// Legacy function kept for existing callers. Returns "1 / N min" rate.
+function getShardWellRate(){
+  var b = PERSIST.town.buildings.shard_well;
+  if(!b || !b.unlocked) return 0;
+  return getShardWellSecsPerShard();
+}
+
+// Per-tick generation, capped, with XP / mastery side effects.
+//   Each shard generated:
+//     - Adds 1 to b.pendingShards (capped by getShardWellCap; the
+//       player must CLAIM to transfer to PERSIST.soulShards)
+//     - Adds (1 × xpMult) to b.wellXp; awards stat point on level-up
+//     - Adds 0.05 to b.masteryAcc; integer overflow distributed across slotted champs
 function shardWellTick(seconds){
-  var b=PERSIST.town.buildings.shard_well;
-  if(!b||!b.unlocked) return;
-  if(!b.shardAcc) b.shardAcc=0;
-  var rate=getShardWellRate();
-  if(rate<=0) return;
-  b.shardAcc+=seconds;
-  var earned=Math.floor(b.shardAcc/rate);
-  if(earned>0){
-    b.shardAcc-=earned*rate;
-    PERSIST.soulShards=(PERSIST.soulShards||0)+earned;
+  var b = PERSIST.town.buildings.shard_well;
+  if(!b || !b.unlocked) return;
+  if(typeof b.shardAcc !== 'number') b.shardAcc = 0;
+  if(typeof b.wellXp !== 'number')   b.wellXp = 0;
+  if(typeof b.wellLevel !== 'number') b.wellLevel = 1;
+  if(typeof b.unspentPoints !== 'number') b.unspentPoints = 0;
+  if(typeof b.rateLevel !== 'number') b.rateLevel = 0;
+  if(typeof b.capLevel !== 'number')  b.capLevel = 0;
+  if(typeof b.masteryAcc !== 'number') b.masteryAcc = 0;
+  if(typeof b.pendingShards !== 'number') b.pendingShards = 0;
+  if(!Array.isArray(b.assignedChampIds)) b.assignedChampIds = [];
+
+  var secsPerShard = getShardWellSecsPerShard();
+  if(secsPerShard <= 0) return;
+  var cap = getShardWellCap();
+
+  var effect = (typeof champShardWellEffect === 'function')
+    ? champShardWellEffect(b.assignedChampIds)
+    : { xpMult:1.0 };
+  var xpMult = effect.xpMult || 1.0;
+
+  b.shardAcc += seconds;
+
+  // Generate up to as many shards as time allows OR until cap is reached
+  var safety = 1000; // guard against runaway loops
+  while(b.shardAcc >= secsPerShard && safety-- > 0){
+    var atCap = b.pendingShards >= cap;
+    if(atCap){
+      // At cap — drop the accumulated time so the well doesn't immediately
+      // dump a huge backlog when the player claims; cap is meant to gate
+      // pacing, not to overflow.
+      b.shardAcc = 0;
+      break;
+    }
+    b.pendingShards += 1;
+    b.shardAcc -= secsPerShard;
+
+    // Award well XP
+    b.wellXp += xpMult; // floats accumulate; never round mid-tick
+
+    // Level-up loop (handle multiple level-ups in one tick if XP huge)
+    while(b.wellXp >= getShardWellXpForLevel(b.wellLevel)){
+      b.wellXp -= getShardWellXpForLevel(b.wellLevel);
+      b.wellLevel += 1;
+      b.unspentPoints += 1;
+    }
+
+    // Mastery accumulator — well is the LEAST efficient mastery source
+    // (J's call). 0.05 mastery per shard means ~1 mastery / 20 shards =
+    // ~40 minutes of well time at default rate, distributed across slotted
+    // champs. Specialized AGI rosters get faster shards = faster mastery,
+    // so the mastery indirectly tracks well throughput.
+    b.masteryAcc += 0.05;
+    if(b.masteryAcc >= 1 && b.assignedChampIds.length > 0){
+      var whole = Math.floor(b.masteryAcc);
+      b.masteryAcc -= whole;
+      // Each slotted champion gets the whole amount (not split) so the
+      // assignment feels like an active investment per champion.
+      // Keeps the magnitude tiny because whole is usually 1.
+      b.assignedChampIds.forEach(function(id){
+        if(typeof addMasteryXp === 'function') addMasteryXp(id, whole);
+      });
+    }
   }
 }
 
@@ -4268,13 +5938,12 @@ function refreshSummonsBanner(){
   banner.style.display='block';
   var souls=PERSIST.soulShards||0;
   var canSummon=souls>=SOUL_SHARDS_PER_PULL;
-  banner.innerHTML='<div style="display:flex;align-items:center;gap:10px;padding:6px 14px;background:rgba(6,3,1,.6);border-bottom:1px solid #1e1006;">'
-    +'<span style="font-family:Cinzel,serif;font-size:8px;color:#7a5020;letter-spacing:1px;">SOUL SHARDS</span>'
-    +'<span style="font-family:Cinzel,serif;font-size:11px;color:#c09030;">🔮 '+souls+'</span>'
-    +(canSummon
-      ?'<button onclick="openBuilding(\'shard_well\')" style="font-family:Cinzel,serif;font-size:8px;padding:4px 10px;border-radius:3px;border:1px solid #c09030;background:rgba(40,22,4,.9);color:#d4a843;cursor:pointer;margin-left:auto;">SUMMON ✦</button>'
-      :'<span style="font-size:8px;color:#3a2810;margin-left:auto;">'+(SOUL_SHARDS_PER_PULL-souls)+' more to summon</span>')
-    +'</div>';
+  // Round 62g: shard count display dropped — nav-shards owns it now.
+  // Banner is now a single SUMMON CTA when shards are available, or
+  // a faint "N more to summon" hint otherwise. Slim, no chrome.
+  banner.innerHTML = canSummon
+    ? '<button onclick="openSummonsPanel()" class="town-summon-cta">SUMMON ✦</button>'
+    : '<span class="town-summon-wait">'+(SOUL_SHARDS_PER_PULL-souls)+' more shards to summon</span>';
 }
 
 // ─────────────────────────────────────────────────────────
@@ -4287,6 +5956,7 @@ setInterval(function(){
   marketTick(5);
   bestiaryTick(5);
   shardWellTick(5);
+  if(typeof arenaTick === 'function') arenaTick(5);
   questTick(5);
   savePersist();
   // Live-update vault bar if vault panel is open
@@ -4300,6 +5970,11 @@ setInterval(function(){
       // Market live update handled by marketTick → refreshMarketPanel
     }
   }
+  // Round 62f: keep nav-bar currencies in sync with background gains
+  // (shard well auto-fill, expedition completions, achievement claims,
+  // etc). refreshNavCurrencies paints gold + shards without touching
+  // the active-tab class state.
+  if(typeof refreshNavCurrencies === 'function') refreshNavCurrencies();
 }, 5000);
 
 function showTownToast(msg){
@@ -4410,47 +6085,77 @@ var _gachaRAF = null;
 var _summoningActive = false; // lock during animation
 
 // ── Rarity config ──
-var RARITY_COL   = {common:'#c8a050',uncommon:'#50d050',rare:'#5090ff',legendary:'#ffd040'};
-var RARITY_ORDER = {legendary:0,rare:1,uncommon:2,common:3};
-var RARITY_SYM   = {common:'◆',uncommon:'◈',rare:'✦',legendary:'★'};
-var RARITY_BG    = {
-  common:   'linear-gradient(135deg,#1a1208,#100c04)',
-  uncommon: 'linear-gradient(135deg,#081a08,#041004)',
-  rare:     'linear-gradient(135deg,#080e20,#040810)',
-  legendary:'linear-gradient(135deg,#201004,#100800)'
+// Round 62: switched from generic common/uncommon/rare/legendary to
+// the project's 7-tier gem palette (Ruby/Emerald/Sapphire/Turquoise/
+// Amethyst/Topaz/Black Opal). Hex values mirror the .asc-tier-chip
+// rules in style.css so the summons UI and the ascension chip on a
+// champion card read as the same colour system.
+//
+// RARITY_ORDER sorts rarest-first for the pool grid (0 = rarest).
+// RARITY_LABEL is what gets printed in UI strings (capitalised, with
+// the space for "Black Opal").
+var RARITY_COL   = {
+  ruby:      '#c04040',
+  emerald:   '#50b060',
+  sapphire:  '#5080d0',
+  turquoise: '#50b0a8',
+  amethyst:  '#a060d0',
+  topaz:     '#c0a040',
+  black_opal:'#8888c0'
 };
+var RARITY_ORDER = {
+  black_opal:0, topaz:1, amethyst:2, turquoise:3, sapphire:4, emerald:5, ruby:6
+};
+var RARITY_LABEL = {
+  ruby:'RUBY', emerald:'EMERALD', sapphire:'SAPPHIRE', turquoise:'TURQUOISE',
+  amethyst:'AMETHYST', topaz:'TOPAZ', black_opal:'BLACK OPAL'
+};
+// Card-face translucent background. Subtle hint of the gem's hue.
+var RARITY_BG    = {
+  ruby:      'linear-gradient(135deg,#200808,#100404)',
+  emerald:   'linear-gradient(135deg,#081a08,#041004)',
+  sapphire:  'linear-gradient(135deg,#080e20,#040810)',
+  turquoise: 'linear-gradient(135deg,#082018,#04100c)',
+  amethyst:  'linear-gradient(135deg,#180820,#0c0410)',
+  topaz:     'linear-gradient(135deg,#201804,#100c02)',
+  black_opal:'linear-gradient(135deg,#0c0820,#040210)'
+};
+// Visual class buckets used by the reveal animation. The "spotlight"
+// tiers (topaz+black_opal) get the big sprite + strong glow that the
+// old "legendary" label used to own. Amethyst is the rare-band echo.
+// Sapphire/Turquoise get a small glow. Ruby/Emerald baseline.
+var RARITY_SPOTLIGHT = {ruby:0, emerald:0, sapphire:1, turquoise:1, amethyst:2, topaz:3, black_opal:3};
 
 // ── Inject CSS once ──
+// Round 60: cosmic full-page chrome retired. Only the animation/3D
+// card-flip primitives stay — the rest comes from the sibling panel
+// CSS family. Kept keyframes: ring-spin, card-breathe, shockwave.
 (function(){
   if(document.getElementById('summons-css')) return;
   var s=document.createElement('style');
   s.id='summons-css';
   s.textContent=
-    '@keyframes es-bg-pulse{0%,100%{opacity:.55}50%{opacity:.9}}'+
     '@keyframes es-ring-spin{to{transform:rotate(360deg)}}'+
     '@keyframes es-ring-spinr{to{transform:rotate(-360deg)}}'+
-    '@keyframes es-title-glow{0%,100%{text-shadow:0 0 20px #9060ff80,0 0 60px #6030c040}50%{text-shadow:0 0 32px #b080ff,0 0 80px #7040d060,0 0 130px #5020a040}}'+
     '@keyframes es-card-breathe{0%,100%{box-shadow:0 0 10px #40208040,0 6px 24px #00000070}50%{box-shadow:0 0 28px #7040c070,0 6px 32px #00000090}}'+
-    '@keyframes es-reveal-pulse{0%,100%{box-shadow:0 0 30px #7030c040,0 0 70px #5020a020}50%{box-shadow:0 0 50px #9050e060,0 0 110px #7030c040}}'+
     '@keyframes es-shockwave{0%{transform:translate(-50%,-50%) scale(.1);opacity:.9}100%{transform:translate(-50%,-50%) scale(3.5);opacity:0}}'+
-    '.es-overlay{position:fixed;inset:0;z-index:9000;background:#04010e;overflow-y:auto;font-family:Georgia,serif;}'+
-    '.es-card-wrap{position:absolute;width:130px;height:180px;perspective:700px;cursor:default;}'+
+    '.town-panel-summons{width:min(1100px,95vw);max-width:95vw;height:85vh;max-height:85vh;display:flex;flex-direction:column;overflow:hidden;padding:0;}'+
+    '.town-panel-summons .town-panel-header{padding:14px 16px 10px;margin-bottom:0;}'+
+    '.town-panel-summons #summons-inner{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;scrollbar-color:#2a1808 transparent;}'+
+    '.town-panel-summons #summons-inner::-webkit-scrollbar{width:6px;}'+
+    '.town-panel-summons #summons-inner::-webkit-scrollbar-track{background:transparent;}'+
+    '.town-panel-summons #summons-inner::-webkit-scrollbar-thumb{background:#2a1808;border-radius:3px;}'+
+    '.es-card-wrap{position:absolute;width:180px;height:260px;perspective:700px;cursor:default;}'+
     '.es-card-inner{width:100%;height:100%;transform-style:preserve-3d;position:relative;}'+
-    '.es-face,.es-back{position:absolute;inset:0;border-radius:12px;backface-visibility:hidden;-webkit-backface-visibility:hidden;}'+
+    '.es-face,.es-back{position:absolute;inset:0;border-radius:8px;backface-visibility:hidden;-webkit-backface-visibility:hidden;}'+
     '.es-back{background:linear-gradient(135deg,#1c0935,#0d051f);border:2px solid #4020a0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;animation:es-card-breathe 2.2s ease-in-out infinite;}'+
-    '.es-back::before{content:"";position:absolute;inset:8px;border:1px solid #3010a030;border-radius:8px;}'+
-    '.es-back::after{content:"";position:absolute;inset:0;border-radius:12px;background:repeating-linear-gradient(45deg,transparent,transparent 9px,#ffffff03 9px,#ffffff03 10px);}'+
     '.es-face{transform:rotateY(180deg);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:12px 8px;gap:5px;border:2px solid #333;}'+
-    '.es-pool-card{background:#0e0618;border:1px solid #1e0a30;border-radius:8px;padding:9px 8px;display:flex;flex-direction:column;gap:3px;transition:border-color .2s,opacity .2s;}'+
-    '.es-pool-card:hover{border-color:#4020a0;}'+
-    '.es-btn{padding:12px 28px;border-radius:8px;cursor:pointer;font-family:Georgia,serif;font-size:14px;font-weight:bold;letter-spacing:1px;border:none;transition:transform .12s,filter .12s;}'+
-    '.es-btn:hover{transform:translateY(-2px);filter:brightness(1.2);}'+
-    '.es-btn:active{transform:translateY(1px);}'+
-    '.es-btn-single{background:linear-gradient(135deg,#2a1060,#4020a0);color:#c0a0ff;border:1px solid #6030c0;}'+
-    '.es-btn-multi{background:linear-gradient(135deg,#301000,#804020);color:#ffc080;border:1px solid #c06030;}'+
-    '.es-btn-shards{background:linear-gradient(135deg,#0a2010,#103020);color:#80e080;border:1px solid #308040;font-size:12px;padding:8px 16px;}'+
-    '.es-reveal-btn{padding:14px 52px;background:linear-gradient(135deg,#2a0a50,#5010a0,#2a0a50);color:#e0b0ff;border:1px solid #9050e0;border-radius:8px;cursor:pointer;font-family:Georgia,serif;font-size:16px;letter-spacing:3px;animation:es-reveal-pulse 2s ease-in-out infinite;transition:transform .15s,filter .15s;}'+
-    '.es-reveal-btn:hover{transform:scale(1.05);filter:brightness(1.25);}';
+    '.es-pool-card{background:linear-gradient(180deg,#1a1208,#120802);border:1px solid #3a2010;border-radius:4px;padding:8px;display:flex;flex-direction:column;gap:4px;transition:border-color .15s,opacity .15s;}'+
+    '.es-pool-card:hover{border-color:#c09030;}'+
+    '.es-summon-btn{padding:12px 22px;background:transparent;border:2px solid #6030c0;color:#c0a0ff;font-family:\'Cinzel\',serif;font-size:12px;letter-spacing:2.5px;cursor:pointer;border-radius:4px;text-shadow:0 0 6px rgba(160,96,224,.4);transition:all .12s ease;display:flex;flex-direction:column;align-items:center;gap:2px;min-width:160px;}'+
+    '.es-summon-btn:hover:not(:disabled){background:linear-gradient(180deg,rgba(96,48,192,.3),rgba(48,16,96,.4));}'+
+    '.es-summon-btn:disabled{opacity:.4;cursor:not-allowed;}'+
+    '.es-summon-btn-sub{font-size:9px;letter-spacing:1.2px;color:#9070c0;font-style:italic;font-family:\'Crimson Text\',serif;font-weight:normal;}';
   document.head.appendChild(s);
 })();
 
@@ -4459,101 +6164,190 @@ var _canvasCtx=null,_canvasEl=null,_canvasPhase='idle';
 var _vortexParticles=[],_burstParticles=[];
 var _vortexCX=0,_vortexCY=0;
 
-function openTestGacha(){
-  var ex=document.getElementById('summons-overlay');
-  if(ex){ _summonsTeardown(); ex.remove(); return; }
+// Pricing — Round 60: 10-pull discounted to 900 (one free) per J.
+var SUMMONS_COST_1  = 100;
+var SUMMONS_COST_10 = 900;
 
-  var pool=buildGachaPool();
-  pool.sort(function(a,b){return (RARITY_ORDER[a.rarity]||3)-(RARITY_ORDER[b.rarity]||3)||(a.name<b.name?-1:1);});
-
-  var ov=document.createElement('div');
-  ov.className='es-overlay'; ov.id='summons-overlay';
-
-  ov.innerHTML=
-    '<div style="position:fixed;inset:0;pointer-events:none;z-index:0;">'+
-      '<div style="position:absolute;inset:0;background:radial-gradient(ellipse 80% 60% at 50% 38%,#1a0540 0%,#04010e 68%);animation:es-bg-pulse 4s ease-in-out infinite;"></div>'+
-      '<canvas id="es-canvas" style="position:absolute;inset:0;width:100%;height:100%;"></canvas>'+
-    '</div>'+
-    '<div id="es-rings" style="position:fixed;top:38%;left:50%;pointer-events:none;z-index:1;">'+
-      '<svg id="es-ring1" width="480" height="480" viewBox="0 0 480 480" style="position:absolute;transform:translate(-50%,-50%);opacity:.14;animation:es-ring-spin 18s linear infinite;">'+
-        '<circle cx="240" cy="240" r="210" fill="none" stroke="#8040ff" stroke-width="1" stroke-dasharray="8 18"/>'+
-        '<circle cx="240" cy="240" r="165" fill="none" stroke="#6030c0" stroke-width="1" stroke-dasharray="4 22"/>'+
-      '</svg>'+
-      '<svg id="es-ring2" width="360" height="360" viewBox="0 0 360 360" style="position:absolute;transform:translate(-50%,-50%);opacity:.08;animation:es-ring-spinr 12s linear infinite;">'+
-        '<circle cx="180" cy="180" r="155" fill="none" stroke="#c080ff" stroke-width="1.5" stroke-dasharray="3 14"/>'+
-      '</svg>'+
-    '</div>'+
-    '<div id="es-pinpoint" style="position:fixed;top:38%;left:50%;transform:translate(-50%,-50%);width:4px;height:4px;border-radius:50%;background:#fff;z-index:2;pointer-events:none;opacity:0;box-shadow:0 0 8px #fff,0 0 30px #c080ff,0 0 80px #8040ff;"></div>'+
-    '<div id="es-shockwave" style="position:fixed;top:38%;left:50%;width:200px;height:200px;border-radius:50%;border:3px solid #fff;z-index:3;pointer-events:none;opacity:0;display:none;"></div>'+
-    '<div id="es-leg-iso" style="position:fixed;inset:0;background:#000;z-index:8990;pointer-events:none;opacity:0;display:none;"></div>'+
-    '<div style="position:relative;z-index:4;max-width:940px;margin:0 auto;padding:24px 16px;">'+
-      '<div style="text-align:center;margin-bottom:8px;">'+
-        '<div style="color:#7040a0;font-size:11px;letter-spacing:4px;margin-bottom:6px;">✦ ✦ ✦</div>'+
-        '<h1 style="margin:0;font-size:28px;font-weight:normal;letter-spacing:3px;color:#c8a0ff;animation:es-title-glow 3s ease-in-out infinite;">THE ETERNAL SUMMONS</h1>'+
-        '<div style="color:#5030a0;font-size:12px;letter-spacing:2px;margin-top:6px;">BIND A SOUL TO YOUR CAUSE</div>'+
-      '</div>'+
-      '<div style="text-align:center;margin-bottom:20px;"><span style="color:#9070c0;font-size:14px;">🔮 <span id="es-shards">0</span> Soul Shards</span></div>'+
-      '<div style="display:flex;gap:12px;justify-content:center;margin-bottom:24px;flex-wrap:wrap;align-items:center;">'+
-        '<button class="es-btn es-btn-single" onclick="doEternalPull(1)">🔮 SUMMON ONE<br><span style="font-size:10px;opacity:.7;font-weight:normal">100 Soul Shards</span></button>'+
-        '<button class="es-btn es-btn-multi"  onclick="doEternalPull(10)">🔥 SUMMON TEN<br><span style="font-size:10px;opacity:.7;font-weight:normal">1000 Soul Shards</span></button>'+
-        '<button class="es-btn es-btn-shards" onclick="testAddShards()">✦ +500 Shards</button>'+
-        '<button onclick="_summonsTeardown();document.getElementById(\'summons-overlay\').remove()" style="padding:8px 16px;background:transparent;border:1px solid #2a1060;color:#503080;border-radius:6px;cursor:pointer;font-size:12px;">✕ CLOSE</button>'+
-      '</div>'+
-      '<div id="es-stage" style="position:relative;min-height:220px;margin-bottom:20px;display:flex;align-items:center;justify-content:center;">'+
-        '<div style="color:#2a1450;font-size:13px;letter-spacing:2px;">AWAITING THE SUMMONS</div>'+
-      '</div>'+
-      '<div id="es-reveal-wrap" style="text-align:center;margin-bottom:28px;display:none;">'+
-        '<button class="es-reveal-btn" onclick="revealAllSummons()" style="display:none;">✦ &nbsp; REVEAL ALL &nbsp; ✦</button>'+
-      '</div>'+
-      '<div style="border-top:1px solid #1a0840;padding-top:20px;">'+
-        '<div style="color:#4020a0;font-size:11px;letter-spacing:3px;margin-bottom:12px;" id="es-pool-label">KNOWN ENTITIES — SOULS IN THE VOID</div>'+
-        '<div id="es-pool-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:8px;"></div>'+
-      '</div>'+
-    '</div>'+
-    '<div id="summons-flash" style="position:fixed;inset:0;pointer-events:none;z-index:9998;opacity:0;background:#000;transition:opacity .35s;"></div>';
-
-  document.body.appendChild(ov);
-
-  // Fill shard count and pool grid after DOM ready
-  var shEl=document.getElementById('es-shards');
-  if(shEl) shEl.textContent=(PERSIST.soulShards||0);
-  _refreshSummonsPoolGrid();
+// Round 60: opens the summons panel. Replaces the old openTestGacha
+// (which was orphaned — the Shard Well's SUMMON button called
+// doEternalPull() directly with no count, which silently NaN-ed the
+// shard balance and never opened any UI).
+function openSummonsPanel(){
+  var panel = document.getElementById('summons-panel-bg');
+  if(!panel) return;
+  panel.classList.add('show');
+  _renderSummonsPanel();
   _initCanvas();
+}
+
+function closeSummonsPanel(){
+  _summonsTeardown();
+  var panel = document.getElementById('summons-panel-bg');
+  if(panel) panel.classList.remove('show');
+}
+
+// Re-render the panel body from PERSIST state. Called on open and
+// after any action that changes the shard pool or the discovered
+// roster.
+function _renderSummonsPanel(){
+  var inner = document.getElementById('summons-inner');
+  if(!inner) return;
+  var souls = PERSIST.soulShards || 0;
+  var canOne = souls >= SUMMONS_COST_1;
+  var canTen = souls >= SUMMONS_COST_10;
+  var disabledOne = canOne ? '' : ' disabled';
+  var disabledTen = canTen ? '' : ' disabled';
+
+  // Round 62: one-time refund banner. Shown when a player pulled an
+  // unimplemented stub champion on a pre-fix build and got their shards
+  // back via the loadPersist migration. Banner dismisses itself the
+  // first time it's painted.
+  var refundBanner = '';
+  if(PERSIST._stubRefundPending && PERSIST._stubRefundPending.shards > 0){
+    var rp = PERSIST._stubRefundPending;
+    var names = (rp.ids||[]).map(function(cid){ return (CREATURES[cid] && CREATURES[cid].name) || cid; }).join(', ');
+    refundBanner = ''
+      + '<div style="margin:10px 22px 0;padding:10px 14px;background:linear-gradient(180deg,#1a1208,#0e0802);border:1px solid #5a3a18;border-left:3px solid #d4a843;border-radius:3px;">'
+      +   '<div style="font-family:Cinzel,serif;font-size:10px;letter-spacing:2px;color:#d4a843;margin-bottom:4px;">A SOUL RETURNED</div>'
+      +   '<div style="font-family:\'Crimson Text\',serif;font-size:12px;color:#c0a060;line-height:1.4;">'
+      +     'The binding on ' + names + ' could not hold. ' + rp.shards + ' soul shards were returned to your reserve.'
+      +   '</div>'
+      + '</div>';
+    // Clear after composing so the banner only shows once.
+    delete PERSIST._stubRefundPending;
+    if(typeof savePersist === 'function') savePersist();
+  }
+
+  // Standard NPC greeting block (Shard Master), level row,
+  // shard counter band, summon buttons, stage, pool grid.
+  inner.innerHTML = ''
+    + '<div class="npc-greeting" id="summons-npc-greeting">'
+    +   '<div class="npc-greeting-sprite"><img src="assets/creatures/shard_master.png" alt="Shard Master" onerror="this.parentNode.textContent=\'🔮\'"></div>'
+    +   '<div class="npc-greeting-text">'
+    +     '<div class="npc-greeting-name">SHARD MASTER</div>'
+    +     '<div class="npc-greeting-msg" id="summons-npc-msg"></div>'
+    +   '</div>'
+    + '</div>'
+    // Shard counter band
+    + '<div style="display:flex;align-items:center;gap:14px;padding:12px 22px;background:linear-gradient(180deg,#1a0f25,#0e0820);border-bottom:1px solid #2a1808;">'
+    +   (typeof soulShardImgHTML === 'function' ? soulShardImgHTML('40px') : '<span style="font-size:32px;">🔮</span>')
+    +   '<div style="flex:1;min-width:0;">'
+    +     '<div style="font-family:Cinzel,serif;font-size:9px;letter-spacing:2px;color:#7040a0;">SOUL SHARDS</div>'
+    +     '<div style="font-family:Cinzel,serif;font-size:18px;color:#c0a0ff;font-weight:700;letter-spacing:1px;" id="summons-shards-count">' + souls + '</div>'
+    +   '</div>'
+    + '</div>'
+    + refundBanner
+    // Summon buttons
+    + '<div style="display:flex;gap:14px;justify-content:center;padding:18px 22px;flex-wrap:wrap;border-bottom:1px solid #2a1808;">'
+    +   '<button class="es-summon-btn" onclick="doEternalPull(1)"' + disabledOne + '>'
+    +     '<span>SUMMON ×1</span>'
+    +     '<span class="es-summon-btn-sub">' + SUMMONS_COST_1 + ' shards</span>'
+    +   '</button>'
+    +   '<button class="es-summon-btn" onclick="doEternalPull(10)"' + disabledTen + '>'
+    +     '<span>SUMMON ×10</span>'
+    +     '<span class="es-summon-btn-sub">' + SUMMONS_COST_10 + ' shards (saves ' + (SUMMONS_COST_1*10 - SUMMONS_COST_10) + ')</span>'
+    +   '</button>'
+    + '</div>'
+    // Stage area (animations + card reveals appear here)
+    + '<div id="es-stage-wrap" style="position:relative;min-height:240px;padding:20px 22px;border-bottom:1px solid #2a1808;">'
+    +   '<canvas id="es-canvas" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;"></canvas>'
+    +   '<div id="es-rings" style="position:absolute;top:50%;left:50%;pointer-events:none;">'
+    +     '<svg id="es-ring1" width="320" height="320" viewBox="0 0 320 320" style="position:absolute;transform:translate(-50%,-50%);opacity:.14;animation:es-ring-spin 18s linear infinite;">'
+    +       '<circle cx="160" cy="160" r="140" fill="none" stroke="#8040ff" stroke-width="1" stroke-dasharray="8 18"/>'
+    +       '<circle cx="160" cy="160" r="110" fill="none" stroke="#6030c0" stroke-width="1" stroke-dasharray="4 22"/>'
+    +     '</svg>'
+    +     '<svg id="es-ring2" width="240" height="240" viewBox="0 0 240 240" style="position:absolute;transform:translate(-50%,-50%);opacity:.08;animation:es-ring-spinr 12s linear infinite;">'
+    +       '<circle cx="120" cy="120" r="105" fill="none" stroke="#c080ff" stroke-width="1.5" stroke-dasharray="3 14"/>'
+    +     '</svg>'
+    +   '</div>'
+    +   '<div id="es-pinpoint" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:4px;height:4px;border-radius:50%;background:#fff;pointer-events:none;opacity:0;box-shadow:0 0 8px #fff,0 0 30px #c080ff,0 0 80px #8040ff;"></div>'
+    +   '<div id="es-shockwave" style="position:absolute;top:50%;left:50%;width:200px;height:200px;border-radius:50%;border:3px solid #fff;pointer-events:none;opacity:0;display:none;"></div>'
+    +   '<div id="es-stage" style="position:relative;min-height:200px;display:flex;align-items:center;justify-content:center;">'
+    +     '<div style="color:#5a4a70;font-family:Cinzel,serif;font-size:11px;letter-spacing:3px;">AWAITING THE SUMMONS</div>'
+    +   '</div>'
+    + '</div>'
+    // Pool grid section
+    + '<div style="padding:14px 22px;">'
+    +   '<div style="font-family:Cinzel,serif;font-size:11px;letter-spacing:2.5px;color:#d4a843;margin-bottom:10px;" id="es-pool-label">SUMMONABLE SOULS</div>'
+    +   '<div id="es-pool-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px;"></div>'
+    + '</div>';
+
+  // Greet (one-shot per panel-open via the unified pipeline)
+  if(typeof playNpcGreeting === 'function') playNpcGreeting('shard_well', {once:true});
+  // Defensive: if already greeted this open, paint the cached line
+  var msgEl = document.getElementById('summons-npc-msg');
+  var sharedMsgEl = document.getElementById('shard_well-npc-msg');
+  if(msgEl && !msgEl.textContent && typeof _lastNpcLine !== 'undefined' && _lastNpcLine.shard_well){
+    msgEl.textContent = _lastNpcLine.shard_well;
+  }
+  // The unified pipeline writes to #shard_well-npc-msg (the well's own
+  // bubble). Mirror that line here too — both panels can be open
+  // simultaneously, and the user expects the summons bubble to fill
+  // in with the same Shard Master line.
+  if(msgEl && sharedMsgEl && sharedMsgEl.textContent && !msgEl.textContent){
+    msgEl.textContent = sharedMsgEl.textContent;
+  }
+
+  _refreshSummonsPoolGrid();
+}
+
+// External-friendly alias so devtools / save-load / _devGiveShards
+// can refresh the open panel without knowing the implementation.
+function _refreshSummonsPanel(){
+  var panel = document.getElementById('summons-panel-bg');
+  if(panel && panel.classList.contains('show')) _renderSummonsPanel();
 }
 
 function _buildPoolGrid(pool){
   return pool.map(function(e){
     var cr=CREATURES[e.id];
-    var col=RARITY_COL[e.rarity]||'#888';
+    var col=RARITY_COL[e.rarity]||'#a89373';
     var owned=PERSIST.unlockedChamps&&PERSIST.unlockedChamps.includes(e.id);
     var dupes=(PERSIST.champDupes&&PERSIST.champDupes[e.id])||0;
-    var deck=CREATURE_DECKS[e.id];
-    var uniq=deck?[...new Set(deck.cards)].filter(function(x){return x!=='strike'&&x!=='brace';}).map(function(x){return CARDS[x]?CARDS[x].name:x;}).join(' · '):'';
-    return '<div class="es-pool-card" style="opacity:'+(owned?'1':'0.38')+';border-color:'+(owned?col+'44':'#1a0830')+'">'
+    // Sibling-aligned card: portrait + name + LV-style rarity badge +
+    // stats. Drops the unique-cards list (deck contents stay hidden,
+    // same principle as the arena daily preview). Owned state shown
+    // by full opacity + green ✓; unowned dims to 0.45.
+    // Round 61: owned creatures are friendly (in your roster) so they
+    // flip-x to face right; unowned stay default (enemy facing).
+    var portraitCls = owned ? 'flip-x' : '';
+    return '<div class="es-pool-card" style="opacity:'+(owned?'1':'0.45')+';border-left:3px solid '+col+';">'
       +'<div style="display:flex;align-items:center;gap:8px;">'
-        +creatureImgHTML(cr.id, cr.icon, '36px')
+        +'<div style="width:40px;height:40px;background:#0e0802;border:1px solid #2a1808;display:flex;align-items:center;justify-content:center;flex-shrink:0;">'+creatureImgHTML(cr.id, cr.icon, '32px', portraitCls)+'</div>'
         +'<div style="min-width:0;flex:1;">'
-          +'<div style="color:'+col+';font-size:9px;font-weight:bold;letter-spacing:1px;">'+e.rarity.toUpperCase()+'</div>'
-          +'<div style="color:#d0b080;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+cr.name+'</div>'
+          // Round 62d: gem-name text label removed; the 3px gem-colour
+          // border-left on the card already carries the rarity signal.
+          +'<div style="font-family:Cinzel,serif;font-size:11px;color:#e8d7a8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.5px;">'+cr.name+'</div>'
         +'</div>'
-        +(owned?'<span style="flex-shrink:0;color:#50c050;font-size:9px;">✓'+(dupes?'+'+dupes:'')+'</span>':'')
+        +(owned?'<span style="flex-shrink:0;color:#9adc7e;font-size:10px;font-family:Cinzel,serif;">✓'+(dupes?'+'+dupes:'')+'</span>':'')
       +'</div>'
-      +'<div style="color:#504060;font-size:9px;">'+cr.baseStats.str+'/'+cr.baseStats.agi+'/'+cr.baseStats.wis+' · '+cr.innate.name+'</div>'
-      +(uniq?'<div style="color:#382848;font-size:8px;">'+uniq+'</div>':'')
+      +'<div style="font-family:Cinzel,serif;font-size:9px;color:#7a6030;letter-spacing:.6px;">'
+        +'<span style="color:#e88060;">'+cr.baseStats.str+'</span>·'
+        +'<span style="color:#9adc7e;">'+cr.baseStats.agi+'</span>·'
+        +'<span style="color:#9ad8e8;">'+cr.baseStats.wis+'</span>'
+        +'<span style="color:#5a4020;"> · </span>'
+        +'<span style="color:#c0a060;">'+cr.innate.name+'</span>'
+      +'</div>'
     +'</div>';
   }).join('');
 }
 
 // ── Canvas ──
+// Round 60: canvas is now inside the panel's stage area, not full-screen.
+// Sized to the parent's box; vortex/burst origin is the stage center.
 function _initCanvas(){
   _canvasEl=document.getElementById('es-canvas');
   if(!_canvasEl) return;
-  _canvasEl.width=window.innerWidth; _canvasEl.height=window.innerHeight;
+  var parent = _canvasEl.parentElement;
+  var w = (parent && parent.clientWidth) || 600;
+  var h = (parent && parent.clientHeight) || 240;
+  _canvasEl.width = w;
+  _canvasEl.height = h;
   _canvasCtx=_canvasEl.getContext('2d');
   _canvasPhase='idle';
   _vortexParticles=[]; _burstParticles=[];
-  _vortexCX=window.innerWidth*0.5;
-  _vortexCY=window.innerHeight*0.38;
+  _vortexCX = w * 0.5;
+  _vortexCY = h * 0.5;
   if(_gachaRAF) cancelAnimationFrame(_gachaRAF);
   _rafLoop();
 }
@@ -4617,13 +6411,18 @@ function _tickVortex(ctx){
 function _startBurst(bestRarity){
   _canvasPhase='burst';
   _burstParticles=[];
+  // Round 62: burst palettes keyed to the 7-tier gem rarity. Each
+  // palette is the gem hue + lighter/darker variants + white sparkle.
   var palettes={
-    legendary:['#ffd040','#ffb000','#fff0a0','#ff8000','#ffffff'],
-    rare:      ['#5090ff','#80b8ff','#2060d0','#c0d8ff','#ffffff'],
-    uncommon:  ['#50d050','#80ff80','#30a030','#c0ffc0','#ffffff'],
-    common:    ['#c8a050','#e0c080','#a08040','#f0e0a0','#ffffff']
+    ruby:      ['#c04040','#e07070','#a02828','#ffc0c0','#ffffff'],
+    emerald:   ['#50b060','#80e090','#308040','#c0ffd0','#ffffff'],
+    sapphire:  ['#5080d0','#80a8ff','#2060a0','#c0d8ff','#ffffff'],
+    turquoise: ['#50b0a8','#80e0d8','#308878','#c0fff0','#ffffff'],
+    amethyst:  ['#a060d0','#c080ff','#7838a8','#e0c0ff','#ffffff'],
+    topaz:     ['#c0a040','#e0c060','#a07820','#ffe080','#ffffff'],
+    black_opal:['#8888c0','#b0b0e0','#5858a0','#c0c0ff','#ffffff']
   };
-  var pal=palettes[bestRarity]||palettes.common;
+  var pal=palettes[bestRarity]||palettes.ruby;
   for(var i=0;i<55;i++){
     var angle=Math.random()*Math.PI*2;
     var spd=3+Math.random()*8;
@@ -4681,7 +6480,8 @@ function _summonsTeardown(){
 }
 
 function _setSummoningButtons(locked){
-  var btns=document.querySelectorAll('.es-btn-single,.es-btn-multi');
+  // Round 60: selector updated to the new sibling-style button class.
+  var btns=document.querySelectorAll('.es-summon-btn');
   btns.forEach(function(btn){
     btn.disabled=locked;
     btn.style.cursor=locked?'not-allowed':'';
@@ -4691,11 +6491,22 @@ function _setSummoningButtons(locked){
 
 // ── Pull ──
 function doEternalPull(count){
+  // Round 60: panel-aware. If the panel isn't open, open it first
+  // (the Shard Well's SUMMON button used to call this directly with
+  // no count, NaN-ing the math — now it routes through openSummonsPanel
+  // first, but this guard keeps the old call site safe too).
+  count = count || 1;
+  var panel = document.getElementById('summons-panel-bg');
+  if(!panel || !panel.classList.contains('show')){
+    openSummonsPanel();
+    return;
+  }
   if(_summoningActive) return; // locked during animation
-  var cost=count*100;
+  // Round 60: discounted 10-pull (900 vs 1000). Single pull stays 100.
+  var cost = (count === 10) ? SUMMONS_COST_10 : SUMMONS_COST_1 * count;
   if((PERSIST.soulShards||0)<cost){
     var st=document.getElementById('es-stage');
-    if(st) st.innerHTML='<div style="color:#f06060;font-size:13px;letter-spacing:1px;">NOT ENOUGH SHARDS — NEED '+cost+'</div>';
+    if(st) st.innerHTML='<div style="color:#f06060;font-family:Cinzel,serif;font-size:11px;letter-spacing:2px;">NOT ENOUGH SHARDS · NEED '+cost+'</div>';
     return;
   }
 
@@ -4703,15 +6514,39 @@ function doEternalPull(count){
   _summoningActive=true;
   _setSummoningButtons(true);
   PERSIST.soulShards-=cost; savePersist();
-  var el=document.getElementById('es-shards'); if(el) el.textContent=PERSIST.soulShards;
+  var el=document.getElementById('summons-shards-count');
+  if(el) el.textContent=PERSIST.soulShards;
+
+  // Round 62i: reset the stage's inline height before the new pull
+  // begins. _dealCards sets style.height to fit its card layout
+  // (taller for 10-pulls than singles) — without clearing it, a
+  // follow-up 1-pull would inherit the previous 10-pull's height,
+  // stretching the rings/particle animation that plays from the
+  // centre of the parent es-stage-wrap. Clearing returns the stage
+  // to its CSS min-height:200px, recentring the spin/burst FX.
+  var _stage = document.getElementById('es-stage');
+  if(_stage){ _stage.style.height=''; }
 
   var pool=buildGachaPool();
   _gachaResults=[];
-  var bestRarity='common';
+  // Round 62: 7-tier roll table (gem palette). Numbers are cumulative
+  // upper bounds against Math.random() — must stay <=1 and sum to 1
+  // in delta form. Total: 35+25+18+12+7+2.5+0.5 = 100.
+  // If a tier's slice happens to have no creatures in the current pool,
+  // the picker falls back to the full pool so the player still gets a
+  // result (otherwise rolling Black Opal pre-content would freeze).
+  var bestRarity='ruby';
   for(var i=0;i<count;i++){
     var roll=Math.random();
-    var rarity=roll<0.04?'legendary':roll<0.17?'rare':roll<0.45?'uncommon':'common';
-    if((RARITY_ORDER[rarity]||3)<(RARITY_ORDER[bestRarity]||3)) bestRarity=rarity;
+    var rarity =
+      roll < 0.005 ? 'black_opal' :
+      roll < 0.030 ? 'topaz'      :
+      roll < 0.100 ? 'amethyst'   :
+      roll < 0.220 ? 'turquoise'  :
+      roll < 0.400 ? 'sapphire'   :
+      roll < 0.650 ? 'emerald'    :
+                     'ruby';
+    if((RARITY_ORDER[rarity]||6)<(RARITY_ORDER[bestRarity]||6)) bestRarity=rarity;
     var rPool=pool.filter(function(e){return e.rarity===rarity;});
     if(!rPool.length) rPool=pool;
     var picked=rPool[Math.floor(Math.random()*rPool.length)];
@@ -4729,8 +6564,10 @@ function doEternalPull(count){
 
   // Clear stage
   var st=document.getElementById('es-stage');
-  if(st){ st.style.display='flex'; st.style.alignItems='center'; st.style.justifyContent='center'; st.innerHTML='<div style="color:#2a1060;font-size:11px;letter-spacing:3px;animation:es-bg-pulse 1s ease-in-out infinite;">BINDING SOULS...</div>'; }
-  var rw=document.getElementById('es-reveal-wrap'); if(rw) rw.style.display='none';
+  // Round 60: dropped es-bg-pulse animation (removed from CSS in the
+  // same round). Plain "BINDING SOULS..." status text — the canvas
+  // vortex behind it provides motion already.
+  if(st){ st.style.display='flex'; st.style.alignItems='center'; st.style.justifyContent='center'; st.innerHTML='<div style="color:#9070c0;font-family:Cinzel,serif;font-size:11px;letter-spacing:3px;">BINDING SOULS...</div>'; }
 
   // Vortex stream inward (2.5s)
   _startVortex(2500);
@@ -4757,12 +6594,22 @@ function _dealCards(){
   if(!st) return;
   st.innerHTML=''; st.style.display='block'; st.style.position='relative'; st.style.width='100%';
 
-  var cardW=158,cardH=220,gapX=14,gapY=20;
+  // Round 61: card size bumped (180×260, was 158×220) so the creature
+  // sprite can be the focal element at near-combat scale instead of
+  // the tiny 44-56px badge it used to be.
+  var cardW=180,cardH=260,gapX=14,gapY=20;
   var stW=st.offsetWidth||700;
 
-  // Separate legendaries from the rest
+  // Round 62: legendary partition replaced with "spotlight" tier
+  // partition. Topaz + Black Opal pulls land in the centred top row
+  // (the old legendary slot) — they're the new pinnacle band. All
+  // other tiers fall into the grid below. RARITY_SPOTLIGHT=3 picks
+  // the top tier; we promote spotlight=3 to the centred row.
   var legs=[], rest=[];
-  _gachaResults.forEach(function(r,i){ (r.rarity==='legendary'?legs:rest).push({r:r,i:i}); });
+  _gachaResults.forEach(function(r,i){
+    var sp = RARITY_SPOTLIGHT[r.rarity] || 0;
+    (sp >= 3 ? legs : rest).push({r:r,i:i});
+  });
 
   // Calculate positions:
   // Row 0: legendaries centred (if any)
@@ -4781,7 +6628,6 @@ function _dealCards(){
   function makeCard(entry, finalX, finalY, isLeg){
     var r=entry.r, i=entry.i;
     var rc=RARITY_COL[r.rarity]||'#888';
-    var scale=isLeg?'1.08':'1';
 
     var wrap=document.createElement('div');
     wrap.className='es-card-wrap'; wrap.id='es-card-'+i;
@@ -4789,20 +6635,27 @@ function _dealCards(){
     wrap.style.transform='translate('+(cx-finalX)+'px,'+(cy-finalY)+'px) scale(0.06)';
     wrap.style.opacity='0';
 
+    // Round 62: sprite size now keys off RARITY_SPOTLIGHT bucket
+    // rather than a single "isLeg" boolean — Topaz/Black Opal get
+    // the 144px focal-sprite treatment, everything else stays at
+    // 120px. Same flip-x convention (revealed creature is YOUR
+    // champion, faces right).
+    var spriteSize = isLeg ? '144px' : '120px';
+    // Round 62d: gem-name text label removed from the card face. The
+    // border / inset glow / underline-pill ARE the rarity language;
+    // printing "RUBY"/"EMERALD"/etc was redundant. A short coloured
+    // underline below the name reinforces the tier without naming it.
     wrap.innerHTML=
       '<div class="es-card-inner" id="es-inner-'+i+'">'
         +'<div class="es-back" style="transform:rotateY(180deg);border-color:'+rc+'60;box-shadow:0 0 18px '+rc+'30,inset 0 0 12px '+rc+'15;">'
-          +'<div style="font-size:30px;color:'+rc+'50;">🔮</div>'
+          +'<div style="font-size:34px;color:'+rc+'50;">🔮</div>'
           +'<div style="color:'+rc+'60;font-size:9px;letter-spacing:2px;">✦</div>'
         +'</div>'
         +'<div class="es-face" style="transform:rotateY(0deg);background:'+RARITY_BG[r.rarity]+';border-color:'+rc+';box-shadow:0 0 24px '+rc+'50,inset 0 0 20px '+rc+'12;">'
-          +(isLeg?'<div style="font-size:10px;color:#ffd04090;letter-spacing:3px;margin-bottom:2px;">★ LEGENDARY ★</div>':'')
-          +'<div style="display:flex;align-items:center;justify-content:center;margin:2px 0;">'+creatureImgHTML(r.c.id, r.c.icon, isLeg?'56px':'44px')+'</div>'
-          +'<div style="color:'+rc+';font-size:10px;letter-spacing:2px;font-weight:bold;">'+RARITY_SYM[r.rarity]+' '+r.rarity.toUpperCase()+' '+RARITY_SYM[r.rarity]+'</div>'
-          +'<div style="color:#e8d0a0;font-size:11px;text-align:center;line-height:1.3;">'+r.c.name+'</div>'
-          +'<div style="width:75%;height:1px;background:'+rc+'40;margin:3px 0;"></div>'
-          +'<div style="color:'+rc+'80;font-size:9px;text-align:center;">'+r.c.innate.name+'</div>'
-          +'<div style="margin-top:5px;padding:3px 8px;border-radius:10px;background:'+(r.isNew?'#0d200d':'#1e0b00')+';color:'+(r.isNew?'#60e060':'#a06040')+';font-size:9px;letter-spacing:1px;">'+(r.isNew?'✨ NEW!':'DUPLICATE')+'</div>'
+          +'<div style="display:flex;align-items:center;justify-content:center;flex:1;">'+creatureImgHTML(r.c.id, r.c.icon, spriteSize, 'flip-x')+'</div>'
+          +'<div style="color:#e8d0a0;font-family:Cinzel,serif;font-size:12px;letter-spacing:.5px;text-align:center;line-height:1.2;">'+r.c.name+'</div>'
+          +'<div style="height:3px;background:'+rc+';width:36px;border-radius:1.5px;margin:5px auto 0;opacity:.9;"></div>'
+          +'<div style="margin-top:5px;padding:3px 8px;border-radius:10px;background:'+(r.isNew?'#0d200d':'#1e0b00')+';color:'+(r.isNew?'#60e060':'#a06040')+';font-size:9px;letter-spacing:1px;font-family:Cinzel,serif;">'+(r.isNew?'✦ NEW':'DUPLICATE')+'</div>'
         +'</div>'
       +'</div>';
 
@@ -4844,23 +6697,52 @@ function _dealCards(){
       setTimeout(function(){
         card.wrap.style.filter='';
         var inner=document.getElementById('es-inner-'+card.idx);
-        if(inner) inner.style.filter=
-          card.isLeg ? 'drop-shadow(0 0 40px #ffd040) drop-shadow(0 0 100px #ffa000) drop-shadow(0 0 160px #ffd04060)' :
-          card.rarity==='rare' ? 'drop-shadow(0 0 16px '+card.rc+') drop-shadow(0 0 45px '+card.rc+'50)' :
-          card.rarity==='uncommon' ? 'drop-shadow(0 0 10px '+card.rc+'80)' : '';
+        if(inner){
+          // Round 62: glow strength keys off RARITY_SPOTLIGHT bucket
+          // instead of the retired common/uncommon/rare/legendary names.
+          // 3 = spotlight (topaz / black opal), 2 = strong (amethyst),
+          // 1 = small (sapphire / turquoise), 0 = none (ruby / emerald).
+          var sp = (typeof RARITY_SPOTLIGHT !== 'undefined' ? RARITY_SPOTLIGHT[card.rarity] : 0) || 0;
+          inner.style.filter =
+            sp === 3 ? 'drop-shadow(0 0 40px '+card.rc+') drop-shadow(0 0 100px '+card.rc+'a0) drop-shadow(0 0 160px '+card.rc+'60)' :
+            sp === 2 ? 'drop-shadow(0 0 16px '+card.rc+') drop-shadow(0 0 45px '+card.rc+'50)' :
+            sp === 1 ? 'drop-shadow(0 0 10px '+card.rc+'80)' :
+                       '';
+        }
       }, 300);
 
-      // Legendary: particles from card after glow settles
+      // Spotlight tier (topaz / black opal): particles from card after
+      // glow settles. Palette is the card's own gem hue so each tier
+      // bursts in its own colour (topaz blooms gold, black opal violet).
       if(card.isLeg){
         setTimeout(function(){
           var lr=card.wrap.getBoundingClientRect();
-          _legParticles(lr.left+lr.width/2, lr.top+lr.height/2);
+          _legParticles(lr.left+lr.width/2, lr.top+lr.height/2, card.rc);
         }, 450);
       }
     }, delay);
   });
 
-  setTimeout(function(){ _refreshSummonsPoolGrid(); _summoningActive=false; _setSummoningButtons(false); }, allCards.length*50+1200);
+  setTimeout(function(){
+    _refreshSummonsPoolGrid();
+    _summoningActive=false;
+    _setSummoningButtons(false);
+    // Round 60: live-update the shard counter (in case it changed
+    // via _devGiveShards or background tick mid-animation) and the
+    // shard well's summons banner under the town nav.
+    var ct=document.getElementById('summons-shards-count');
+    if(ct) ct.textContent = (PERSIST.soulShards||0);
+    if(typeof refreshSummonsBanner === 'function') refreshSummonsBanner();
+    // Round 62i: refresh the nav-bar currencies (gold + shards) so
+    // the top-bar shard counter reflects the spend immediately, and
+    // refresh the shard well panel if it's open underneath — the
+    // sw-summon-cost text was painting stale shard amounts otherwise.
+    if(typeof refreshNavCurrencies === 'function') refreshNavCurrencies();
+    var swPanel = document.getElementById('shard_well-panel-bg');
+    if(swPanel && swPanel.classList.contains('show') && typeof refreshShardWellPanel === 'function'){
+      refreshShardWellPanel();
+    }
+  }, allCards.length*50+1200);
 }
 
 
@@ -4869,8 +6751,16 @@ function revealAllSummons(){ /* no-op — explosion IS the reveal */ }
 function _flipCard(idx){ /* no-op — cards erupt face-up */ }
 function _legendaryReveal(idx){ /* no-op — handled in _dealCards */ }
 
-function _legParticles(cx,cy){
-  var pal=['#ffd040','#ffb000','#fff0a0','#ff8000','#ffffff','#ffe080'];
+function _legParticles(cx,cy,baseCol){
+  // Round 62: parameterised on the card's gem colour. Pre-Round-62
+  // this function was hardcoded to gold (the old legendary palette).
+  // Now spotlight cards come in two flavours (topaz gold, black opal
+  // violet-grey), so the palette derives from baseCol with a lighter
+  // tint, a darker tint, and white sparkle. Falls back to gold if no
+  // colour is provided so older call sites still light up.
+  var pal = baseCol
+    ? [baseCol, baseCol+'80', baseCol+'40', '#ffffff', baseCol+'c0']
+    : ['#ffd040','#ffb000','#fff0a0','#ff8000','#ffffff','#ffe080'];
   _canvasPhase='burst'; _burstParticles=[];
   for(var i=0;i<65;i++){
     var angle=Math.random()*Math.PI*2;
@@ -4885,17 +6775,16 @@ function _legParticles(cx,cy){
   }
 }
 
-function testAddShards(){
-  PERSIST.soulShards=(PERSIST.soulShards||0)+500; savePersist();
-  var el=document.getElementById('es-shards'); if(el) el.textContent=PERSIST.soulShards;
-}
+// Round 60: testAddShards function removed. Use _devGiveShards(n)
+// from the console instead. The hardcoded "+500 Shards" button is
+// gone from the panel.
 
 function _refreshSummonsPoolGrid(){
   var grid=document.getElementById('es-pool-grid'); if(!grid) return;
   var lbl=document.getElementById('es-pool-label');
   var pool=buildGachaPool();
   pool.sort(function(a,b){return (RARITY_ORDER[a.rarity]||3)-(RARITY_ORDER[b.rarity]||3)||(a.name<b.name?-1:1);});
-  if(lbl) lbl.textContent='KNOWN ENTITIES — '+pool.length+' SOULS IN THE VOID';
+  if(lbl) lbl.textContent='SUMMONABLE SOULS · ' + pool.length;
   grid.innerHTML=_buildPoolGrid(pool);
 }
 
@@ -4910,8 +6799,8 @@ var TUTORIALS = {
     pages:[
       {body:'<strong>Build your champion\'s deck from a unified card library.</strong> Cards in your deck appear on the left. The card library fills the centre. Click any card to inspect it on the right; click <span style="color:#7fc06a;">+</span> on a library card to add a copy, or <span style="color:#d05858;">−</span> on a deck row to remove one.', tip:null},
       {body:'<strong>Filter the library</strong> with the <span style="color:#d4a843;">SOURCE</span> chips: <span style="color:#d4a843;">CHAMPION</span> shows your native cards, <span style="color:#d4a843;">UNIVERSAL</span> shows Strike / Brace / Dead Weight, <span style="color:#d4a843;">SHARED</span> shows cards borrowed from other Ruby+ ascended champions, <span style="color:#d4a843;">COLLECTION</span> shows anything else you\'ve unlocked. Empty categories are hidden.', tip:null},
-      {body:'The <span style="color:#d4a843;">TYPE</span> chips narrow by Attack / Defense / Utility. The <span style="color:#d4a843;">Search</span> box matches card names as you type. The <span style="color:#d4a843;">Sort</span> dropdown reorders by mana, name, source, or type. Filters are orthogonal — combine them freely.', tip:null},
-      {body:'<strong>Dead Weight</strong> (the orange-glowing rows) fills any deck slot you haven\'t assigned. Your deck size scales with STR — every unassigned slot becomes a Dead Weight. Mechanically: it is a [Sorcery] card that spends <span style="color:#5080c0;">all your current mana</span> to draw 1 card; if you have no mana, the Sorcery does not fire.', tip:null},
+      {body:'The <span style="color:#d4a843;">TYPE</span> chips narrow by Attack / Defense / Utility. The <span style="color:#d4a843;">Search</span> box matches card names as you type. The <span style="color:#d4a843;">Sort</span> dropdown reorders by mana, name, source, or type. Filters are orthogonal: combine them freely.', tip:null},
+      {body:'<strong>Dead Weight</strong> (the orange-glowing rows) fills any deck slot you haven\'t assigned. Your deck size scales with STR; every unassigned slot becomes a Dead Weight. Mechanically: it is a [Sorcery] card that spends <span style="color:#5080c0;">all your current mana</span> to draw 1 card. If you have no mana, the Sorcery does not fire.', tip:null},
       {body:'<strong>Ascension sharing:</strong> once a champion reaches Ruby tier or above, they can use cards from other Ruby+ champions via the <span style="color:#d4a843;">SHARED</span> filter. Borrowed cards display a gold "↗" badge and the inspector shows where they came from. Their effects fire normally; stat scaling uses the active champion\'s stats.', tip:null},
     ]
   },
@@ -4931,7 +6820,7 @@ var TUTORIALS = {
     title:'Mana System',
     isNpc: true,
     pages:[
-      {body:'Your mana pool maximum is <span style="color:#5080c0;">WIS × 5</span>. Mana regenerates at approximately <span style="color:#5080c0;">WIS × 0.8 + 2</span> per second. Some card effects require mana — look for the <span style="color:#5080c0;">[Sorcery]</span> keyword. If your mana is too low, the sorcery effect won\'t fire but the base effect still plays.',
+      {body:'Your mana pool maximum is <span style="color:#5080c0;">WIS × 5</span>. Mana regenerates at approximately <span style="color:#5080c0;">WIS × 0.8 + 2</span> per second. Some card effects require mana; look for the <span style="color:#5080c0;">[Sorcery]</span> keyword. If your mana is too low, the sorcery effect won\'t fire but the base effect still plays.',
        tip:null},
     ]
   },
@@ -4939,14 +6828,14 @@ var TUTORIALS = {
     title:'Welcome to Town',
     isNpc: true,
     pages:[
-      {body:'The Town is your base between runs. Buildings provide persistent benefits — store materials, track quests, catalogue creatures, and more. Some buildings are available immediately, others unlock as you progress.',
+      {body:'The Town is your base between runs. Buildings provide persistent benefits: store materials, track quests, catalogue creatures, and more. Some buildings are available immediately, others unlock as you progress.',
        tip:null},
-      {body:'Gold earned during runs is banked when a run ends. Gold is spent to unlock buildings, purchase items, and claim rewards. Buildings have an XP track — they level up from area clears, unlocking new features at higher levels.',
+      {body:'Gold earned during runs is banked when a run ends. Gold is spent to unlock buildings, purchase items, and claim rewards. Buildings have an XP track. They level up from area clears, unlocking new features at higher levels.',
        tip:null},
     ]
   },
   vault_intro: {
-    title:'Shtole — Vault Keeper',
+    title:'Shtole (Vault Keeper)',
     isNpc: true,
     pages:[
       {body:'"Ah, welcome. This is the Vault. Everything you gather out there, materials, resources, it all comes here. I keep it safe. I keep it organised. Nothing goes missing."'},
@@ -4955,22 +6844,22 @@ var TUTORIALS = {
     ]
   },
   adventurers_hall_intro: {
-    title:'Leona — Guild Girl',
+    title:'Leona (Guild Girl)',
     isNpc: true,
     pages:[
       {body:'"Oh! You\'re here for the first time! Welcome to the Adventurer\'s Hall! This is where all the action gets... coordinated. By me. Professionally."'},
-      {body:'"The QUESTS tab has bounties pinned to the board. Pick one that matches where you\'re heading, go complete it, then come back to claim your reward. Simple! I mean — standard procedure."'},
+      {body:'"The QUESTS tab has bounties pinned to the board. Pick one that matches where you\'re heading, go complete it, then come back to claim your reward. Simple! I mean... standard procedure."'},
       {body:'"The ACHIEVEMENTS tab tracks your overall progress. Some achievements reward gold when you hit milestones. I keep very thorough records. Very thorough."'},
       {body:'"Once the Hall levels up, I\'ll open EXPEDITIONS too. You can send your champions on timed missions for materials and experience while you focus on other things. I\'ll keep track of everything. That\'s my job. Which I love."'},
     ]
   },
   forge_intro: {
-    title:"M'bur — Forge Keeper",
+    title:"M'bur (Forge Keeper)",
     isNpc: true,
     pages:[
-      {body:'"Welcome to the Forge. I turn ore and rot into things that matter. Bring me materials and I\'ll make a relic — small object, big consequence."', tip:null},
-      {body:'Each recipe lists its materials and craft time. The Forge has up to three slots for parallel crafts. <span style="color:#d4a843;">Lv.1</span> opens the first slot, <span style="color:#d4a843;">Lv.3</span> the second, <span style="color:#d4a843;">Lv.5</span> the third. Slots run independently — each one finishes on its own timer.', tip:null},
-      {body:'Pick a recipe on the left to inspect it on the right. Materials show <span style="color:#7fc06a;">✓</span> when you have enough, <span style="color:#d05858;">✗</span> when you don\'t. Click <span style="color:#e87040;">⚒ BEGIN FORGING</span> to start a craft — materials are consumed immediately. Cancelling an in-progress craft does NOT refund materials.', tip:null},
+      {body:'"Welcome to the Forge. I turn ore and rot into things that matter. Bring me materials and I\'ll make a relic. Small object, big consequence."', tip:null},
+      {body:'Each recipe lists its materials and craft time. The Forge has up to three slots for parallel crafts. <span style="color:#d4a843;">Lv.1</span> opens the first slot, <span style="color:#d4a843;">Lv.3</span> the second, <span style="color:#d4a843;">Lv.5</span> the third. Slots run independently; each one finishes on its own timer.', tip:null},
+      {body:'Pick a recipe on the left to inspect it on the right. Materials show <span style="color:#7fc06a;">✓</span> when you have enough, <span style="color:#d05858;">✗</span> when you don\'t. Click <span style="color:#e87040;">⚒ BEGIN FORGING</span> to start a craft. Materials are consumed immediately. Cancelling an in-progress craft does NOT refund materials.', tip:null},
       {body:'When a craft completes, the slot pulses and a <span style="color:#f0a53a;">COLLECT</span> button appears. Collected relics enter your inventory; equip them at the Sanctum on any Ruby+ ascended champion. Their effects fire automatically in combat.', tip:null},
     ]
   },
@@ -4978,18 +6867,18 @@ var TUTORIALS = {
     title:'The Shrine',
     isNpc: true,
     pages:[
-      {body:'The Shrine grants one blessing per run, applied at run start. Available blessings are gated by Shrine level. Slotting a higher-tier gem unlocks higher-level blessings. Blessings are not permanent — they apply only to the run in which they are granted.',
+      {body:'The Shrine grants one blessing per run, applied at run start. Available blessings are gated by Shrine level. Slotting a higher-tier gem unlocks higher-level blessings. Blessings are not permanent. They apply only to the run in which they are granted.',
        tip:null},
     ]
   },
   bestiary_intro: {
-    title:'Hoot — Archivist',
+    title:'Hoot (Archivist)',
     isNpc: true,
     pages:[
       {body:'"Ah! A visitor! Welcome to the Bestiary. I\'m Hoot. I catalogue things. Every creature, every location, every little detail. It\'s... it\'s what I do. Hoo."'},
-      {body:'"When you encounter a creature in combat, it appears here automatically. You can see its stats, its cards, its innate ability — everything you\'ve learned about it. Knowledge is survival out there."'},
+      {body:'"When you encounter a creature in combat, it appears here automatically. You can see its stats, its cards, its innate ability. Everything you\'ve learned about it. Knowledge is survival out there."'},
       {body:'"Each creature has CHALLENGES. Defeat enough of them and you\'ll earn gold rewards. Complete all four challenges and you\'ll receive something... special. Very motivating for field work."'},
-      {body:'"The LOCATIONS tab shows every area you\'ve explored. The GLOSSARY tab explains all the keywords you\'ll see on cards — burns, poisons, shields, all of it. I organised them myself. Twice."'},
+      {body:'"The LOCATIONS tab shows every area you\'ve explored. The GLOSSARY tab explains all the keywords you\'ll see on cards: burns, poisons, shields, all of it. I organised them myself. Twice."'},
     ]
   },
   market_intro: {
@@ -4997,36 +6886,61 @@ var TUTORIALS = {
     isNpc: true,
     pages:[
       {body:'"Ah, a customer! Welcome to my humble establishment. I deal in materials, knowledge, and... occasionally, things of great rarity. Everything has a price."'},
-      {body:'"The WARES tab has my regular stock — materials, XP tomes, building scrolls. Stock refreshes every hour, so check back often. Once something sells out, it\'s gone until the next restock."'},
-      {body:'"At Market Level 3, I\'ll start offering DEALS — bundled goods at a discount. And at Level 5... well, let\'s just say I have connections. The RARE FINDS shelf is worth saving for."'},
+      {body:'"The WARES tab has my regular stock: materials, XP tomes, building scrolls. Stock refreshes every hour, so check back often. Once something sells out, it\'s gone until the next restock."'},
+      {body:'"At Market Level 3, I\'ll start offering DEALS, bundled goods at a discount. And at Level 5... well, let\'s just say I have connections. The RARE FINDS shelf is worth saving for."'},
       {body:'"A word of advice: gold is easy to earn, harder to keep. Buy what you need, save for what you want. The rare shelf rotates every 24 hours. Miss something good? Could be weeks before I find another."'},
     ]
   },
   sanctum_intro: {
-    title:'Theo — Ex-Champion',
+    title:'Keeper (Sanctum)',
     isNpc: true,
     pages:[
-      {body:'"Welcome to the Sanctum. This is where champions become... well, more like me. I\'m Theo. Retired champion. Undefeated. Mostly."'},
-      {body:'"The OVERVIEW tab shows your champion\'s stats, level, and mastery progress. Mastery XP is earned through combat — you can\'t buy it. Believe me, I tried."'},
-      {body:'"Once the mastery bar is full AND you have the right gem, hit ASCEND. Your champion resets to level 1 but with higher base stats, better growth, and a shiny new RELIC SLOT. It\'s worth it. I would know."'},
-      {body:'"The RELICS tab lets you equip relics into your unlocked slots. Fair warning — removing a relic DESTROYS it. No take-backs. Even I learned that the hard way."'},
+      {body:'"You grace the Sanctum. I am the Keeper, and I tend the rites that turn the merely strong into the truly ascended. Your champions, my lord, they sing already, but the choir can be made deeper."'},
+      {body:'"The OVERVIEW shall show their stats, their level, the mastery they have earned. Mastery is no purchase, my lord. It is given by the act of the champion themselves; by combat, by trial, by their own bright wills."'},
+      {body:'"When the mastery is full and the proper gem is yours, the ASCEND rite begins. Their level returns to one, but their base will rise, their growth will quicken, a new RELIC SLOT will open as the gem-light dictates. I have seen it many times. It is always right."'},
+      {body:'"The RELICS tab is where you bind these treasures into the slots you have earned. A word, my lord. A removal undoes the binding utterly. The relic is consumed; nothing returns. Choose with the certainty I see in you."'},
     ]
   },
   board_intro: {
     title:"The Adventurer's Board",
     isNpc: true,
     pages:[
-      {body:'The Board offers quests with specific completion conditions. One quest may be active at a time. Quest progress is tracked across runs. Completing a quest awards its listed reward — gold, <span style="color:#d4a843;">🃏 Fragments</span>, <span style="color:#2980b9;">💎 Gem Shards</span>, or Materials. Incomplete quests can be abandoned; the slot refreshes on a timer.',
+      {body:'The Board offers quests with specific completion conditions. One quest may be active at a time. Quest progress is tracked across runs. Completing a quest awards its listed reward: gold, <span style="color:#d4a843;">🃏 Fragments</span>, <span style="color:#2980b9;">💎 Gem Shards</span>, or Materials. Incomplete quests can be abandoned; the slot refreshes on a timer.',
        tip:null},
     ]
   },
   shard_well_intro: {
-    title:'The Shard Well',
+    title:'Shard Master (The Well)',
     isNpc: true,
     pages:[
-      {body:'The Shard Well passively generates <span style="color:#2980b9;">💎 Gem Shards</span> on a timer. Slotting a gem reduces that timer. Gem Shards are also earned from higher-level area clears and can be crafted into gem cards in the Vault.',
+      {body:'"You came back. They knew you would. The well drips Soul Shards, slowly. Up to a cap. Then it stops, until you take what is yours."',
        tip:null},
-      {body:'The Shard Well also connects to the <strong>Eternal Summons</strong>. You earn <span style="color:#c8a0ff;">🔮 Soul Shards</span> passively after every completed run. At 100 Soul Shards, you may perform a summon. Summoning draws a random champion from the pool of enemies you have encountered. Duplicate results grant Ascension tokens for that champion.',
+      {body:'"Three slots. Three champions, if you bring them. Their stats... bend the well. AGI quickens it. WIS deepens its cap. STR feeds the well\'s own learning, and from that, points to spend. Permanent points. The well grows when champions stand near it long enough."',
+       tip:null},
+      {body:'"The Eternal Summons feeds from this well. Reach 100 Soul Shards and a summons may be drawn. The result is one of those you have already faced. One who came close, perhaps too close. Duplicates do not waste. They make the original... stronger."',
+       tip:null},
+      {body:'"Recalibrate any time. The gold cost is small. The well does not mind being asked to listen again. ...Most things mind that. The well does not."',
+       tip:null},
+    ]
+  },
+  arena_intro: {
+    title:'Theo (The Arena)',
+    isNpc: true,
+    pages:[
+      {body:'"You\'re here. Good. The arena does three things. One: the <strong>Daily Challenge</strong>. Beat the day\'s opponent, take the purse. You can retry as many times as you like; once you win the gates close on that one until tomorrow. Reward scales with the opponent\'s level."',
+       tip:null},
+      {body:'"Two: <strong>Betting</strong>. Stick a champion in a slot, pay 100g, they sit in the stands and bet on the matches happening down on the sand. Sometimes they win, sometimes they lose. They walk out when their purse is empty, when they\'ve won too much for the bookmakers\' liking, or when their twelve hours are up. Whatever they leave with is yours. No experience, no mastery, just coin."',
+       tip:null},
+      {body:'"Stats decide how it goes. <span style="color:#9ad8e8;">WIS</span> sets how often they pick a winner, and how much they take when they do. <span style="color:#e88060;">STR</span> sets how often they shrug off a loss and softens the blow when they don\'t. <span style="color:#9adc7e;">AGI</span> sets how fast they bet. More rounds, more chances. Pick accordingly."',
+       tip:null},
+      {body:'"Pull them out early if you want. They keep what\'s in their purse. No entry refund, that coin\'s in the arena\'s pocket the moment they sit down. Don\'t blame me. I just take the cut."',
+       tip:null},
+      // Round 58: page 5 stays in Theo's voice. No mention of "codes"
+      // or "tabs" (meta UI concepts). Theo explains the duel side
+      // in-universe: people come looking for fights, you answer or
+      // don't. Hall quests pay what the quest pays. Casual duels are
+      // for sport. Player figures out the UI from the panel itself.
+      {body:'"And the Duel side. Folks come around looking for a fight. Friends, strangers, whoever. They make themselves known, you decide if you answer. The Hall sends its own sometimes. Those pay what the quest says. Everything else is for sport. No coin, no consequence. Bring what you\'ve got."',
        tip:null},
     ]
   },

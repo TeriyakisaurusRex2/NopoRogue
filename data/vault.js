@@ -135,17 +135,17 @@ var CHEST_LOOT_TABLES={
 
 
 function openVaultPanel(){
-  var msgEl = document.getElementById('vault-npc-msg');
-  if(msgEl){
-    var msg = getNpcGreeting('vault');
-    npcTypewriter(msgEl, msg, {pitch: BUILDINGS.vault.npc.pitch || 0.7});
-  }
+  playNpcGreeting('vault');
   refreshVaultPanel();
   document.getElementById('vault-panel-bg').classList.add('show');
 }
 
 function closeVaultPanel(){
   npcTypewriterStop();
+  // Round 44: reset NPC greeting flag (parallel to closeBuildingPanel).
+  // Vault uses playNpcGreeting('vault') without {once} so this is a
+  // defensive reset; harmless if the flag was never set.
+  if(typeof _npcGreetedThisOpen !== 'undefined') delete _npcGreetedThisOpen['vault'];
   document.getElementById('vault-panel-bg').classList.remove('show');
   buildTownGrid();
 }
@@ -171,7 +171,10 @@ var _vaultTab = 'materials';
 
 function switchVaultTab(tab){
   _vaultTab = tab;
-  document.querySelectorAll('.vault-tab').forEach(function(el){ el.classList.remove('active'); });
+  // Vault tabs use the chunky .bestiary-tab style as of Round 36 (was
+  // .vault-tab). Selector scoped to the vault panel so we don't poke
+  // bestiary-tabs in other buildings.
+  document.querySelectorAll('#vault-panel-bg .bestiary-tab').forEach(function(el){ el.classList.remove('active'); });
   var tabEl = document.getElementById('vtab-'+tab);
   if(tabEl) tabEl.classList.add('active');
   refreshVaultPanel();
@@ -528,9 +531,11 @@ function renderVaultInventory(){
       var tagHtml = (it.cat==='gems') ? '<span class="vault-inv-cell-tag tag-'+it.tier+'"></span>' : '';
       var iconInner;
       if(it.type === 'gem'){
-        iconInner = '<span class="vault-inv-cell-icon-img">'+gemImgHTML(it.tier,'40px')+'</span>';
+        iconInner = '<span class="vault-inv-cell-icon-img">'+gemImgHTML(it.tier,'48px')+'</span>';
       } else if(it.type === 'relic'){
-        iconInner = '<span class="vault-inv-cell-icon-img">'+relicImgHTML(it.id,'40px')+'</span>';
+        iconInner = '<span class="vault-inv-cell-icon-img">'+relicImgHTML(it.id,'48px')+'</span>';
+      } else if(it.type === 'currency' && it.id === 'soul_shards' && typeof soulShardImgHTML === 'function'){
+        iconInner = '<span class="vault-inv-cell-icon-img">'+soulShardImgHTML('48px')+'</span>';
       } else {
         iconInner = '<span class="vault-inv-cell-icon-emoji">'+it.icon+'</span>';
       }

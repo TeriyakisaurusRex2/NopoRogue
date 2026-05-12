@@ -53,28 +53,33 @@ function buildingImgHTML(id, emoji, size){
 // Relic icon — assets/icons/relics/<relicId>.png with emoji fallback from
 // the relic definition. Same flicker-resistant pattern as creatureImgHTML
 // (no opacity dance, fallback hidden until onerror fires).
-function relicImgHTML(relicId, size){
-  var sz = size || '32px';
-  var r = (typeof RELICS !== 'undefined' && RELICS[relicId]) || null;
-  var emoji = r ? r.icon : '⚗️';
-  var src = 'assets/icons/relics/' + relicId + '.png';
-  return '<span class="relic-img-wrap" style="display:inline-flex;width:'+sz+';height:'+sz+';align-items:center;justify-content:center;flex-shrink:0;">'
-    + '<img src="'+src+'" style="width:'+sz+';height:'+sz+';image-rendering:pixelated;object-fit:contain;" '
-    + 'onerror="this.style.display=\'none\';this.nextSibling.style.display=\'inline\';">'
-    + '<span style="font-size:calc('+sz+' * 0.7);line-height:1;display:none;">'+emoji+'</span>'
-    + '</span>';
-}
+// (Round 37: orphan relicImgHTML at this position deleted. There were
+//  two declarations in this file — one here and the canonical one near
+//  line 1869. JS function-hoisting makes the LATER win, so this earlier
+//  copy was dead code that looked alive. Per the CLAUDE.md duplicate-
+//  declaration rule, removed to prevent future "edit hits the wrong
+//  copy" bugs.)
 
 // Build a horizontal strip of equipped-relic icons for a champion. Each chip
 // is hover-wired to the existing tooltip system. Returns '' when no relics
 // equipped so callers can drop the strip cleanly. opts.size sets icon size.
 function relicStripHTML(champId, opts){
   opts = opts || {};
-  var size = opts.size || '24px';
   var equipped = (typeof getEquippedRelics === 'function') ? getEquippedRelics(champId) : [];
-  if(!equipped || !equipped.length) return '';
+  return _relicStripFromIdsHTML(equipped, opts);
+}
+
+// Round 57: variant that takes a raw array of relic IDs (vs the
+// champion-lookup variant above). Used by setEnemyUI to render the
+// enemy's relic strip during arena duels, where the payload carries
+// the relics directly on the enemy (e._arenaRelics) rather than
+// going through a champion record.
+function _relicStripFromIdsHTML(relicIds, opts){
+  opts = opts || {};
+  var size = opts.size || '24px';
+  if(!relicIds || !relicIds.length) return '';
   var html = '<span class="relic-strip">';
-  equipped.forEach(function(rid){
+  relicIds.forEach(function(rid){
     var r = (typeof RELICS !== 'undefined') ? RELICS[rid] : null;
     if(!r) return;
     html += '<span class="relic-chip" data-relic="'+rid+'" '
@@ -121,12 +126,139 @@ function iconWithAlertHTML(src, fallback, size, hasAlert){
     + '</span>';
 }
 
-// Gold icon — uses assets/icons/gold.png (24×24), falls back to ✦
+// ═══════════════════════════════════════════════════════
+// DEV / PRE-SHIP FLAGS
+// ═══════════════════════════════════════════════════════
+// Flip these false (or delete) before ship. Each flag is meant to be
+// found via "DEV:" grep in the codebase when audit time comes.
+
+// Round 37: blanket unlock for all town buildings while we redesign
+// the unlock pacing. Applied in loadPersist; idempotent. To re-gate,
+// flip to false and the building defaults take over again.
+var DEV_UNLOCK_ALL_BUILDINGS = true;
+
+// Round 60: console-callable cheat to add Soul Shards for summons
+// testing. Replaces the hardcoded "+500 Shards" button that used to
+// live on the summons screen itself. Usage from devtools:
+//   _devGiveShards()      → +500 (default)
+//   _devGiveShards(100)   → +100
+//   _devGiveShards(1000)  → +1000
+// Refreshes any open summons panel + the shard well's summons banner
+// so the new total is visible immediately.
+function _devGiveShards(n){
+  n = (typeof n === 'number' && n > 0) ? Math.floor(n) : 500;
+  PERSIST.soulShards = (PERSIST.soulShards || 0) + n;
+  savePersist();
+  console.log('[DEV] Added ' + n + ' soul shards. Total: ' + PERSIST.soulShards);
+  // Live refresh open surfaces
+  if(typeof _refreshSummonsPanel === 'function') _refreshSummonsPanel();
+  if(typeof refreshShardWellPanel === 'function'){
+    var sw = document.getElementById('shard_well-panel-bg');
+    if(sw && sw.classList.contains('show')) refreshShardWellPanel();
+  }
+  if(typeof refreshSummonsBanner === 'function') refreshSummonsBanner();
+  if(typeof refreshNavCurrencies === 'function') refreshNavCurrencies();
+}
+
+// Round 62: console-callable cheat to add Gold for testing.
+// Usage from devtools:
+//   _devGiveGold()        → +1000 (default)
+//   _devGiveGold(100)     → +100
+//   _devGiveGold(50000)   → +50000
+// Repaints the nav bar so the new total is visible immediately.
+function _devGiveGold(n){
+  n = (typeof n === 'number' && n > 0) ? Math.floor(n) : 1000;
+  PERSIST.gold = (PERSIST.gold || 0) + n;
+  savePersist();
+  console.log('[DEV] Added ' + n + ' gold. Total: ' + PERSIST.gold);
+  if(typeof refreshNavCurrencies === 'function') refreshNavCurrencies();
+}
+
+// Round 39: console-callable cheat to set up a relic-equipped state
+// for testing layouts. Open devtools, run `_devGiveTestRelics()`, then
+// refresh the UI (e.g. navigate away and back). Picks the first
+// unlocked champion (skips dojo_tiger), bumps them to Sapphire (3
+// relic slots), drops every base-tier relic into the vault, and
+// equips two so the rail / champion-card / etc all have something
+// to render. Idempotent — re-runs add more vault copies but the
+// equip slice stays at 2.
+function _devGiveTestRelics(){
+  var champId = null;
+  var pool = (PERSIST && PERSIST.unlockedChamps) || [];
+  for(var i=0;i<pool.length;i++){
+    if(pool[i] !== 'dojo_tiger' && CREATURES[pool[i]]){ champId = pool[i]; break; }
+  }
+  if(!champId){ console.log('[DEV] No unlocked champion to test on.'); return; }
+  var cp = getChampPersist(champId);
+  if(!cp){ console.log('[DEV] Champion persist missing for ' + champId); return; }
+  // 3 relic slots = Sapphire tier (1 slot per tier)
+  cp.ascensionTier = Math.max(cp.ascensionTier || 0, 3);
+  // All base-tier relics into the vault
+  if(!PERSIST.town.relics) PERSIST.town.relics = {};
+  var baseRelics = (typeof RELICS !== 'undefined')
+    ? Object.keys(RELICS).filter(function(id){ return RELICS[id].tier === 'base'; })
+    : [];
+  baseRelics.forEach(function(id){
+    PERSIST.town.relics[id] = (PERSIST.town.relics[id]||0) + 1;
+  });
+  // Equip up to 2 (leave 1 slot empty so the partial-equipped UI is exercised)
+  if(!cp.relics) cp.relics = [];
+  cp.relics = baseRelics.slice(0, 2);
+  savePersist();
+  var name = CREATURES[champId].name;
+  console.log('[DEV] '+name+' is now Sapphire (3 relic slots).');
+  console.log('[DEV] '+baseRelics.length+' base relics added to vault. 2 equipped on '+name+'.');
+  console.log('[DEV] Refresh the champion-select screen to see the new state.');
+}
+
+// Pixel-art icon size policy — never display below source resolution
+// (J: pixel art looks bad squished). Helpers that wrap PNG assets pass
+// their callers' size through this floor before rendering. Sizes given
+// as raw pixel strings ('14px'); other values (calc, em, etc) pass
+// through untouched since enforcing min on those is a different problem.
+function _minSizePx(sz, minPx){
+  if(typeof sz !== 'string') return minPx + 'px';
+  var m = sz.match(/^(-?\d+)\s*px$/);
+  if(!m) return sz; // not a px string — let caller's value pass through
+  var n = parseInt(m[1], 10);
+  if(isNaN(n) || n < minPx) return minPx + 'px';
+  return sz;
+}
+
+// Gold icon — uses assets/icons/gold.png (24×24, pixel art), falls back
+// to ✦. Display size is floored at 24px to avoid squishing the asset.
+// Default also bumped 16px → 24px to match the floor.
 function goldImgHTML(size){
-  var sz=size||'16px';
+  var sz = _minSizePx(size || '24px', 24);
   return '<span style="display:inline-flex;align-items:center;gap:3px;">'
     +'<img src="assets/icons/gold.png" style="width:'+sz+';height:'+sz+';image-rendering:pixelated;vertical-align:middle;" onerror="this.style.display=\'none\'">'
     +'</span>';
+}
+
+// Soul shard icon — two variants by display size:
+//   < 48px  → assets/icons/soul_shard_small.png  (24×24 native)
+//   ≥ 48px  → assets/icons/soul_shard.png        (48×48 native)
+// Small variant floored at 24, large at 48 — "don't squish below
+// native size" policy holds for both. Falls back to 🔮 emoji when the
+// PNG isn't yet in place.
+// (Round 39 added the 48px version; Round 62h added the 24px small
+// variant for inline / nav-bar / counter use cases where 48 was
+// massively oversized.)
+function soulShardImgHTML(size){
+  // Parse the requested px to pick the variant. Non-px strings (em,
+  // %, etc.) just fall through to the large variant.
+  var requestedPx = null;
+  if(typeof size === 'string'){
+    var m = size.match(/^(-?\d+)\s*px$/);
+    if(m) requestedPx = parseInt(m[1], 10);
+  }
+  var useSmall = (requestedPx !== null && requestedPx < 48);
+  var src      = useSmall ? 'assets/icons/soul_shard_small.png' : 'assets/icons/soul_shard.png';
+  var sz       = useSmall ? _minSizePx(size, 24) : _minSizePx(size || '48px', 48);
+  return '<span style="display:inline-flex;align-items:center;justify-content:center;width:'+sz+';height:'+sz+';">'
+    + '<img src="'+src+'" style="width:'+sz+';height:'+sz+';image-rendering:pixelated;object-fit:contain;" onerror="this.style.display=\'none\';this.nextSibling.style.display=\'inline\';">'
+    + '<span style="font-size:calc('+sz+' * 0.85);line-height:1;display:none;">🔮</span>'
+    + '</span>';
 }
 
 // Status icon — tries assets/icons/status/{stat}.png, used in tags
@@ -149,20 +281,100 @@ function areaImgHTML(id, emoji, size){
 var GEM_FILE = { ruby:'gemruby', emerald:'gememerald', sapphire:'gemsapphire', turquoise:'gemturquoise', amethyst:'gemamethyst', topaz:'gemtopaz', obsidian:'gemblackopal', opal:'gemblackopal', black_opal:'gemblackopal', blackopal:'gemblackopal' };
 // Gem icon — bare <img> tag. No fallback span (would flash visible for one
 // frame in Brave even with display:none, producing the sprite-plus-emoji
-// flicker users reported). All 7 tier PNGs ship with the project.
+// flicker users reported). All 7 tier PNGs ship with the project (48×48).
+// Display floored at 48px — never squish source. (Round 38: a few
+// decorative gem usages at <48 were either dead code or replaced
+// with emoji equivalents to keep small-context layouts intact.)
 function gemImgHTML(tier, size){
-  var sz   = size || '32px';
+  var sz   = _minSizePx(size || '48px', 48);
   var file = GEM_FILE[tier] || ('gem' + (tier||'').replace(/_/g,''));
   return '<img src="assets/icons/'+file+'.png" alt="" style="display:inline-block;width:'+sz+';height:'+sz+';image-rendering:pixelated;object-fit:contain;filter:drop-shadow(0 1px 2px rgba(0,0,0,.5));vertical-align:middle;flex-shrink:0;">';
 }
 
 
-var SETTINGS = { music:70, sfx:85, aspeed:'normal', logd:'normal', confirm:false, tutorial:true };
-var ASPEED_DELAYS = { instant:0, fast:300, normal:600, slow:1200 };
+// Round 62l: dropped `aspeed` (Auto-play Speed) — was stored but never
+// consumed anywhere in the codebase. Combat is real-time; there is no
+// auto-play. Also dropped ASPEED_DELAYS for the same reason. Added
+// _muteStash so the new mute-button toggle can restore the prior slider
+// value when you unmute.
+var SETTINGS = { music:70, sfx:85, logd:'normal', confirm:false, tutorial:true };
 var pendingConfirmIdx = -1;
+var _muteStash = { music:70, sfx:85 };
+var _settingsTab = 'audio';
 
-function openSettings(){ playUiSettingsSfx(); document.getElementById('settings-overlay').classList.add('show'); }
-function closeSettings(){ playUiCloseSfx(); document.getElementById('settings-overlay').classList.remove('show'); deleteSaveCancel(); }
+function openSettings(){
+  playUiSettingsSfx();
+  document.getElementById('settings-overlay').classList.add('show');
+  switchSettingsTab(_settingsTab);
+  refreshNowPlaying();
+  refreshMuteButtons();
+}
+function closeSettings(){
+  playUiCloseSfx();
+  document.getElementById('settings-overlay').classList.remove('show');
+  deleteSaveCancel();
+}
+
+// Round 62l: tab switcher for the settings panel. Stashes the active
+// tab in _settingsTab so re-opening returns you to the same tab.
+function switchSettingsTab(tab){
+  _settingsTab = tab;
+  ['audio','gameplay','save'].forEach(function(t){
+    var btn  = document.getElementById('stab-'+t);
+    var pane = document.getElementById('spane-'+t);
+    if(btn)  btn.classList.toggle('active', t===tab);
+    if(pane) pane.style.display = (t===tab) ? '' : 'none';
+  });
+  // The "Now Playing" line is only on the AUDIO tab — refresh when we
+  // land there so a re-open mid-track-change shows the right name.
+  if(tab === 'audio') refreshNowPlaying();
+}
+
+// Round 62l: mute / unmute a slider (music or sfx). Stores the prior
+// value in _muteStash so a second click restores it. Updates the
+// slider DOM, the SETTINGS object, the displayed %, the mute-button
+// icon, and persists to localStorage via applySetting.
+function toggleMute(kind){
+  var current = SETTINGS[kind] || 0;
+  var target;
+  if(current > 0){
+    _muteStash[kind] = current;
+    target = 0;
+  } else {
+    target = _muteStash[kind] || (kind === 'music' ? 70 : 85);
+  }
+  var slider = document.getElementById('s-'+kind);
+  if(slider) slider.value = target;
+  applySetting(kind, target);
+  refreshMuteButtons();
+}
+
+// Paint the speaker / muted-speaker icons based on current slider state.
+function refreshMuteButtons(){
+  ['music','sfx'].forEach(function(kind){
+    var btn = document.getElementById('s-'+kind+'-mute');
+    if(!btn) return;
+    var muted = !SETTINGS[kind] || SETTINGS[kind] === 0;
+    btn.textContent = muted ? '🔇' : '🔊';
+    btn.classList.toggle('muted', muted);
+  });
+}
+
+// Refresh the AUDIO tab's "Now Playing" line. Shows the friendly track
+// name from audio.js's MUSIC_NAMES, or an em-dash when music is stopped
+// or muted (getCurrentMusicName returns null in both cases).
+function refreshNowPlaying(){
+  var nameEl = document.getElementById('s-nowplaying-name');
+  if(!nameEl) return;
+  var name = (typeof getCurrentMusicName === 'function') ? getCurrentMusicName() : null;
+  if(name){
+    nameEl.textContent = '♪ ' + name;
+    nameEl.classList.remove('silent');
+  } else {
+    nameEl.textContent = '— silent —';
+    nameEl.classList.add('silent');
+  }
+}
 
 // ── Export ──
 function exportSave(){
@@ -238,34 +450,49 @@ function deleteSaveCancel(){
   if(db) db.style.display='inline-block';
 }
 function deleteSaveConfirm(){
-  // Delete current account save data
-  // TODO: When multi-account is implemented, this deletes only the active
-  // account's save key (noporo_save_{username}) and removes it from the
-  // user list. For now, single save key.
-  try{ localStorage.removeItem(PERSIST_KEY); }catch(e){}
-  // Settings are global (not per-account) — keep them
-  // Show feedback
+  // Round 63: deletes the CURRENTLY ACTIVE save slot only — not the
+  // entire localStorage. Other save slots are preserved. After delete
+  // we reload so the login screen rebuilds with the updated registry
+  // (and so any in-flight game state is cleared cleanly).
+  var id = getActiveSaveId();
+  if(id){
+    deleteSaveById(id);
+  } else {
+    // Pre-Round-63 fallback: nothing was active, scrub legacy key too
+    try{ localStorage.removeItem(PERSIST_KEY); }catch(e){}
+  }
+  // Settings are global (not per-save) — preserved.
   var dc=document.getElementById('s-delete-confirm');
   if(dc) dc.innerHTML='<div style="color:#60c060;font-size:11px;letter-spacing:1px;">✦ Save deleted. Reloading...</div>';
   setTimeout(function(){ window.location.reload(); },1000);
 }
 function applySetting(k,v){
-  if(k==='music'){ SETTINGS.music=+v; document.getElementById('sv-music').textContent=v+'%'; updateMusicVolume(); }
-  else if(k==='sfx'){ SETTINGS.sfx=+v; document.getElementById('sv-sfx').textContent=v+'%'; }
-  else if(k==='aspeed'){ SETTINGS.aspeed=v; }
+  if(k==='music'){
+    SETTINGS.music=+v;
+    document.getElementById('sv-music').textContent=v+'%';
+    updateMusicVolume();
+    // Round 62l: mute button + now-playing line both react to volume.
+    if(typeof refreshMuteButtons === 'function') refreshMuteButtons();
+    if(typeof refreshNowPlaying === 'function') refreshNowPlaying();
+  }
+  else if(k==='sfx'){
+    SETTINGS.sfx=+v;
+    document.getElementById('sv-sfx').textContent=v+'%';
+    if(typeof refreshMuteButtons === 'function') refreshMuteButtons();
+  }
   else if(k==='logd'){ SETTINGS.logd=v; }
   else if(k==='confirm'){ SETTINGS.confirm=!!v; pendingConfirmIdx=-1; if(gs) renderHand(); }
   else if(k==='tutorial'){ SETTINGS.tutorial=!!v; }
+  // Round 62l: 'aspeed' removed (was a dead setting with no consumer).
   try{ localStorage.setItem('cetd_settings',JSON.stringify(SETTINGS)); }catch(e){}
 }
 function loadSettings(){
   try{
     var s=JSON.parse(localStorage.getItem('cetd_settings')||'{}');
-    if(s.music!=null){ document.getElementById('s-music').value=s.music; document.getElementById('sv-music').textContent=s.music+'%'; SETTINGS.music=s.music; }
-    if(s.sfx!=null){ document.getElementById('s-sfx').value=s.sfx; document.getElementById('sv-sfx').textContent=s.sfx+'%'; SETTINGS.sfx=s.sfx; }
-    if(s.aspeed){ document.getElementById('s-aspeed').value=s.aspeed; SETTINGS.aspeed=s.aspeed; }
-    if(s.logd){ document.getElementById('s-logd').value=s.logd; SETTINGS.logd=s.logd; }
-    if(s.confirm!=null){ document.getElementById('s-confirm').checked=s.confirm; SETTINGS.confirm=s.confirm; }
+    if(s.music!=null){ document.getElementById('s-music').value=s.music; document.getElementById('sv-music').textContent=s.music+'%'; SETTINGS.music=s.music; if(s.music>0) _muteStash.music=s.music; }
+    if(s.sfx!=null){   document.getElementById('s-sfx').value=s.sfx;     document.getElementById('sv-sfx').textContent=s.sfx+'%';     SETTINGS.sfx=s.sfx;     if(s.sfx>0)   _muteStash.sfx=s.sfx;     }
+    if(s.logd){     document.getElementById('s-logd').value=s.logd;       SETTINGS.logd=s.logd; }
+    if(s.confirm!=null){ document.getElementById('s-confirm').checked=s.confirm;   SETTINGS.confirm=s.confirm; }
     if(s.tutorial!=null){ document.getElementById('s-tutorial').checked=s.tutorial; SETTINGS.tutorial=s.tutorial; }
     // Always enforce Press Start font and normal text size
     setFontTheme('press');
@@ -299,9 +526,27 @@ if(typeof playSfx === 'undefined'){
 // ═══════════════════════════════════════════════════════
 // PERSISTENT STATE
 // ═══════════════════════════════════════════════════════
-var PERSIST_KEY='cetd_v6';
+// Round 63: surface a version constant — shown on the login screen,
+// can be used by future feature gates. Bump when the save format
+// changes meaningfully.
+var GAME_VERSION = 'v0.1.0';
+
+// Round 63: multi-save support. Single-save model retired.
+//   localStorage 'cetd_saves'        → JSON array of save metadata
+//     [{ id, name, createdAt, lastPlayed }]
+//   localStorage 'cetd_active_save'  → id of the currently-loaded save
+//   localStorage 'cetd_save_<id>'    → per-save serialized PERSIST blob
+//
+// PERSIST_KEY is kept as the LEGACY key — used only by the one-time
+// migration helper (migrateLegacySaveIfNeeded). Live load/save go
+// through getCurrentSaveKey() which reads 'cetd_active_save'.
+var SAVES_REGISTRY_KEY = 'cetd_saves';
+var ACTIVE_SAVE_KEY    = 'cetd_active_save';
+var SAVE_PREFIX        = 'cetd_save_';
+var PERSIST_KEY='cetd_v6'; // legacy — kept for migration only
 var PERSIST={
   unlockedChamps:['druid','paladin','thief'],
+  favoriteChamps:{}, // Round 62: champion ids the player has starred; sort to top of select grid
   seenEnemies:[], gold:50, metaCurrency:0, achievements:{},
   champions:{}, // keyed by champId: {level,xp,xpNext,stats,alive,lastArea}
   townUnlocked:true,
@@ -311,7 +556,20 @@ var PERSIST={
       vault:{unlocked:true, slottedCard:null},
       forge:{unlocked:false,slottedCard:null,queue:[],assignedChamp:null},
       bestiary:{unlocked:true,slottedCard:null},
-      shard_well:{unlocked:false,slottedCard:null},
+      shard_well:{unlocked:false,slottedCard:null,
+                  // Round 40: champion-driven cap/rate/XP system
+                  // Round 44: pendingShards is the well's own pool; the
+                  // player must CLAIM to transfer to PERSIST.soulShards.
+                  assignedChampIds:[],   // up to 3 ids
+                  wellXp:0,              // accumulated, resets on level
+                  wellLevel:1,           // separate from buildingLevel
+                  unspentPoints:0,       // earned per well-level, spent on rate/cap
+                  rateLevel:0,           // permanent rate upgrades (each = +5%)
+                  capLevel:0,            // permanent cap upgrades (each = +1)
+                  shardAcc:0,            // fractional accumulator for ticks
+                  masteryAcc:0,          // fractional accumulator for slotted-champ mastery
+                  pendingShards:0        // shards in the well awaiting CLAIM
+                 },
       sanctum:   {unlocked:false,slottedCard:null},
       market:{unlocked:true,slottedCard:null, stock:[], refreshProgress:0,
               deals:[], dealsProgress:0, rare:null, rareProgress:0},
@@ -320,7 +578,7 @@ var PERSIST={
         {champId:null,areaId:null,type:null,startTime:null,totalMs:null,restUntil:null},
         {champId:null,areaId:null,type:null,startTime:null,totalMs:null,restUntil:null}
       ], expeditionLog:[]},
-      arena:{unlocked:false},
+      arena:{unlocked:false, tab:'sparring', sparringSlots:[null,null,null], pendingGold:0, dailyCompleted:null, dailySeedYMD:null},
     },
     materials:{},  // { materialId: count } — populated from MATERIALS definition
     relics:{},     // { relicId: count } — crafted/found relics in inventory
@@ -352,6 +610,12 @@ var PERSIST={
   areaRuns:{},
 };
 
+// Round 63: snapshot the original PERSIST shape so createNewSave can
+// deep-clone a fresh defaults state into PERSIST when minting a new
+// slot. Captured here (immediately after the literal) so nothing has
+// mutated it yet. _resetPersistToDefaults() reads from this.
+_PERSIST_DEFAULTS_SNAPSHOT = JSON.parse(JSON.stringify(PERSIST));
+
 function champPersistDefault(champId){
   var ch=CREATURES[champId];
   if(!ch) return null;
@@ -361,13 +625,216 @@ function champPersistDefault(champId){
     alive:true, lastArea:null,
     relics:[],             // equipped relic IDs
     lockedExpedition:null, // slot index if on expedition, else null
+    lockedForge:null,      // slot index if assigned to a forge slot, else null
+    lockedShardWell:null,  // slot index (0/1/2) if assigned to the well, else null
+    lockedArena:null,      // slot index (0/1/2) if sparring at the arena, else null
     ascensionTier:0,       // 0=base, 1=ruby, 2=emerald, etc.
     masteryXp:0,           // progress toward next ascension
   };
 }
 function getChampPersist(champId){
   if(!PERSIST.champions[champId]) PERSIST.champions[champId]=champPersistDefault(champId);
-  return PERSIST.champions[champId];
+  // Migration for saves that predate lockedForge / lockedShardWell / lockedArena
+  var cp = PERSIST.champions[champId];
+  if(cp && cp.lockedForge     === undefined) cp.lockedForge     = null;
+  if(cp && cp.lockedShardWell === undefined) cp.lockedShardWell = null;
+  if(cp && cp.lockedArena     === undefined) cp.lockedArena     = null;
+  return cp;
+}
+
+// ── Activity assignment & stat-fit model ─────────────────────────────────
+// Generic lock check for any town activity (expedition, forge, shard well,
+// future arena). Existing code paths still read cp.lockedExpedition directly
+// — that's fine, these helpers are for new code that needs the union.
+function isChampLocked(champId){
+  var cp = PERSIST.champions[champId];
+  if(!cp) return false;
+  return (cp.lockedExpedition !== null && cp.lockedExpedition !== undefined)
+      || (cp.lockedForge      !== null && cp.lockedForge      !== undefined)
+      || (cp.lockedShardWell  !== null && cp.lockedShardWell  !== undefined)
+      || (cp.lockedArena      !== null && cp.lockedArena      !== undefined);
+}
+function getChampLockLabel(champId){
+  var cp = PERSIST.champions[champId];
+  if(!cp) return null;
+  if(cp.lockedExpedition !== null && cp.lockedExpedition !== undefined) return 'ON EXPEDITION';
+  if(cp.lockedForge      !== null && cp.lockedForge      !== undefined) return 'AT THE FORGE';
+  if(cp.lockedShardWell  !== null && cp.lockedShardWell  !== undefined) return 'AT THE SHARD WELL';
+  if(cp.lockedArena      !== null && cp.lockedArena      !== undefined) return 'AT THE ARENA';
+  return null;
+}
+
+// Activity stat-fit: each activity has a primary stat that's most relevant
+// to it. The primary contributes at 100% efficiency, the other two at 25%.
+//   Forge      → STR (heat, hammer, endurance)
+//   Expedition → AGI (travel, scouting, foraging)
+//   Arena      → WIS (reads opponents, picks bets) [future]
+// Returns { speedBonus: 0..0.5, effectiveStat: number }.
+// speedBonus is a fractional time-reduction (0.33 = 33% faster).
+// Diminishing returns: bonus = eff / (eff + 100), capped at 0.5 so even
+// a maxed champion can't trivialize craft times.
+var ACTIVITY_PRIMARY_STAT = { forge:'STR', expedition:'AGI', arena:'WIS' };
+var ACTIVITY_SECONDARY_WEIGHT = 0.25;
+
+function champActivitySpeedBonus(champId, primaryStat){
+  var cp = (typeof champId === 'string') ? getChampPersist(champId) : champId;
+  if(!cp || !cp.stats) return { speedBonus:0, effectiveStat:0, primary:0, secondaryA:0, secondaryB:0 };
+  var s = cp.stats;
+  var primary, secondaryA, secondaryB;
+  if(primaryStat === 'STR'){ primary = s.str; secondaryA = s.agi; secondaryB = s.wis; }
+  else if(primaryStat === 'AGI'){ primary = s.agi; secondaryA = s.str; secondaryB = s.wis; }
+  else { primary = s.wis; secondaryA = s.str; secondaryB = s.agi; }
+  var eff = primary + (secondaryA + secondaryB) * ACTIVITY_SECONDARY_WEIGHT;
+  var raw = eff / (eff + 100);
+  return {
+    speedBonus:    Math.min(0.5, raw),
+    effectiveStat: eff,
+    primary:       primary,
+    secondaryA:    secondaryA,
+    secondaryB:    secondaryB
+  };
+}
+
+// Multi-champion variant. Each additional champion contributes with
+// diminishing returns so a 3-champion roster is meaningfully better
+// than 1 but not 3× better. Same speedBonus formula and 0.5 cap.
+var ROSTER_WEIGHTS = [1.0, 0.7, 0.5, 0.4];
+
+function rosterActivitySpeedBonus(champIds, primaryStat){
+  var arr = (champIds||[]).filter(function(id){ return !!CREATURES[id]; });
+  if(!arr.length) return { speedBonus:0, effectiveStat:0, count:0 };
+  var eff = 0;
+  for(var i=0;i<arr.length;i++){
+    var fit = champActivitySpeedBonus(arr[i], primaryStat);
+    eff += fit.effectiveStat * (ROSTER_WEIGHTS[i] || 0.4);
+  }
+  return {
+    speedBonus:    Math.min(0.5, eff / (eff + 100)),
+    effectiveStat: eff,
+    count:         arr.length
+  };
+}
+
+// ── Shard Well stat model (Round 40) ─────────────────────────────────────
+// Different shape from the Forge/Expedition stat-fit because the well uses
+// ALL THREE stats independently (each maps to a different building dial)
+// and stacks across up to 3 slotted champions WITHOUT diminishing returns
+// (a min-max player can stack 3 high-STR champs and feel it). The combined
+// stats are then ranked: highest = primary (200% efficiency), middle =
+// secondary (30%), lowest = tertiary (10%). Special case: when all three
+// combined stats are exactly equal, all three get 100% efficiency (the
+// "balanced is OP" reward for engineering a perfectly-balanced roster).
+//   AGI → rate multiplier (faster ticks)
+//   WIS → cap bonus       (more storage)
+//   STR → XP multiplier   (well levels faster, earns stat points to spend)
+
+function _combinedShardWellStats(champIds){
+  var combined = {str:0, agi:0, wis:0};
+  (champIds||[]).forEach(function(id){
+    if(!CREATURES[id]) return;
+    var cp = getChampPersist(id);
+    if(!cp || !cp.stats) return;
+    combined.str += cp.stats.str || 0;
+    combined.agi += cp.stats.agi || 0;
+    combined.wis += cp.stats.wis || 0;
+  });
+  return combined;
+}
+
+// Returns {str: eff, agi: eff, wis: eff} where each eff is in [0..2.0].
+// Mode label included so the UI can show "STR-MODE" / "BALANCED" / etc.
+function _shardWellEfficiency(combined){
+  var s = combined.str || 0, a = combined.agi || 0, w = combined.wis || 0;
+
+  // Special case: all three exactly equal (and non-zero) → balanced 100%.
+  if(s === a && a === w){
+    return { str:1.0, agi:1.0, wis:1.0, mode: s > 0 ? 'BALANCED' : 'EMPTY' };
+  }
+
+  // Sort by value desc to determine ranks
+  var ranked = [
+    {key:'str', val:s},
+    {key:'agi', val:a},
+    {key:'wis', val:w}
+  ].sort(function(x,y){ return y.val - x.val; });
+
+  var result = { str:0, agi:0, wis:0 };
+  // Primary (rank 0): always 200%
+  result[ranked[0].key] = 2.0;
+
+  // Tied for top (rank 0 == rank 1): both at 200%, lowest at 10%
+  if(ranked[0].val === ranked[1].val){
+    result[ranked[1].key] = 2.0;
+    result[ranked[2].key] = 0.10;
+  }
+  // Tied for bottom (rank 1 == rank 2): both at 25% (per J's spec)
+  else if(ranked[1].val === ranked[2].val){
+    result[ranked[1].key] = 0.25;
+    result[ranked[2].key] = 0.25;
+  }
+  // Strict ranking: 200 / 30 / 10
+  else {
+    result[ranked[1].key] = 0.30;
+    result[ranked[2].key] = 0.10;
+  }
+
+  // Mode label = which stat is dominant primary
+  var primaryKey = ranked[0].val > 0 ? ranked[0].key : null;
+  var mode = primaryKey === 'str' ? 'INVESTMENT'
+           : primaryKey === 'agi' ? 'GENERATION'
+           : primaryKey === 'wis' ? 'CAPACITY'
+           : 'EMPTY';
+  // Tied-top callout
+  if(primaryKey && ranked[0].val === ranked[1].val) mode = 'DUAL';
+  result.mode = mode;
+  return result;
+}
+
+// Final per-stat effect on the well after applying baselines + efficiency.
+// Each baseline uses the same eff/(eff+100) asymptote as the rest of the
+// activity-stat model so curves are consistent across the game.
+function champShardWellEffect(champIds){
+  if(!champIds || !champIds.length){
+    return { rateMult:1.0, capBonus:0, xpMult:1.0,
+             combined:{str:0,agi:0,wis:0},
+             eff:{str:0,agi:0,wis:0,mode:'EMPTY'} };
+  }
+  var combined = _combinedShardWellStats(champIds);
+  var eff      = _shardWellEfficiency(combined);
+
+  // Per-stat asymptotic baselines (shared shape with Forge/Expedition).
+  // baselineRate / baselineXp approach 2.0 as combined stat → ∞.
+  var baselineRate = 1 + combined.agi / (combined.agi + 100);
+  var baselineXp   = 1 + combined.str / (combined.str + 100);
+  var baselineCap  = combined.wis * 0.5;
+
+  // Apply tiered efficiency to each baseline's BONUS portion.
+  // At all-even (eff=1.0): xpMult = baseline (up to 2× at high stats).
+  // At specialized (eff=2.0): xpMult = 1 + 2*(baseline-1) (up to 3× at high stats).
+  var rateMult = 1 + (baselineRate - 1) * eff.agi;
+  var xpMult   = 1 + (baselineXp   - 1) * eff.str;
+  var capBonus = baselineCap * eff.wis;
+
+  return {
+    rateMult: rateMult,
+    capBonus: Math.round(capBonus),
+    xpMult:   xpMult,
+    combined: combined,
+    eff:      eff
+  };
+}
+
+// XP needed to advance from level N to N+1. Triangle curve: each level
+// costs (N * 50) XP. Lv1→2 = 50, Lv2→3 = 100, Lv5→6 = 250, etc.
+// Tunable later when balance pass happens.
+function getShardWellXpForLevel(level){
+  return Math.max(50, level * 50);
+}
+
+// Triangle stat-point cost: Nth upgrade costs N points, so total cost to
+// reach +N = N(N+1)/2. (Used by both rate and cap independently.)
+function getShardWellPointCost(currentRank){
+  return Math.max(1, currentRank + 1);
 }
 
 // ── Relic slot management ──────────────────────────────────────────────────
@@ -452,14 +919,20 @@ function applyRelics(gs){
 // ASCENSION SYSTEM
 // ═══════════════════════════════════════════════════════
 
+// Mastery requirements tuned (Round 30) so base→ruby is ~3 hours of mixed
+// active-and-idle play. Combat is the steady drip; idle activities
+// (expeditions / forge crafts / achievements) provide bigger lumps that
+// gate higher tiers behind real-time waits. Per-active-minute, idle is
+// always more efficient than combat — combat is paced for "while you
+// wait for things" rather than "the path to ascension".
 var ASCENSION_TIERS = [
-  {tier:'ruby',      gem:'ruby',      masteryReq:100,  baseBonus:1, growthBonus:1},
-  {tier:'emerald',   gem:'emerald',   masteryReq:250,  baseBonus:1, growthBonus:1},
-  {tier:'sapphire',  gem:'sapphire',  masteryReq:500,  baseBonus:2, growthBonus:1},
-  {tier:'turquoise', gem:'turquoise', masteryReq:1000, baseBonus:2, growthBonus:1},
-  {tier:'amethyst',  gem:'amethyst',  masteryReq:2000, baseBonus:2, growthBonus:2},
-  {tier:'topaz',     gem:'topaz',     masteryReq:4000, baseBonus:3, growthBonus:2},
-  {tier:'black_opal',gem:'black_opal',masteryReq:8000, baseBonus:3, growthBonus:2},
+  {tier:'ruby',      gem:'ruby',      masteryReq:250,   baseBonus:1, growthBonus:1},
+  {tier:'emerald',   gem:'emerald',   masteryReq:700,   baseBonus:1, growthBonus:1},
+  {tier:'sapphire',  gem:'sapphire',  masteryReq:1500,  baseBonus:2, growthBonus:1},
+  {tier:'turquoise', gem:'turquoise', masteryReq:3000,  baseBonus:2, growthBonus:1},
+  {tier:'amethyst',  gem:'amethyst',  masteryReq:6000,  baseBonus:2, growthBonus:2},
+  {tier:'topaz',     gem:'topaz',     masteryReq:12000, baseBonus:3, growthBonus:2},
+  {tier:'black_opal',gem:'black_opal',masteryReq:25000, baseBonus:3, growthBonus:2},
 ];
 
 function getAscensionLevel(champId){
@@ -496,6 +969,33 @@ function addMasteryXp(champId, amount){
   var cp = getChampPersist(champId);
   if(!cp) return;
   cp.masteryXp = (cp.masteryXp||0) + amount;
+  savePersist();
+}
+
+// Grant mastery to every unlocked champion. Used by town-wide events
+// (achievement claims, certain quest rewards) where the source is not
+// tied to a specific champion. Skips dojo_tiger and any unknown ids.
+function addMasteryXpToAll(amount){
+  if(!amount || amount <= 0) return;
+  (PERSIST.unlockedChamps||[]).forEach(function(id){
+    if(!CREATURES[id] || id === 'dojo_tiger') return;
+    var cp = getChampPersist(id);
+    if(cp) cp.masteryXp = (cp.masteryXp||0) + amount;
+  });
+  savePersist();
+}
+
+// Grant mastery to a specific roster (e.g. all champions on a completed
+// expedition). Each champion gets the full amount — multi-champion
+// expeditions are slower per individual mastery gain because the duration-
+// scaled amount is the same regardless of party size.
+function addMasteryXpToRoster(champIds, amount){
+  if(!amount || amount <= 0 || !champIds) return;
+  champIds.forEach(function(id){
+    if(!CREATURES[id]) return;
+    var cp = getChampPersist(id);
+    if(cp) cp.masteryXp = (cp.masteryXp||0) + amount;
+  });
   savePersist();
 }
 
@@ -546,18 +1046,723 @@ function ascendChampion(champId){
   return true;
 }
 
-function savePersist(){ try{ localStorage.setItem(PERSIST_KEY,JSON.stringify(PERSIST)); }catch(e){} }
+function savePersist(){
+  // Round 47: stamp every save with the current time so we can compute
+  // offline elapsed on next load. Cheap (one Date.now() per save) and
+  // means even an unclean tab-close gets a fresh timestamp from the
+  // 5s idle tick savePersist call.
+  // Round 63: persists to the active save slot (cetd_save_<id>) instead
+  // of the legacy single cetd_v6 key. If no active save is set (e.g.
+  // player on the login screen pre-selection), save is a no-op rather
+  // than scribbling defaults into the legacy key.
+  PERSIST.lastSeen = Date.now();
+  var key = getCurrentSaveKey();
+  if(!key) return;
+  try{ localStorage.setItem(key, JSON.stringify(PERSIST)); }catch(e){}
+}
+
+// ═══════════════════════════════════════════════════════
+// MULTI-SAVE MANAGEMENT (Round 63)
+// ═══════════════════════════════════════════════════════
+// Save model:
+//   cetd_saves        → JSON array of { id, name, createdAt, lastPlayed }
+//   cetd_active_save  → id of the save currently loaded into PERSIST
+//   cetd_save_<id>    → serialized PERSIST blob for that save
+// Legacy cetd_v6 is migrated once at startup into a fresh slot named "Save 1".
+
+function getActiveSaveId(){
+  try{ return localStorage.getItem(ACTIVE_SAVE_KEY) || null; }catch(e){ return null; }
+}
+function setActiveSaveId(id){
+  try{ localStorage.setItem(ACTIVE_SAVE_KEY, id); }catch(e){}
+}
+function clearActiveSaveId(){
+  try{ localStorage.removeItem(ACTIVE_SAVE_KEY); }catch(e){}
+}
+function getCurrentSaveKey(){
+  var id = getActiveSaveId();
+  return id ? (SAVE_PREFIX + id) : null;
+}
+
+function listSaves(){
+  try{
+    var raw = localStorage.getItem(SAVES_REGISTRY_KEY);
+    var arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr : [];
+  }catch(e){ return []; }
+}
+function writeSavesRegistry(arr){
+  try{ localStorage.setItem(SAVES_REGISTRY_KEY, JSON.stringify(arr)); }catch(e){}
+}
+function getSaveMeta(id){
+  return listSaves().find(function(s){ return s.id === id; }) || null;
+}
+function updateSaveMeta(id, patch){
+  var arr = listSaves();
+  for(var i=0;i<arr.length;i++){
+    if(arr[i].id === id){
+      arr[i] = Object.assign({}, arr[i], patch);
+      writeSavesRegistry(arr);
+      return arr[i];
+    }
+  }
+  return null;
+}
+
+// Peek at a save's raw blob without loading it into PERSIST. Used by
+// the login screen to render save cards (champion, gold, etc) without
+// disturbing the currently-active save.
+function peekSave(id){
+  if(!id) return null;
+  try{
+    var raw = localStorage.getItem(SAVE_PREFIX + id);
+    return raw ? JSON.parse(raw) : null;
+  }catch(e){ return null; }
+}
+
+// Generate a unique save id. Uses Date.now plus a short random suffix
+// so back-to-back saves don't collide.
+function _newSaveId(){
+  return 'sv_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7);
+}
+
+// Create a brand-new save (empty PERSIST defaults). Adds to registry,
+// writes an empty blob to localStorage, sets as active. Returns the
+// new save's metadata.
+function createNewSave(name){
+  var id = _newSaveId();
+  var trimmed = (name || '').trim() || ('Save ' + (listSaves().length + 1));
+  var meta = { id: id, name: trimmed, createdAt: Date.now(), lastPlayed: Date.now() };
+  var arr = listSaves();
+  arr.push(meta);
+  writeSavesRegistry(arr);
+  setActiveSaveId(id);
+  // Reset PERSIST to fresh defaults and write the empty blob so the
+  // slot exists in storage. Also clear selectedChampId so the next
+  // buildSelectScreen auto-picks from the fresh roster.
+  _resetPersistToDefaults();
+  PERSIST.playerName = trimmed;
+  if(typeof selectedChampId !== 'undefined') selectedChampId = null;
+  savePersist();
+  return meta;
+}
+
+// Wipe PERSIST in-memory back to the original defaults declared above.
+// Used by createNewSave and after deleting the active save.
+function _resetPersistToDefaults(){
+  PERSIST.unlockedChamps = ['druid','paladin','thief'];
+  PERSIST.favoriteChamps = {};
+  PERSIST.seenEnemies = [];
+  PERSIST.gold = 50;
+  PERSIST.metaCurrency = 0;
+  PERSIST.achievements = {};
+  PERSIST.champions = {};
+  PERSIST.soulShards = 0;
+  PERSIST.lastSeen = Date.now();
+  PERSIST.playerName = '';
+  // Deep-reset town to its initial-state literal. The cleanest way is to
+  // restore PERSIST.town from a fresh snapshot — but the original
+  // literal lives inline in the PERSIST declaration. We rely on
+  // loadPersist's path of starting from in-memory defaults + overlay,
+  // so here we restore the town defaults by cloning the original
+  // structure. For now, the simplest correct thing is to rebuild town
+  // by reading what loadPersist would set when given null. We achieve
+  // that by parsing the freshly-stringified PERSIST shape captured at
+  // module load.
+  if(_PERSIST_DEFAULTS_SNAPSHOT){
+    PERSIST.town = JSON.parse(JSON.stringify(_PERSIST_DEFAULTS_SNAPSHOT.town));
+  }
+}
+// Snapshot the original PERSIST.town shape on script load so new
+// saves can deep-clone it back as a fresh default.
+var _PERSIST_DEFAULTS_SNAPSHOT = null;
+
+// Delete a save. If it's the active one, clears active. Returns true
+// on success.
+function deleteSaveById(id){
+  if(!id) return false;
+  var arr = listSaves().filter(function(s){ return s.id !== id; });
+  writeSavesRegistry(arr);
+  try{ localStorage.removeItem(SAVE_PREFIX + id); }catch(e){}
+  if(getActiveSaveId() === id) clearActiveSaveId();
+  return true;
+}
+
+// Switch the active save: persists the current one, sets the new id
+// active, reloads PERSIST from the new key. Used when the player
+// picks a different save in the bottom-left dropdown.
+function switchToSave(id){
+  if(!id || getActiveSaveId() === id) return;
+  // Save the currently-loaded slot first so its state is current
+  if(getActiveSaveId()) savePersist();
+  setActiveSaveId(id);
+  loadPersist();
+  // Reset transient module state that doesn't belong to either save.
+  // selectedChampId was scoped to the old save's unlockedChamps; it
+  // would dangle and confuse buildSelectScreen if left set.
+  if(typeof selectedChampId !== 'undefined') selectedChampId = null;
+  applyOfflineProgressWithDiff();
+  updateSaveMeta(id, { lastPlayed: Date.now() });
+}
+
+// Migrate the legacy cetd_v6 single-save into a fresh slot named
+// "Save 1". Runs once on first boot after Round 63. Idempotent — if
+// the registry already has entries, this is a no-op. The legacy key
+// is intentionally NOT removed so a player can roll back if needed.
+function migrateLegacySaveIfNeeded(){
+  if(listSaves().length > 0) return;
+  var legacy;
+  try{ legacy = localStorage.getItem(PERSIST_KEY); }catch(e){ legacy = null; }
+  if(!legacy) return;
+  var id = _newSaveId();
+  try{ localStorage.setItem(SAVE_PREFIX + id, legacy); }catch(e){ return; }
+  writeSavesRegistry([{ id: id, name: 'Save 1', createdAt: Date.now(), lastPlayed: Date.now(), migrated: true }]);
+  setActiveSaveId(id);
+  console.log('[Migration] Legacy save cetd_v6 → slot', id);
+}
+
+// ── Offline-progress with diff capture ──────────────────────────
+// Captures a snapshot of relevant fields BEFORE applyOfflineProgress
+// runs, then computes the diff after so the login card can show
+// "while you were away" and the shard well panel can animate its
+// XP bar up.
+//
+// Round 63 followup: simplified login-card content to duration +
+// shards + expeditions + quests. Vault/well XP details stay in the
+// gains object — the shard well's XP bar animates them on panel
+// open (visceral feedback beats a text row on the login card).
+var _offlineGains = null;
+function applyOfflineProgressWithDiff(){
+  // Capture elapsed BEFORE applyOfflineProgress mutates PERSIST.lastSeen.
+  var elapsedSec = 0;
+  if(typeof PERSIST.lastSeen === 'number'){
+    elapsedSec = Math.max(0, Math.floor((Date.now() - PERSIST.lastSeen) / 1000));
+  }
+  if(typeof OFFLINE_CAP_SEC === 'number'){
+    elapsedSec = Math.min(elapsedSec, OFFLINE_CAP_SEC);
+  }
+  var snap = _captureOfflineSnap();
+  if(typeof applyOfflineProgress === 'function') applyOfflineProgress();
+  _offlineGains = _diffOfflineSnap(snap);
+  _offlineGains.elapsedSec = elapsedSec;
+  _offlineGains.wellAnimated = false; // toggled true once the well-XP animation has played
+}
+function _captureOfflineSnap(){
+  var b = (PERSIST.town && PERSIST.town.buildings) || {};
+  var well = b.shard_well || {};
+  var ahall = b.adventurers_hall || {};
+  var quests = (PERSIST.town && PERSIST.town.quests) || {};
+  return {
+    soulShards:    PERSIST.soulShards || 0,
+    wellXp:        well.wellXp || 0,
+    wellLevel:     well.wellLevel || 1,
+    pendingShards: well.pendingShards || 0,
+    questsOffered: (quests.offered || []).length,
+    expReadyCount: ((ahall.expeditionSlots || []).filter(function(s){
+      return s && s.champId && s.startTime && s.totalMs && (Date.now() >= s.startTime + s.totalMs);
+    })).length,
+  };
+}
+function _diffOfflineSnap(before){
+  var after = _captureOfflineSnap();
+  return {
+    pendingShards:   Math.max(0, after.pendingShards - before.pendingShards),
+    wellXpBefore:    before.wellXp,
+    wellLevelBefore: before.wellLevel,
+    wellXpAfter:     after.wellXp,
+    wellLevelAfter:  after.wellLevel,
+    expReady:        after.expReadyCount,        // absolute, not delta — count of ready expeditions
+    questsOffered:   Math.max(0, after.questsOffered - before.questsOffered),
+  };
+}
+function getOfflineGains(){ return _offlineGains; }
+
+// Round 63: human-readable elapsed-seconds formatter used by the
+// "Away for X" line on the login card. Caps were enforced earlier
+// (OFFLINE_CAP_SEC = 12h) so the longest string we'll emit is "12h".
+function _formatAwayDuration(seconds){
+  if(seconds < 60)   return 'less than a minute';
+  if(seconds < 3600){
+    var m = Math.floor(seconds / 60);
+    return m + ' minute' + (m === 1 ? '' : 's');
+  }
+  var h = Math.floor(seconds / 3600);
+  var mins = Math.floor((seconds % 3600) / 60);
+  if(mins === 0) return h + ' hour' + (h === 1 ? '' : 's');
+  return h + 'h ' + mins + 'm';
+}
+
+// ═══════════════════════════════════════════════════════
+// ASSET PRELOADER  (Round 63)
+// ═══════════════════════════════════════════════════════
+// Minimal critical-path preload — anything the login screen + first
+// gameplay seconds will reach for. Most game art lazy-loads fine
+// (creature sprites paint as cards mount); we only pre-warm the
+// things that would visibly stutter otherwise.
+//
+// Asset list intentionally short — add more here when something
+// visibly pops in late (a flashing icon, a missing portrait on
+// first frame). Don't pre-load EVERYTHING — that's wasted bytes.
+function _buildPreloadList(){
+  var list = [];
+  // Music — these are big and fade-in benefits from being ready.
+  list.push({ kind:'audio', src:'assets/audio/music/menu_theme.mp3'  });
+  list.push({ kind:'audio', src:'assets/audio/music/theme_town.mp3'  });
+  // Backgrounds for the login screen (texture) + early gameplay.
+  list.push({ kind:'image', src:'assets/backgrounds/texture.png'      });
+  // Icons that show in the nav from the very first frame after login.
+  list.push({ kind:'image', src:'assets/icons/gold.png'                });
+  list.push({ kind:'image', src:'assets/icons/soul_shard.png'          });
+  list.push({ kind:'image', src:'assets/icons/soul_shard_small.png'    });
+  // Active save's champion sprite (for the login card) — best-effort.
+  var actId = getActiveSaveId();
+  if(actId){
+    var data = peekSave(actId);
+    var champ = _pickSaveChampionId(data);
+    if(champ) list.push({ kind:'image', src:'assets/creatures/' + champ + '.png' });
+  }
+  return list;
+}
+
+// Run the preload list. Each asset reports back via load/error; we
+// don't care which (errors still resolve so a missing optional asset
+// doesn't block the loader). barEl + statusEl are the DOM elements
+// to update during loading. Calls `done` when every item finished.
+function preloadAssets(barEl, statusEl, done){
+  var list = _buildPreloadList();
+  var total = list.length;
+  if(total === 0){ if(done) done(); return; }
+  var completed = 0;
+  function bump(label){
+    completed++;
+    if(barEl) barEl.style.width = Math.round((completed/total)*100) + '%';
+    if(statusEl) statusEl.textContent = label || ('Loading… ' + completed + '/' + total);
+    if(completed >= total){ if(done) setTimeout(done, 200); }
+  }
+  list.forEach(function(asset){
+    if(asset.kind === 'image'){
+      var img = new Image();
+      img.onload = function(){  bump('Loaded ' + _shortAssetName(asset.src)); };
+      img.onerror = function(){ bump('Skipped ' + _shortAssetName(asset.src)); };
+      img.src = asset.src;
+    } else if(asset.kind === 'audio'){
+      var a = new Audio();
+      a.preload = 'auto';
+      a.oncanplaythrough = function(){ bump('Loaded ' + _shortAssetName(asset.src)); };
+      a.onerror          = function(){ bump('Skipped ' + _shortAssetName(asset.src)); };
+      a.src = asset.src;
+      // Some browsers won't fire oncanplaythrough without an explicit
+      // load() call when src is set post-construct.
+      try{ a.load(); }catch(e){}
+      // Safety net: if neither event fires in 5s, count it as done.
+      setTimeout(function(){ if(!a.__counted){ a.__counted=true; bump('Timed out ' + _shortAssetName(asset.src)); } }, 5000);
+      a.addEventListener('canplaythrough', function(){ if(!a.__counted){ a.__counted=true; } }, { once:true });
+      a.addEventListener('error',          function(){ if(!a.__counted){ a.__counted=true; } }, { once:true });
+    } else {
+      bump();
+    }
+  });
+}
+function _shortAssetName(src){
+  var i = src.lastIndexOf('/');
+  return i >= 0 ? src.slice(i+1) : src;
+}
+
+// Helper: pick a "representative" champion from a save's PERSIST blob
+// for the login-card portrait. Prefers the most recently selected /
+// highest-level champion; falls back to the first unlocked.
+function _pickSaveChampionId(data){
+  if(!data) return null;
+  // Highest XP first — feels like "the champ you've been playing"
+  var champs = data.champions || {};
+  var unlocked = (data.unlockedChamps || []).filter(function(id){ return CREATURES[id]; });
+  if(!unlocked.length) return null;
+  var best = unlocked[0], bestScore = -1;
+  unlocked.forEach(function(id){
+    var cp = champs[id];
+    var score = cp ? ((cp.level||1)*1000 + (cp.xpTotal||0)) : 0;
+    if(score > bestScore){ bestScore = score; best = id; }
+  });
+  return best;
+}
+
+// ═══════════════════════════════════════════════════════
+// LOGIN SCREEN  (Round 63)
+// ═══════════════════════════════════════════════════════
+
+// Show the login screen. Hides nav, switches the .active screen,
+// kicks off the menu music, and paints the card based on the
+// current active save (if any).
+function showLoginScreen(){
+  showNav(false);
+  showScreen('login-screen');
+  // Music: menu theme is the right vibe for the title screen.
+  if(typeof playMusic === 'function') playMusic('menu_theme');
+  buildLoginScreen();
+}
+
+function buildLoginScreen(){
+  var verEl = document.getElementById('login-version');
+  if(verEl) verEl.textContent = (typeof GAME_VERSION === 'string' ? GAME_VERSION : '');
+
+  var saves = listSaves();
+  var activeId = getActiveSaveId();
+  // If active id no longer exists in registry, clear it.
+  if(activeId && !saves.find(function(s){ return s.id === activeId; })){
+    clearActiveSaveId();
+    activeId = null;
+  }
+
+  var card = document.getElementById('login-card');
+  if(!card) return;
+
+  if(saves.length === 0 || !activeId){
+    // No save (or just created and not selected) — show new-save form.
+    card.classList.add('empty');
+    card.innerHTML = _renderNewSaveForm();
+    setTimeout(function(){
+      var input = document.getElementById('login-newsave-input');
+      if(input) input.focus();
+    }, 50);
+  } else {
+    card.classList.remove('empty');
+    card.innerHTML = _renderSaveCard(activeId);
+  }
+
+  // Saves menu (closed by default on every rebuild)
+  _renderSavesMenu();
+  var menu = document.getElementById('login-saves-menu');
+  if(menu) menu.style.display = 'none';
+  var btn = document.getElementById('login-saves-toggle');
+  if(btn) btn.classList.remove('open');
+}
+
+function _renderNewSaveForm(){
+  var existingCount = listSaves().length;
+  var headline = existingCount > 0 ? 'NEW SAVE' : 'WELCOME, ADVENTURER';
+  var tagline  = existingCount > 0
+    ? 'Name a fresh save to begin a new run.'
+    : 'Name yourself, and the road opens.';
+  return ''
+    + '<div class="login-newsave-hdr">' + headline + '</div>'
+    + '<div class="login-newsave-tag">' + tagline + '</div>'
+    + '<input id="login-newsave-input" class="login-newsave-input" type="text" maxlength="24" placeholder="Your name" '
+    +   'onkeydown="if(event.key===\'Enter\')_loginCreateNewSave();">'
+    + '<div class="login-newsave-hint">Press Enter or click Begin.</div>'
+    + '<div class="login-card-actions">'
+    +   (existingCount > 0
+        ? '<button class="login-continue" style="background:linear-gradient(180deg,#1e1408,#120802);border-color:#5a3a18;color:#7a6030;" onclick="_loginCancelNewSave()">CANCEL</button>'
+        : '')
+    +   '<button class="login-continue" onclick="_loginCreateNewSave()">BEGIN ►</button>'
+    + '</div>';
+}
+
+function _renderSaveCard(saveId){
+  var meta = getSaveMeta(saveId) || {};
+  var data = peekSave(saveId) || {};
+  var champId = _pickSaveChampionId(data);
+  var champ = champId ? CREATURES[champId] : null;
+  var cp = (data.champions && champId) ? data.champions[champId] : null;
+  var champCount = (data.unlockedChamps || []).filter(function(id){ return CREATURES[id]; }).length;
+  var gold = data.gold || 0;
+  var shards = data.soulShards || 0;
+
+  // Portrait — fall back to a "?" plaque if no champion / sprite.
+  var portrait;
+  if(champId){
+    portrait = '<img src="assets/creatures/'+champId+'.png" class="flip-x" onerror="this.outerHTML=\'<span style=&quot;font-size:64px;&quot;>'+ (champ ? champ.icon : '?') +'</span>\'">';
+  } else {
+    portrait = '<span style="font-size:64px;color:#5a4020;">?</span>';
+  }
+
+  // Champion line (only when we actually have one)
+  var champLine = '';
+  if(champ && cp){
+    champLine = champ.name.toUpperCase() + ' · Lv. ' + (cp.level || 1);
+  } else if(champ){
+    champLine = champ.name.toUpperCase();
+  } else {
+    champLine = 'No champion yet';
+  }
+
+  var stats = ''
+    + '<div class="login-card-stat"><span class="login-card-stat-label">CHAMPS</span> ' + champCount + '</div>'
+    + '<div class="login-card-stat"><span class="login-card-stat-label">GOLD</span> ' + (typeof goldImgHTML==='function' ? goldImgHTML('16px') : '✦') + ' ' + gold + '</div>'
+    + '<div class="login-card-stat"><span class="login-card-stat-label">SHARDS</span> ' + (typeof soulShardImgHTML==='function' ? soulShardImgHTML('16px') : '🔮') + ' ' + shards + '</div>';
+
+  var awayHtml = _renderWhileAwayBlock();
+
+  return ''
+    + '<div class="login-card-body">'
+    +   '<div class="login-card-portrait">' + portrait + '</div>'
+    +   '<div class="login-card-info">'
+    +     '<div class="login-card-name">' + (meta.name || 'Save') + '</div>'
+    +     '<div class="login-card-sub">' + champLine + '</div>'
+    +     '<div class="login-card-stats">' + stats + '</div>'
+    +     awayHtml
+    +   '</div>'
+    + '</div>'
+    + '<div class="login-card-actions">'
+    +   '<button class="login-continue" onclick="enterGameFromLogin()">CONTINUE ►</button>'
+    + '</div>';
+}
+
+function _renderWhileAwayBlock(){
+  var g = getOfflineGains();
+  if(!g) return '';
+
+  // Round 63 followup: card focuses on duration + shards. Vault / well
+  // XP gains aren't listed here — those animate on the Shard Well's
+  // own XP bar when the panel opens (more visceral than a text row).
+  // Expeditions and quests still listed because they're actionable
+  // signals ("things are ready for you").
+  var awayDur  = (g.elapsedSec >= 60) ? _formatAwayDuration(g.elapsedSec) : null;
+  var hasShards = g.pendingShards > 0;
+  var hasExp    = g.expReady > 0;
+  var hasQuests = g.questsOffered > 0;
+  if(!awayDur && !hasShards && !hasExp && !hasQuests) return '';
+
+  var rows = [];
+  if(awayDur){
+    rows.push('<div class="login-card-away-row login-card-away-duration">Away for <span class="dur">' + awayDur + '</span></div>');
+  }
+  if(hasShards){
+    var icon = (typeof soulShardImgHTML === 'function') ? soulShardImgHTML('16px') : '🔮';
+    rows.push('<div class="login-card-away-row"><span class="delta">+' + g.pendingShards + '</span> ' + icon + ' ready to claim</div>');
+  }
+  if(hasExp){
+    rows.push('<div class="login-card-away-row"><span class="delta">' + g.expReady + '</span> expedition' + (g.expReady>1?'s':'') + ' ready</div>');
+  }
+  if(hasQuests){
+    rows.push('<div class="login-card-away-row"><span class="delta">+' + g.questsOffered + '</span> new quest' + (g.questsOffered>1?'s':'') + ' on the board</div>');
+  }
+  return ''
+    + '<div class="login-card-away">'
+    +   '<div class="login-card-away-hdr">WHILE YOU WERE AWAY</div>'
+    +   '<div class="login-card-away-rows">' + rows.join('') + '</div>'
+    + '</div>';
+}
+
+function _renderSavesMenu(){
+  var menu = document.getElementById('login-saves-menu');
+  if(!menu) return;
+  var saves = listSaves();
+  var activeId = getActiveSaveId();
+
+  // Sort by lastPlayed desc so the most recent save is at the top.
+  saves = saves.slice().sort(function(a,b){ return (b.lastPlayed||0) - (a.lastPlayed||0); });
+
+  var rows = saves.map(function(s){
+    var data = peekSave(s.id) || {};
+    var champId = _pickSaveChampionId(data);
+    var champ = champId ? CREATURES[champId] : null;
+    var cp = (data.champions && champId) ? data.champions[champId] : null;
+    var portrait = champId
+      ? '<img src="assets/creatures/'+champId+'.png" class="flip-x" onerror="this.outerHTML=\'<span style=&quot;font-size:22px;&quot;>'+ (champ ? champ.icon : '?') +'</span>\'">'
+      : '<span style="font-size:22px;color:#5a4020;">?</span>';
+    var subLine = champ
+      ? champ.name + (cp ? ' · Lv.' + (cp.level||1) : '')
+      : 'Fresh save';
+    var cls = 'login-save-row' + (s.id === activeId ? ' active' : '');
+    return ''
+      + '<div class="' + cls + '" onclick="_loginPickSave(\'' + s.id + '\')">'
+      +   '<div class="login-save-portrait">' + portrait + '</div>'
+      +   '<div class="login-save-info">'
+      +     '<div class="login-save-name">' + s.name + '</div>'
+      +     '<div class="login-save-sub">' + subLine + '</div>'
+      +   '</div>'
+      +   '<button class="login-save-delete" title="Delete this save" onclick="event.stopPropagation();_loginDeleteSave(\'' + s.id + '\')">✕</button>'
+      + '</div>';
+  }).join('');
+
+  var newBtn = ''
+    + '<div class="login-save-newbtn" onclick="_loginStartNewSave()">'
+    +   '<span class="login-save-newbtn-plus">+</span>'
+    +   '<span>NEW SAVE</span>'
+    + '</div>';
+
+  menu.innerHTML = rows + newBtn;
+}
+
+function toggleLoginSavesMenu(){
+  var menu = document.getElementById('login-saves-menu');
+  var btn = document.getElementById('login-saves-toggle');
+  if(!menu || !btn) return;
+  var open = menu.style.display !== 'none';
+  if(open){
+    menu.style.display = 'none';
+    btn.classList.remove('open');
+  } else {
+    _renderSavesMenu();
+    menu.style.display = '';
+    btn.classList.add('open');
+  }
+}
+
+// Picked a save from the dropdown — switch to it and refresh card.
+function _loginPickSave(id){
+  if(!id) return;
+  switchToSave(id);
+  buildLoginScreen();
+}
+
+// Delete from the dropdown. Confirms with a quick window.confirm —
+// the destructive zone in Settings is the more elaborate path.
+function _loginDeleteSave(id){
+  var meta = getSaveMeta(id);
+  var name = meta ? meta.name : 'this save';
+  if(!confirm('Delete "' + name + '" permanently? This cannot be undone.')) return;
+  var wasActive = (getActiveSaveId() === id);
+  deleteSaveById(id);
+  if(wasActive){
+    // If the active save was deleted, switch to the most recent
+    // remaining save (if any).
+    var rest = listSaves();
+    if(rest.length){
+      var next = rest.slice().sort(function(a,b){ return (b.lastPlayed||0)-(a.lastPlayed||0); })[0];
+      switchToSave(next.id);
+    } else {
+      _resetPersistToDefaults();
+      _offlineGains = null;
+    }
+  }
+  buildLoginScreen();
+}
+
+// Open the new-save form in the main card area (keeps existing
+// saves intact, just shows the input). User clicks BEGIN to commit.
+function _loginStartNewSave(){
+  var card = document.getElementById('login-card');
+  if(!card) return;
+  card.classList.add('empty');
+  card.innerHTML = _renderNewSaveForm();
+  setTimeout(function(){
+    var input = document.getElementById('login-newsave-input');
+    if(input) input.focus();
+  }, 50);
+  // Close dropdown
+  var menu = document.getElementById('login-saves-menu');
+  if(menu) menu.style.display = 'none';
+  var btn = document.getElementById('login-saves-toggle');
+  if(btn) btn.classList.remove('open');
+}
+
+function _loginCreateNewSave(){
+  var input = document.getElementById('login-newsave-input');
+  var name = input ? input.value : '';
+  createNewSave(name);
+  _offlineGains = null; // fresh save has no offline progress
+  buildLoginScreen();
+}
+
+function _loginCancelNewSave(){
+  // Back to the current active save's card
+  buildLoginScreen();
+}
+
+// Click CONTINUE from the active save card — boot into the game.
+function enterGameFromLogin(){
+  // Defensive: if somehow there's no active save, fall back to new-save form.
+  if(!getActiveSaveId()){
+    _loginStartNewSave();
+    return;
+  }
+  // Update lastPlayed stamp for this save
+  updateSaveMeta(getActiveSaveId(), { lastPlayed: Date.now() });
+  showNav(true);
+  showScreen('select-screen');
+  if(typeof buildSelectScreen === 'function') buildSelectScreen();
+  if(typeof updateNavBar === 'function') updateNavBar('adventure');
+  if(typeof checkBestiaryAutoUnlock === 'function') checkBestiaryAutoUnlock();
+  if(typeof restoreQuestBadge === 'function') restoreQuestBadge();
+}
+
+// Round 47: offline progress catch-up. Reads PERSIST.lastSeen (set by
+// savePersist) and runs each idle tick once with the elapsed seconds.
+// Capped at OFFLINE_CAP_SEC (12h — matches the longest base shard-well
+// fill so an overnight idle gets a full cap window).
+//
+// Ticks that take a `seconds` arg: vault, market, bestiary, shard_well,
+// quest — these accumulate state proportional to elapsed time.
+// Ticks that don't: forge, expedition — they read absolute Date.now()
+// timestamps for their own internal timing and need no catch-up.
+//
+// First-run / pre-Round-47 saves: lastSeen will be missing. We stamp
+// it without granting any progress so the player isn't surprised by a
+// gigantic dump on first load after updating.
+var OFFLINE_CAP_SEC = 12 * 3600;
+function applyOfflineProgress(){
+  if(typeof PERSIST.lastSeen !== 'number'){
+    PERSIST.lastSeen = Date.now();
+    return;
+  }
+  var nowMs = Date.now();
+  var elapsedSec = Math.max(0, Math.floor((nowMs - PERSIST.lastSeen) / 1000));
+  PERSIST.lastSeen = nowMs;
+  // Floor: don't bother for sub-minute gaps (tab refresh, quick reload).
+  if(elapsedSec < 60) return;
+  elapsedSec = Math.min(elapsedSec, OFFLINE_CAP_SEC);
+
+  if(typeof vaultTick      === 'function') vaultTick(elapsedSec);
+  if(typeof marketTick     === 'function') marketTick(elapsedSec);
+  if(typeof bestiaryTick   === 'function') bestiaryTick(elapsedSec);
+  if(typeof shardWellTick  === 'function') shardWellTick(elapsedSec);
+  if(typeof arenaTick      === 'function') arenaTick(elapsedSec);
+  if(typeof questTick      === 'function') questTick(elapsedSec);
+}
 function loadPersist(){
   try{
-    var p=JSON.parse(localStorage.getItem(PERSIST_KEY)||'null');
+    // Round 63: read from the active save slot. Falls back to the legacy
+    // cetd_v6 key so loads work during the first boot after the
+    // migration helper runs, AND so a future re-introduction of single-
+    // save mode would still find the data.
+    var key = getCurrentSaveKey() || PERSIST_KEY;
+    var p=JSON.parse(localStorage.getItem(key)||'null');
     if(p){
       PERSIST.unlockedChamps=p.unlockedChamps||['druid','paladin','thief'];
+      PERSIST.favoriteChamps = (p.favoriteChamps && typeof p.favoriteChamps === 'object') ? p.favoriteChamps : {};
+      PERSIST.playerName = (typeof p.playerName === 'string') ? p.playerName : '';
+      // Round 62 migration: scrub any unimplemented stub champs that
+      // were rollable from a pre-fix gacha pool. Refund 100 soul shards
+      // each (single-pull cost) so the player gets a re-roll. Guarded
+      // by p._stubCleanupV1 so it runs once per save.
+      if(typeof UNIMPLEMENTED_CHAMPS === 'object' && !p._stubCleanupV1){
+        var _stripped = [];
+        PERSIST.unlockedChamps = PERSIST.unlockedChamps.filter(function(cid){
+          if(UNIMPLEMENTED_CHAMPS[cid]){ _stripped.push(cid); return false; }
+          return true;
+        });
+        if(_stripped.length){
+          // Refund + scrub any champion record so the slot is clean
+          // for a future re-pull when the kit lands.
+          var refund = _stripped.length * 100;
+          PERSIST.soulShards = (PERSIST.soulShards || 0) + refund;
+          _stripped.forEach(function(cid){
+            if(PERSIST.champions && PERSIST.champions[cid]) delete PERSIST.champions[cid];
+          });
+          console.log('[Migration] Removed unimplemented champ(s): '+_stripped.join(', ')+'. Refunded '+refund+' soul shards.');
+          PERSIST._stubRefundPending = { ids: _stripped, shards: refund };
+        }
+        PERSIST._stubCleanupV1 = true;
+        // Persist immediately so a quick refresh doesn't re-run the
+        // strip/refund pair (it's idempotent but persisting nails it
+        // down regardless).
+        try{ localStorage.setItem(PERSIST_KEY, JSON.stringify(PERSIST)); }catch(e){}
+      }
       PERSIST.seenEnemies=p.seenEnemies||[];
       PERSIST.gold=p.gold!=null?p.gold:50;
       PERSIST.metaCurrency=p.metaCurrency||0;
       PERSIST.achievements=p.achievements||{};
       PERSIST.champions=p.champions||{};
       PERSIST.townUnlocked=true; // town always visible now
+      // Round 51 fix: restore lastSeen so applyOfflineProgress can
+      // compute elapsed against the previous session's final save.
+      // Round 47 added the write (savePersist) and the read
+      // (applyOfflineProgress) but forgot the restore here — meaning
+      // every page reload saw `PERSIST.lastSeen` reset to undefined,
+      // applyOfflineProgress hit the "first-run, stamp now, grant
+      // nothing" branch, and offline progress silently never fired.
+      if(typeof p.lastSeen === 'number') PERSIST.lastSeen = p.lastSeen;
       if(p.town){
         if(p.town.buildings){
           Object.keys(p.town.buildings).forEach(function(k){
@@ -594,8 +1799,44 @@ function loadPersist(){
             PERSIST.town.buildings.adventurers_hall.expeditionSlots=p.town.buildings.expedition_hall.slots;
           }
         }
-        if(p.town.buildings&&p.town.buildings.arena) PERSIST.town.buildings.arena=Object.assign({unlocked:false},p.town.buildings.arena);
-        if(p.town.buildings&&p.town.buildings.shard_well) PERSIST.town.buildings.shard_well=Object.assign({unlocked:false,slottedCard:null,shardAcc:0},p.town.buildings.shard_well);
+        // Round 48: Arena gained tab state + sparring slots + daily fields.
+        // Round 49: stripped rate/cap/points fields.
+        // Round 54: sparringSlots schema changed — slot entries are now
+        // session OBJECTS (champId, purse, startTime, lastBetTime, wins,
+        // losses) instead of bare champion-id strings. Old slot entries
+        // (strings or null) are migrated below: strings get wrapped into
+        // a fresh session, nulls stay null.
+        if(p.town.buildings&&p.town.buildings.arena){
+          PERSIST.town.buildings.arena=Object.assign(
+            {unlocked:false, tab:'sparring', sparringSlots:[null,null,null], pendingGold:0, dailyCompleted:null, dailySeedYMD:null},
+            p.town.buildings.arena
+          );
+          // Defensive: ensure sparringSlots is always a 3-array
+          var arenaB = PERSIST.town.buildings.arena;
+          if(!Array.isArray(arenaB.sparringSlots) || arenaB.sparringSlots.length !== 3){
+            arenaB.sparringSlots = [null,null,null];
+          }
+          // Round 54 migration: wrap legacy string entries into session objects.
+          for(var asi=0; asi<3; asi++){
+            var entry = arenaB.sparringSlots[asi];
+            if(typeof entry === 'string'){
+              arenaB.sparringSlots[asi] = {
+                champId: entry,
+                purse: 100,                  // legacy slot gets a fresh stake
+                startTime: Date.now(),
+                lastBetTime: Date.now(),
+                wins: 0, losses: 0
+              };
+            }
+          }
+        }
+        if(p.town.buildings&&p.town.buildings.shard_well){
+          PERSIST.town.buildings.shard_well=Object.assign({unlocked:false,slottedCard:null,shardAcc:0,assignedChampIds:[],wellXp:0,wellLevel:1,unspentPoints:0,rateLevel:0,capLevel:0,masteryAcc:0,pendingShards:0},p.town.buildings.shard_well);
+          // Defensive: ensure assignedChampIds is always an array
+          if(!Array.isArray(PERSIST.town.buildings.shard_well.assignedChampIds)){
+            PERSIST.town.buildings.shard_well.assignedChampIds = [];
+          }
+        }
       }
       if(p.bestiary){ PERSIST.bestiary=Object.assign({research:{},researchAcc:0},p.bestiary); }
       if(p.sanctum){ PERSIST.sanctum=Object.assign({deckMods:{},levelFloors:{},unlockedCards:{}},p.sanctum); }
@@ -611,6 +1852,19 @@ function loadPersist(){
       PERSIST.town.buildings.adventurers_hall.unlocked = true;
       PERSIST.town.buildings.bestiary.unlocked = true;
       PERSIST.town.buildings.market.unlocked = true;
+
+      // ─── DEV: UNLOCK ALL BUILDINGS (Round 37) ────────────────────
+      // Temporary blanket unlock until we redesign building-unlock
+      // pacing. Flip DEV_UNLOCK_ALL_BUILDINGS to false (or just
+      // delete this block) before shipping. Idempotent — runs every
+      // load, just flips false → true on whatever's still gated.
+      if(DEV_UNLOCK_ALL_BUILDINGS && PERSIST.town && PERSIST.town.buildings){
+        Object.keys(PERSIST.town.buildings).forEach(function(id){
+          var b = PERSIST.town.buildings[id];
+          if(b) b.unlocked = true;
+        });
+        PERSIST.townUnlocked = true;
+      }
     }
   }catch(e){}
 }
@@ -740,9 +1994,71 @@ var UNLOCK_CONDITIONS={
 // Their startDeck is their hand at run start; deck is their enemy action deck
 // Champion decks read directly from CREATURES[id].deck
 
+// Round 62: champion rarity rebuilt to match the project's existing
+// 7-tier gem palette (Ruby → Emerald → Sapphire → Turquoise →
+// Amethyst → Topaz → Black Opal — the same R/G/B/C/M/Y/K colour
+// sequence used by the ascension chips). The old common/uncommon/
+// rare/legendary buckets were a legacy carry-over from a generic
+// gacha sketch and didn't speak the project's visual language.
+//
+// Per-creature `rarity:` field on a creature file (data/creatures/*.js)
+// wins if set, so designer intent can override the heuristic. Otherwise
+// we score by base power = sum(baseStats) + sum(growth)*5, which
+// preserves the principle that stronger creatures are rarer while
+// also giving growth-heavy designs proper weight (a champion with
+// modest base stats but huge growth scales bigger than one with
+// front-loaded stats and no growth — the score should reflect that).
+//
+// bossOnly always lands at black_opal regardless of stats — those
+// are pinnacle encounters and the rarity should signal it.
+var CHAMP_RARITY_TIERS = ['ruby','emerald','sapphire','turquoise','amethyst','topaz','black_opal'];
+// Score thresholds (upper bound of each bucket; black_opal is the catch-all)
+var CHAMP_RARITY_THRESH = {
+  ruby:       49,
+  emerald:    54,
+  sapphire:   60,
+  turquoise:  75,
+  amethyst:  100,
+  topaz:     130,
+  // black_opal: no upper bound — anything 131+ or bossOnly lands here
+};
+
+function getCreaturePowerScore(e){
+  if(!e) return 0;
+  var bs = e.baseStats || {str:10, agi:10, wis:10};
+  var g  = e.growth    || {str:1,  agi:1,  wis:1};
+  return (bs.str||0)+(bs.agi||0)+(bs.wis||0) + ((g.str||0)+(g.agi||0)+(g.wis||0))*5;
+}
+
+function getCreatureRarity(e){
+  if(!e) return 'ruby';
+  // Explicit override: creature file may set `rarity:'amethyst'` etc.
+  if(e.rarity && CHAMP_RARITY_THRESH.hasOwnProperty(e.rarity)) return e.rarity;
+  if(e.rarity === 'black_opal') return 'black_opal';
+  if(e.bossOnly) return 'black_opal';
+  var score = getCreaturePowerScore(e);
+  if(score <= CHAMP_RARITY_THRESH.ruby)      return 'ruby';
+  if(score <= CHAMP_RARITY_THRESH.emerald)   return 'emerald';
+  if(score <= CHAMP_RARITY_THRESH.sapphire)  return 'sapphire';
+  if(score <= CHAMP_RARITY_THRESH.turquoise) return 'turquoise';
+  if(score <= CHAMP_RARITY_THRESH.amethyst)  return 'amethyst';
+  if(score <= CHAMP_RARITY_THRESH.topaz)     return 'topaz';
+  return 'black_opal';
+}
+
+// Round 62: Centralized stub list — creatures that exist in the data
+// dir but have no playable cards (their `deck` field references card
+// IDs that aren't defined in cards.js). These are work-in-progress
+// kits that shouldn't be rollable from the summoning pool until they
+// have a full card set + innate hook implemented. Also used as a
+// migration filter in loadPersist to strip any stubs already in a
+// player's unlockedChamps from a pre-fix pull.
+var UNIMPLEMENTED_CHAMPS = { 'plagued_one': true, 'smuggler': true };
+
 function buildGachaPool(){
   // All creatures in pool — exclude special unplayable boss encounters
-  var excluded={'waxoasis':true};
+  // and any work-in-progress stub kits (see UNIMPLEMENTED_CHAMPS).
+  var excluded = Object.assign({'waxoasis':true}, UNIMPLEMENTED_CHAMPS);
   var allIds=Object.keys(CREATURES).filter(function(id){return !excluded[id];});
   return allIds.map(function(id){
     var e=CREATURES[id];
@@ -751,7 +2067,12 @@ function buildGachaPool(){
       id:id,
       rarity:rarity,
       seen:true, // always visible
-      weight:{common:55,uncommon:28,rare:13,legendary:4}[rarity]||13,
+      // Round 62: tier weights in percent — must sum to 100. The
+      // doEternalPull roll uses these for the random pick. Per-tier
+      // weight stored on the pool entry too for future per-creature
+      // tuning (rare-but-special creatures could break out of their
+      // tier's flat weight).
+      weight:{ruby:35,emerald:25,sapphire:18,turquoise:12,amethyst:7,topaz:2.5,black_opal:0.5}[rarity]||10,
     };
   });
 }
@@ -1171,20 +2492,41 @@ function makeGS(champId,area){
 // ═══════════════════════════════════════════════════════
 // CHAMPION SELECT
 // ═══════════════════════════════════════════════════════
-var CS_PAGE=0;
-var CS_PER_PAGE=12;
+// Round 62: pagination dropped — grid scrolls instead. CS_PAGE / CS_PER_PAGE
+// / csChangePage retired. New `favoriteChamps` map sorts starred entries
+// to the top regardless of the dropdown sort.
+// Round 62e: gold display moved to nav-bar only; cs-gold span removed
+// from index.html. _csFavoritesOnly is the session flag for the new
+// favorites-only filter toggle in the header.
+var _csFavoritesOnly = false;
 
 function buildSelectScreen(){
-  document.getElementById('cs-gold').innerHTML=goldImgHTML('16px')+' '+PERSIST.gold;
-  CS_PAGE=0;
   rebuildChampGrid();
 }
 
-function csChangePage(dir){
-  var sort=document.getElementById('cs-sort').value;
-  var list=getSortedChampList(sort);
-  var pages=Math.max(1,Math.ceil(list.length/CS_PER_PAGE));
-  CS_PAGE=Math.max(0,Math.min(pages-1,CS_PAGE+dir));
+// Round 62e: filter toggle — when active, the grid shows ONLY the
+// player's favorited champions. Re-renders the grid and updates the
+// star button's active state.
+function toggleCsFavoritesOnly(){
+  _csFavoritesOnly = !_csFavoritesOnly;
+  var btn = document.getElementById('cs-fav-toggle');
+  if(btn){
+    btn.classList.toggle('active', _csFavoritesOnly);
+    btn.textContent = _csFavoritesOnly ? '★' : '☆';
+    btn.title = _csFavoritesOnly ? 'Show all champions' : 'Show favorites only';
+  }
+  rebuildChampGrid();
+}
+
+// Toggle the star on a champion card. stopPropagation so the click
+// doesn't bubble up to the card's selectChamp handler.
+function toggleChampFavorite(id, ev){
+  if(ev && ev.stopPropagation) ev.stopPropagation();
+  if(!id || !CREATURES[id]) return;
+  PERSIST.favoriteChamps = PERSIST.favoriteChamps || {};
+  if(PERSIST.favoriteChamps[id]) delete PERSIST.favoriteChamps[id];
+  else PERSIST.favoriteChamps[id] = true;
+  savePersist();
   rebuildChampGrid();
 }
 
@@ -1214,28 +2556,78 @@ function getSortedChampList(sort){
     scored.sort(function(a,b){ return b.score-a.score; });
   }
 
+  // Round 62: favorites partition. After the chosen sort runs, peel
+  // favorites to the top while preserving their relative order. Works
+  // for every sort mode including alphabetical.
+  var favs = PERSIST.favoriteChamps || {};
+  scored.sort(function(a,b){
+    var afv = favs[a.id] ? 1 : 0;
+    var bfv = favs[b.id] ? 1 : 0;
+    return bfv - afv; // favorites first; ties keep prior order (stable sort)
+  });
+
   // Add a single mystery slot at the end to hint more champions exist
   scored.push({id:'__mystery__',score:-999,isUnlocked:false,isSeen:false});
   return scored;
 }
 
 function rebuildChampGrid(){
-  document.getElementById('cs-gold').innerHTML=goldImgHTML('16px')+' '+PERSIST.gold;
+  // Round 62e: cs-gold removed from header (nav-gold owns gold display).
+  // Refresh the active-quests rail every time the grid rebuilds so the
+  // panel reflects the latest state (after a run, after a quest claim,
+  // after the auto-refresh tick, etc).
+  if(typeof buildCsQuestRail === 'function') buildCsQuestRail();
+  // Auto-select first unlocked champion if nothing is selected, so the
+  // left rail isn't empty on first land. Falls through to existing
+  // selectChamp logic which also paints the rail.
+  if(!selectedChampId && Array.isArray(PERSIST.unlockedChamps)){
+    var firstUnlocked = null;
+    for(var u=0;u<PERSIST.unlockedChamps.length;u++){
+      var uid = PERSIST.unlockedChamps[u];
+      if(uid !== 'dojo_tiger' && CREATURES[uid]){ firstUnlocked = uid; break; }
+    }
+    if(firstUnlocked) selectedChampId = firstUnlocked;
+  }
+  if(typeof buildCsChampRail === 'function') buildCsChampRail(selectedChampId);
   var sort=document.getElementById('cs-sort').value;
   var list=getSortedChampList(sort);
-  var pages=Math.max(1,Math.ceil(list.length/CS_PER_PAGE));
-  CS_PAGE=Math.max(0,Math.min(pages-1,CS_PAGE));
 
-  document.getElementById('cs-page-lbl').textContent=(CS_PAGE+1)+' / '+pages;
-  document.getElementById('cs-prev').disabled=(CS_PAGE===0);
-  document.getElementById('cs-next').disabled=(CS_PAGE>=pages-1);
+  // Round 62e: favorites-only filter. Drops every non-favorite (and
+  // the trailing __mystery__ slot, since the player has explicitly
+  // narrowed scope to their starred set).
+  if(_csFavoritesOnly){
+    var favs = PERSIST.favoriteChamps || {};
+    list = list.filter(function(item){ return item.id !== '__mystery__' && favs[item.id]; });
+  }
+
+  // Round 62e: count moved inline with the title as a subtle "· N"
+  // (was a near-invisible 8px afterthought before). Reads naturally
+  // against "CHOOSE YOUR CHAMPION · 5 IN ROSTER".
   var unlocked=PERSIST.unlockedChamps.length;
-  document.getElementById('cs-total').textContent=unlocked+' champion'+(unlocked!==1?'s':'')+' unlocked';
+  var totalEl = document.getElementById('cs-total');
+  if(totalEl){
+    if(_csFavoritesOnly){
+      var favCount = Object.keys(PERSIST.favoriteChamps||{}).length;
+      totalEl.textContent = favCount + ' FAVORITED';
+    } else {
+      totalEl.textContent = unlocked + (unlocked === 1 ? ' CHAMPION' : ' CHAMPIONS');
+    }
+  }
 
   var grid=document.getElementById('champ-grid'); grid.innerHTML='';
-  var pageItems=list.slice(CS_PAGE*CS_PER_PAGE,(CS_PAGE+1)*CS_PER_PAGE);
 
-  pageItems.forEach(function(item){
+  // Round 62e: empty-state when favorites-only is on but the roster
+  // is unstarred. A short prompt explaining how to star a champion is
+  // friendlier than an empty grid.
+  if(_csFavoritesOnly && !list.length){
+    grid.innerHTML = '<div style="grid-column:1/-1;padding:48px 16px;text-align:center;color:#7a6030;font-family:\'Crimson Text\',serif;font-size:12px;line-height:1.6;">'
+      + '<div style="font-size:34px;opacity:.5;margin-bottom:10px;">☆</div>'
+      + 'No favorites yet. Tap the star on any champion card to pin them to the top.'
+      + '</div>';
+    return;
+  }
+
+  list.forEach(function(item){
     var id=item.id;
     var d=document.createElement('div');
 
@@ -1251,41 +2643,71 @@ function rebuildChampGrid(){
       var ch=getCreaturePlayable(id);
       var cp=getChampPersist(id);
       var isDead=!cp.alive;
-      var isOnExpedition = cp.lockedExpedition !== null && cp.lockedExpedition !== undefined;
-      d.className='champ-card'+(isDead?' dead-champ':'')+(isOnExpedition?' expedition-locked':'')+(' '+getAscensionClass(id));
+      var lockLabel = getChampLockLabel(id);
+      var isLocked = !!lockLabel;
+      var lockBadgeIcon = (cp.lockedForge !== null && cp.lockedForge !== undefined) ? '⚒' : '🏕️';
+      d.className='champ-card'+(isDead?' dead-champ':'')+(isLocked?' expedition-locked':'')+(' '+getAscensionClass(id));
       d.id='cc-'+id;
-      if(!isOnExpedition) d.onclick=function(){ selectChamp(id); };
-      var xpPct=Math.min(100,Math.round((cp.xp/cp.xpNext)*100));
+      // Click ALWAYS paints the side rail (selectChamp does that
+      // unconditionally; the lock check only gates combat selection).
+      d.onclick=function(){ selectChamp(id); };
       var s=cp.stats;
-      var deadHtml=isDead?'<div class="dead-badge">✦ FALLEN — Lv.1 on next run</div>':'';
-      var expHtml=isOnExpedition?'<div class="exp-locked-badge">🏕️ ON EXPEDITION</div>':'';
-      var ascChip=getAscensionChipHTML(id);
-      var lastAreaHtml=cp.lastArea?'<div class="champ-last-area">Last: '+cp.lastArea+'</div>':'<div class="champ-last-area">Not yet ventured</div>';
-      var relicStrip = relicStripHTML(id, {size:'22px'});
-      d.innerHTML=deadHtml+expHtml
-        +'<div class="champ-icon">'+creatureImgHTML(id, ch.icon, '96px')+'</div>'
-        +'<div class="champ-name">'+ch.name+'</div>'
-        +(ascChip?'<div style="text-align:center;margin:-2px 0 4px;">'+ascChip+'</div>':'')
-        +(relicStrip?'<div class="champ-relic-row">'+relicStrip+'</div>':'')
-        +'<div class="champ-level-row">'
-          +'<span class="champ-level-badge">Lv.'+cp.level+'</span>'
-          +'<div class="champ-xp-wrap"><div class="champ-xp-bar" style="width:'+xpPct+'%"></div></div>'
-          +'<span style="font-size:8px;color:#7a6030;">'+xpPct+'%</span>'
-        +'</div>'
-        +lastAreaHtml
-        +'<div class="champ-stats-row">'
-          +'<div><div class="champ-stat-v str">'+s.str+'</div><div class="champ-stat-l">STR</div></div>'
-          +'<div><div class="champ-stat-v agi">'+s.agi+'</div><div class="champ-stat-l">AGI</div></div>'
-          +'<div><div class="champ-stat-v wis">'+s.wis+'</div><div class="champ-stat-l">WIS</div></div>'
-        +'</div>'
-        +'<div class="champ-growth-row">'
-          +'<span class="str">+'+ch.growth.str+' STR</span>'
-          +'<span class="agi">+'+ch.growth.agi+' AGI</span>'
-          +'<span class="wis">+'+ch.growth.wis+' WIS</span>'
-          +'<span style="color:#4a3010;">/ lv</span>'
-        +'</div>'
-        +'<div class="innate-box"><div class="innate-lbl">✦ '+ch.innateName+'</div><div class="innate-txt">'+ch.innateDesc+'</div></div>'
-        +'<button class="champ-card-info-btn" onclick="event.stopPropagation();selectChamp(\''+id+'\');openChampPanel();" title="Champion info">ℹ</button>';
+      // Reserved-slot rendering: every slot div is always emitted with
+      // a min-height in CSS so cards line up vertically across the grid
+      // regardless of which states are set. Empty slots hold space.
+      // Round 35 cut card content to identity + click-driving signals
+      // only (sprite, name, status, ascension, relics, level, innate
+      // name, stats). XP bar / growth row / last area / innate desc
+      // moved to side rail only — they don't drive the click decision.
+      var statusInner = '';
+      if(isDead){
+        statusInner = '<span class="dead-badge">✦ FALLEN · Lv.1 on next run</span>';
+      } else if(isLocked){
+        statusInner = '<span class="exp-locked-badge">'+lockBadgeIcon+' '+lockLabel+'</span>';
+      }
+      var ascChip = getAscensionChipHTML(id);
+      // Round 38: cards used to render full relic icons at 22px each.
+      // Now that relicImgHTML enforces min 48px, displaying icons here
+      // would overflow the card. The card now shows a count chip
+      // ("⚒ 3") — a "this champ is geared up" signal. Detail (full
+      // icons + tooltips) lives in the side rail at 48px where it
+      // belongs.
+      var equipped = (typeof getEquippedRelics === 'function') ? getEquippedRelics(id) : [];
+      var slots    = (typeof getRelicSlotCount === 'function') ? getRelicSlotCount(id) : 0;
+      var relicChip = '';
+      if(slots > 0){
+        var col = (equipped.length === slots && slots > 0) ? '#d4a843' : '#7a6030';
+        relicChip = '<span class="champ-card-relic-count" style="color:'+col+';">⚒ '+equipped.length+' / '+slots+'</span>';
+      }
+      // Round 62: favorite star (top-right). Clicking toggles
+      // PERSIST.favoriteChamps[id] and re-sorts the grid so starred
+      // champs float to the top.
+      var isFav = !!(PERSIST.favoriteChamps && PERSIST.favoriteChamps[id]);
+      var starGlyph = isFav ? '★' : '☆';
+      var starColor = isFav ? '#d4a843' : '#5a4020';
+      var starTitle = isFav ? 'Unfavorite' : 'Favorite (sorts to top)';
+      var favStar = '<button class="champ-card-fav'+(isFav?' active':'')+'" '
+        + 'onclick="toggleChampFavorite(\''+id+'\', event)" '
+        + 'title="'+starTitle+'" '
+        + 'style="color:'+starColor+';">'+starGlyph+'</button>';
+      d.innerHTML =
+          favStar
+        + '<div class="champ-card-status">'+statusInner+'</div>'
+        + '<div class="champ-icon">'+creatureImgHTML(id, ch.icon, '150px', 'flip-x')+'</div>'
+        + '<div class="champ-name">'+ch.name+'</div>'
+        + '<div class="champ-card-asc">'+(ascChip||'')+'</div>'
+        + '<div class="champ-card-relics">'+relicChip+'</div>'
+        + '<div class="champ-card-footer">'
+        +   '<div class="champ-card-foot-row">'
+        +     '<span class="champ-level-badge">Lv.'+cp.level+'</span>'
+        +     '<span class="champ-card-innate">✦ '+(ch.innateName||'')+'</span>'
+        +   '</div>'
+        +   '<div class="champ-stats-row">'
+        +     '<div><div class="champ-stat-v str">'+s.str+'</div><div class="champ-stat-l">STR</div></div>'
+        +     '<div><div class="champ-stat-v agi">'+s.agi+'</div><div class="champ-stat-l">AGI</div></div>'
+        +     '<div><div class="champ-stat-v wis">'+s.wis+'</div><div class="champ-stat-l">WIS</div></div>'
+        +   '</div>'
+        + '</div>';
     }
 
     grid.appendChild(d);
@@ -1295,6 +2717,145 @@ function rebuildChampGrid(){
   if(selectedChampId){
     var sel=document.getElementById('cc-'+selectedChampId);
     if(sel) sel.classList.add('selected');
+  }
+}
+
+// ── Champion-info side rail (left of grid) ───────────────────────────
+// Replaces the per-card (i) button popup with a persistent panel.
+// Populated by selectChamp(id) on every card click and by
+// rebuildChampGrid on screen entry (auto-selects first unlocked).
+// Locked champions still render — player wants to inspect what
+// their busy champion is doing, even if they can't pick them.
+function buildCsChampRail(id){
+  var rail   = document.getElementById('cs-champ-rail');
+  var emptyEl = document.getElementById('cs-cr-empty');
+  var bodyEl  = document.getElementById('cs-cr-body');
+  if(!rail || !emptyEl || !bodyEl) return;
+  if(!id || !CREATURES[id] || (PERSIST.unlockedChamps||[]).indexOf(id) === -1){
+    emptyEl.style.display = '';
+    bodyEl.style.display  = 'none';
+    return;
+  }
+  emptyEl.style.display = 'none';
+  bodyEl.style.display  = '';
+
+  var ch = CREATURES[id];
+  var cp = getChampPersist(id);
+  var s  = cp.stats || {str:0,agi:0,wis:0};
+
+  // Status badge (FALLEN / lock / empty — reserved space)
+  var statusEl = document.getElementById('cs-cr-status');
+  var lockLabel = (typeof getChampLockLabel === 'function') ? getChampLockLabel(id) : null;
+  var lockIcon  = (cp.lockedForge !== null && cp.lockedForge !== undefined) ? '⚒' : '🏕️';
+  if(!cp.alive){
+    statusEl.innerHTML = '<span class="dead-badge">✦ FALLEN · Lv.1 on next run</span>';
+  } else if(lockLabel){
+    statusEl.innerHTML = '<span class="exp-locked-badge">'+lockIcon+' '+lockLabel+'</span>';
+  } else {
+    statusEl.innerHTML = '';
+  }
+
+  // Portrait + name + ascension chip
+  var portraitEl = document.getElementById('cs-cr-portrait');
+  if(portraitEl) portraitEl.innerHTML = creatureImgHTML(id, ch.icon, '120px', 'flip-x');
+  document.getElementById('cs-cr-name').textContent = ch.name;
+  var ascEl = document.getElementById('cs-cr-asc');
+  ascEl.innerHTML = (typeof getAscensionChipHTML === 'function') ? getAscensionChipHTML(id) : '';
+
+  // Stats grid
+  document.getElementById('cs-cr-level').textContent = cp.level;
+  document.getElementById('cs-cr-str').textContent   = Math.round(s.str);
+  document.getElementById('cs-cr-agi').textContent   = Math.round(s.agi);
+  document.getElementById('cs-cr-wis').textContent   = Math.round(s.wis);
+
+  // Growth-per-level line
+  var g = ch.growth || {str:0,agi:0,wis:0};
+  document.getElementById('cs-cr-growth').innerHTML =
+      '<span class="str">+'+g.str+' STR</span>'
+    + '<span class="agi">+'+g.agi+' AGI</span>'
+    + '<span class="wis">+'+g.wis+' WIS</span>'
+    + '<span style="color:#3a2010;">/ lv</span>';
+
+  // XP bar
+  var xpPct = Math.min(100, Math.round((cp.xp/(cp.xpNext||1))*100));
+  document.getElementById('cs-cr-xp-txt').textContent = cp.xp + ' / ' + cp.xpNext;
+  document.getElementById('cs-cr-xp-bar').style.width = xpPct + '%';
+
+  // Mastery bar (toward next ascension tier)
+  var ascLv  = (typeof getAscensionLevel === 'function') ? getAscensionLevel(id) : 0;
+  var nextTier = (typeof ASCENSION_TIERS !== 'undefined' && ascLv < ASCENSION_TIERS.length) ? ASCENSION_TIERS[ascLv] : null;
+  var mast    = cp.masteryXp || 0;
+  var mastReq = nextTier ? nextTier.masteryReq : 0;
+  var mastPct = mastReq > 0 ? Math.min(100, Math.round((mast/mastReq)*100)) : 100;
+  var mastBar = document.getElementById('cs-cr-mastery-bar');
+  mastBar.style.width = mastPct + '%';
+  mastBar.classList.toggle('full', mastPct >= 100 && !!nextTier);
+  document.getElementById('cs-cr-mastery-toward').textContent =
+    nextTier ? ('Toward ' + nextTier.tier.charAt(0).toUpperCase() + nextTier.tier.slice(1).replace('_',' ')) : 'Maximum ascension';
+  document.getElementById('cs-cr-mastery-frac').textContent =
+    nextTier ? (mast + ' / ' + mastReq) : '—';
+
+  // Innate
+  document.getElementById('cs-cr-innate-name').textContent = ch.innateName || (ch.innate && ch.innate.name) || 'Innate';
+  document.getElementById('cs-cr-innate-desc').innerHTML   = (typeof renderKeywords === 'function')
+    ? renderKeywords(ch.innateDesc || (ch.innate && ch.innate.desc) || '')
+    : (ch.innateDesc || '');
+
+  // Deck summary — use the canonical buildStartDeck which knows about
+  // deck overrides (Sanctum edits), creature.deckOrder generators,
+  // startDeck / deck fallbacks, and Dead Weight (filler) padding for
+  // STR-based deck cap. The earlier `cp.deck || ch.deck` lookup was
+  // hitting `undefined` on most champions and showing "Empty deck".
+  var deck = (typeof buildStartDeck === 'function') ? buildStartDeck(id) : [];
+  document.getElementById('cs-cr-deck-count').textContent = deck.length ? '· '+deck.length+' cards' : '';
+  // Group by id for tidy summary (icon + count)
+  var counts = {};
+  deck.forEach(function(cid){ counts[cid] = (counts[cid]||0)+1; });
+  var deckHtml = Object.keys(counts).map(function(cid){
+    var card = (typeof CARDS !== 'undefined') ? CARDS[cid] : null;
+    var name = card ? card.name : cid;
+    var icon = card ? (card.icon||'') : '';
+    var n = counts[cid];
+    return '<div>'+icon+' '+name+(n>1?' ×'+n:'')+'</div>';
+  }).join('') || '<em style="color:#5a4020;">No cards.</em>';
+  document.getElementById('cs-cr-deck-summary').innerHTML = deckHtml;
+
+  // Relics — equipped strip with hover info via existing relic system
+  var relicEl = document.getElementById('cs-cr-relics');
+  var equipped = (typeof getEquippedRelics === 'function') ? getEquippedRelics(id) : (cp.relics||[]);
+  var slotCount = (typeof getRelicSlotCount === 'function') ? getRelicSlotCount(id) : 0;
+  // Hide the "X / Y" count when there are no slots yet — "0 / 0" reads
+  // confusingly. The placeholder line below carries the message.
+  document.getElementById('cs-cr-relic-count').textContent = slotCount > 0
+    ? equipped.length + ' / ' + slotCount
+    : '';
+  if(slotCount === 0){
+    relicEl.innerHTML = '<span class="cs-cr-relics-empty">No relic slots. Ascend first.</span>';
+  } else if(!equipped.length){
+    relicEl.innerHTML = '<span class="cs-cr-relics-empty">No relics equipped.</span>';
+  } else if(typeof relicStripHTML === 'function'){
+    // Round 38: bumped 28 → 48 since relicImgHTML enforces min 48.
+    // Rail is 280px wide; 3 relics at 48 + gaps fit comfortably; more
+    // wrap to a second row.
+    relicEl.innerHTML = relicStripHTML(id, {size:'48px'});
+  } else {
+    relicEl.innerHTML = '';
+  }
+
+  // Action buttons — point to existing deck view + Sanctum entry points
+  var viewBtn = document.getElementById('cs-cr-view-deck');
+  var editBtn = document.getElementById('cs-cr-edit-deck');
+  if(viewBtn){
+    viewBtn.onclick = function(){
+      selectedChampId = id;
+      if(typeof openChampDeckView === 'function') openChampDeckView();
+    };
+  }
+  if(editBtn){
+    editBtn.onclick = function(){
+      selectedChampId = id;
+      if(typeof openChampSanctum === 'function') openChampSanctum();
+    };
   }
 }
 
@@ -1315,8 +2876,11 @@ function buyChampionUnlock(id){
 }
 
 function selectChamp(id){
-  var cp = getChampPersist(id);
-  if(cp && cp.lockedExpedition !== null && cp.lockedExpedition !== undefined) return;
+  // Always paint the side rail — the player wants to inspect their
+  // locked champions too (to remember what they're up to). Selection
+  // for combat is gated below; rail is unconditional.
+  if(typeof buildCsChampRail === 'function') buildCsChampRail(id);
+  if(isChampLocked(id)) return;
   playSelectSfx();
   selectedChampId=id;
   document.querySelectorAll('.champ-card').forEach(function(c){c.classList.remove('selected');});
@@ -1326,9 +2890,9 @@ function selectChamp(id){
 function confirmChampion(){
   if(!selectedChampId) selectedChampId=PERSIST.unlockedChamps[0]||'druid';
   if(PERSIST.unlockedChamps.indexOf(selectedChampId)===-1) return;
-  var cp = getChampPersist(selectedChampId);
-  if(cp && cp.lockedExpedition !== null && cp.lockedExpedition !== undefined){
-    showTownToast(CREATURES[selectedChampId].name + ' is on expedition!');
+  var lockLabel = getChampLockLabel(selectedChampId);
+  if(lockLabel){
+    showTownToast(CREATURES[selectedChampId].name + ' is ' + lockLabel.toLowerCase() + '!');
     return;
   }
   playUiClickSfx();
@@ -1340,9 +2904,9 @@ function confirmChampion(){
 
 function confirmArea(){
   if(!selectedArea) return;
-  var cp = getChampPersist(selectedChampId);
-  if(cp && cp.lockedExpedition !== null && cp.lockedExpedition !== undefined){
-    showTownToast('Champion is on expedition!');
+  var lockLabel = getChampLockLabel(selectedChampId);
+  if(lockLabel){
+    showTownToast('Champion is ' + lockLabel.toLowerCase() + '!');
     return;
   }
   playEnterAreaSfx();
@@ -1357,15 +2921,36 @@ function showNav(show){
 }
 
 function updateNavBar(activeTab){
-  document.getElementById('nav-adventure').classList.toggle('active',activeTab==='adventure');
-  var tt=document.getElementById('nav-town');
-  if(tt){
-    tt.classList.toggle('active',activeTab==='town');
-    tt.classList.remove('locked-tab');
-    tt.title='';
+  // activeTab is optional. When omitted, tab classes are left alone
+  // so a background tick can repaint currencies without clobbering
+  // the player's current tab.
+  if(activeTab !== undefined){
+    document.getElementById('nav-adventure').classList.toggle('active',activeTab==='adventure');
+    var tt=document.getElementById('nav-town');
+    if(tt){
+      tt.classList.toggle('active',activeTab==='town');
+      tt.classList.remove('locked-tab');
+      tt.title='';
+    }
   }
-  document.getElementById('nav-gold').innerHTML=goldImgHTML('16px')+' '+PERSIST.gold;
+  refreshNavCurrencies();
   updateAchBadge();
+}
+
+// Round 62f: paint the gold + shard counters in the nav bar. Split
+// out so background ticks can refresh currency without disturbing
+// the active-tab state. Called from updateNavBar AND from any code
+// path that mutates currency and wants a live nav refresh.
+function refreshNavCurrencies(){
+  var goldEl = document.getElementById('nav-gold');
+  if(goldEl) goldEl.innerHTML = goldImgHTML('16px') + ' ' + PERSIST.gold;
+  var shardsEl = document.getElementById('nav-shards');
+  if(shardsEl){
+    var shardIcon = (typeof soulShardImgHTML === 'function')
+      ? soulShardImgHTML('16px')
+      : '<span style="font-size:14px;">🔮</span>';
+    shardsEl.innerHTML = shardIcon + ' ' + (PERSIST.soulShards || 0);
+  }
 }
 
 function navToTown(){
@@ -1376,6 +2961,15 @@ function navTo(tab){
   if(tab==='adventure'){
     if(gs&&gs.running){ addLog('Finish the battle first.','sys'); return; }
     showScreen('select-screen');
+    // Round 62: re-render so newly-summoned champions appear without
+    // a full page refresh. Previously the grid was painted once on
+    // init.js boot and never refreshed when town actions changed the
+    // unlocked roster.
+    if(typeof rebuildChampGrid === 'function') rebuildChampGrid();
+    // Round 62g: was missing — without this, switching from town
+    // back to adventure left the TOWN tab visually highlighted
+    // because no code path repainted the active-tab class state.
+    updateNavBar('adventure');
     playMusic('menu_theme');
   } else if(tab==='town'){
     openTown();
@@ -1545,7 +3139,7 @@ function openQuestPopup(){
   var pct=Math.min(100,Math.round((prog/count)*100));
   document.getElementById('qp-bar').style.width=pct+'%';
 
-  var statusTxt=a.readyToClaim?'✦ Complete — ready to claim!'
+  var statusTxt=a.readyToClaim?'✦ Complete · ready to claim!'
     :a.failed?'✗ Failed'
     :(prog+' / '+count);
   document.getElementById('qp-progress').textContent=statusTxt;
@@ -1598,8 +3192,12 @@ function matImgHTML(matId, size){
 }
 
 // Relic icon — tries assets/icons/relics/{id}.png, falls back to emoji
+// Relic icon — assets/icons/relics/{id}.png (48×48 pixel art).
+// Display floored at 48px — never squish source. (Round 38: layouts
+// adjusted at every call site that previously rendered <48: champion
+// card now uses a count chip; Sanctum/Forge slots grew their frames.)
 function relicImgHTML(relicId, size){
-  var sz = size || '32px';
+  var sz = _minSizePx(size || '48px', 48);
   var relic = RELICS[relicId];
   var emoji = relic ? relic.icon : '?';
   var src = 'assets/icons/relics/' + relicId + '.png';
@@ -1646,6 +3244,11 @@ function setCombatBackground(areaId){
 function startRun(champId,area){
   stopMusic();
   gs=makeGS(champId,area);
+  // Snapshot start-of-run state for the post-area "RUN SUMMARY" panel.
+  // Captures champion XP/level/mastery and active-quest progress so the
+  // panel can animate the deltas at run-end. Stored on gs (cleared with
+  // the run state).
+  gs._snapshot = _captureRunSnapshot(champId);
   paused=false;
   var ch=CREATURES[champId];
   setCreatureImg(document.getElementById('top-portrait'), champId, ch.icon, '40px');
@@ -1683,7 +3286,7 @@ function startRun(champId,area){
       ib.classList.add('passive');
     }
     // Tooltip on innate card
-    innateCard.onmouseenter=function(e){ showTipDirect(ch.innateName, ch.innateActive?'ACTIVE — '+ch.innateCost+' mana':'PASSIVE', ch.innateDesc, '', e); };
+    innateCard.onmouseenter=function(e){ showTipDirect(ch.innateName, ch.innateActive?'ACTIVE · '+ch.innateCost+' mana':'PASSIVE', ch.innateDesc, '', e); };
     innateCard.onmousemove=moveTip;
     innateCard.onmouseleave=hideTip;
   }
@@ -1720,6 +3323,17 @@ function setEnemyUI(idx){
   document.getElementById('e-hp-txt').textContent=e.baseHp+'/'+e.baseHp;
   document.getElementById('e-tags').innerHTML='';
   if(e.innate) addInnateTag('enemy',e.innate);
+  // Round 57: enemy relic strip (mirror of p-relics). Currently only
+  // arena fights carry enemy relics (e._arenaRelics from the duel-code
+  // payload). Hover shows the same tooltip as player relics.
+  var eRelics = document.getElementById('e-relics');
+  if(eRelics){
+    if(e._arenaRelics && e._arenaRelics.length && typeof _relicStripFromIdsHTML === 'function'){
+      eRelics.innerHTML = _relicStripFromIdsHTML(e._arenaRelics, {size:'28px'});
+    } else {
+      eRelics.innerHTML = '';
+    }
+  }
   trackSeen(e.id);
   // Reset per-enemy state
   gs.enemyShell=0;
@@ -2720,7 +4334,7 @@ function addInnateTag(target,innate){
   t.className='tag innate'; t.dataset.label=innate.name;
   var hidden=innate.hidden&&false; // hidden innates are now always revealed
   t.textContent='◆ '+(hidden?'???':innate.name);
-  var desc=hidden?'Unknown — defeat this creature to reveal its secret.':innate.desc;
+  var desc=hidden?'Unknown. Defeat this creature to reveal its secret.':innate.desc;
   t.addEventListener('mouseenter',function(e){ showTipDirect(hidden?'???':innate.name,'INNATE',desc,'Permanent ability',e); });
   t.addEventListener('mousemove',moveTip);
   t.addEventListener('mouseleave',hideTip);
@@ -2841,6 +4455,7 @@ function endWaxOasisFight(){
   gs.xp+=xp;
   trackKill('waxoasis');
   checkLevelUp();
+  gs._lastFightWon = true;  // wax oasis = passive shrine, treated as a "win"
   saveChampionState();
 
   var isLast=(gs.enemyIdx+1>=gs.enemies.length);
@@ -2867,6 +4482,7 @@ function doVictory(){
   var xpMsg=xpMult<1?' ('+Math.round(xpMult*100)+'% XP)':'';
   addLog('✦ Victory! +'+xp+' XP'+xpMsg+'.','sys');
   checkLevelUp();
+  gs._lastFightWon = true;  // grantCombatMasteryXp reads this at run-end
   saveChampionState();
   var isLast=(gs.enemyIdx+1>=gs.enemies.length);
   if(isLast){
@@ -3004,10 +4620,27 @@ function finishAreaAndContinue(){
   if(actions) actions.innerHTML='<button class="btn btn-dim" style="font-size:10px;" onclick="openDeckPopup()">VIEW DECK</button>'
     +'<button class="btn btn-dim" style="font-size:10px;" onclick="skipAll()">SKIP</button>';
   gs.hand.forEach(function(h){if(!h.ghost) gs.discardPile.push(h.id);}); gs.hand=[];
-  // Show spoils then go to area select
-  var pool=buildSpoilsCardPool();
-  if(pool.length){ showSpoilsOverlay(gs.champId); }
-  else { goToAreaSelectAfterRun(); }
+  _runResultsThenSpoils();
+}
+
+// Award combat mastery once (delta-correct), then show the run-results
+// panel. CONTINUE proceeds to spoils or directly to area select.
+function _runResultsThenSpoils(){
+  if(!gs) return;
+  if(typeof grantCombatMasteryXp === 'function') grantCombatMasteryXp();
+  var champId = gs.champId;
+  var areaName = (gs.area && gs.area.def) ? gs.area.def.name : '';
+  var snap = gs._snapshot;
+  var pool = (typeof buildSpoilsCardPool === 'function') ? buildSpoilsCardPool() : [];
+  var afterFn = function(){
+    if(pool.length) showSpoilsOverlay(champId);
+    else goToAreaSelectAfterRun();
+  };
+  if(snap && typeof showRunResults === 'function'){
+    showRunResults(champId, areaName, snap, afterFn);
+  } else {
+    afterFn();
+  }
 }
 
 function autoTakeGold(){
@@ -3031,9 +4664,7 @@ function postVictory(isLast, autoChain){
   if(rb) rb.style.display='';
   gs.hand.forEach(function(h){if(!h.ghost) gs.discardPile.push(h.id);}); gs.hand=[];
   if(isLast){
-    var pool=buildSpoilsCardPool();
-    if(pool.length){ showSpoilsOverlay(gs.champId); }
-    else { goToAreaSelectAfterRun(); }
+    _runResultsThenSpoils();
   } else {
     // Revitalise — restore HP between battles (not on final)
     if(gs._shrineRevitalise&&gs.playerHp>0&&gs.playerHp<gs.playerMaxHp){
@@ -3055,12 +4686,446 @@ function saveChampionState(){
   cp.stats={str:gs.stats.str,agi:gs.stats.agi,wis:gs.stats.wis};
   cp.alive=true;
   cp.lastArea=gs.area.def.name;
-  // Mastery XP — earned from combat (5 per enemy defeated, +15 for clearing all)
-  var enemiesBeaten = gs.enemyIdx || 0;
-  var clearedAll = gs.enemies && enemiesBeaten >= gs.enemies.length;
-  var masteryGain = enemiesBeaten * 5 + (clearedAll ? 15 : 0);
-  cp.masteryXp = (cp.masteryXp||0) + masteryGain;
+  // NOTE: combat mastery is awarded ONCE at run-end via grantCombatMasteryXp()
+  // — we used to award incrementally here which produced two bugs:
+  //   1) saveChampionState fires after each enemy + each level-up + run-end,
+  //      so `enemyIdx*5` (cumulative-current) snowballed into 0+5+10+10 = 25
+  //      for a 3-enemy run instead of the intended 15.
+  //   2) The clear bonus (`enemiesBeaten >= enemies.length`) never fired
+  //      because gs.enemyIdx is the index of the LAST enemy (length-1), not
+  //      length, when this function runs. Off-by-one ate the +15.
+  // Both are fixed by the dedicated run-end hook below.
   savePersist();
+}
+
+// ═══════════════════════════════════════════════════════
+// RUN RESULTS — sequenced post-area reveal
+// ═══════════════════════════════════════════════════════
+//
+// Flow: startRun snapshots cp state → combat happens → at run-end,
+// showRunResults reads current vs snapshot, animates each delta in
+// sequence, then enables CONTINUE which advances to spoils (or area
+// select if there's nothing to spoil). Pure presentation — all
+// numerical updates have already been committed to PERSIST by the
+// time this fires.
+
+var _rrContinueCb = null;
+var _rrTimers = [];
+
+function _rrClearTimers(){
+  _rrTimers.forEach(function(t){ clearTimeout(t); });
+  _rrTimers = [];
+}
+
+// Public entry. snap is gs._snapshot (start of run); afterFn is what to
+// call when the player clicks CONTINUE.
+function showRunResults(champId, areaName, snap, afterFn){
+  _rrContinueCb = afterFn || function(){};
+  _rrClearTimers();
+
+  var ch = CREATURES[champId];
+  var cp = getChampPersist(champId);
+  if(!ch || !cp || !snap){
+    // Safety: if anything is missing, skip the panel entirely.
+    if(typeof afterFn === 'function') afterFn();
+    return;
+  }
+
+  // Subtitle
+  var sub = document.getElementById('rr-subtitle');
+  if(sub) sub.textContent = ch.name + ' · ' + (areaName || '—');
+
+  // ── Compute deltas ──────────────────────────────────────────
+  // XP delta — accounts for level-ups (could be multiple). We need to
+  // simulate the fill: from snap.level/snap.xp/snap.xpNext through any
+  // intermediate level transitions to cp.level/cp.xp/cp.xpNext.
+  // The simplest model: total XP earned = sum of XP poured in. We
+  // approximate by running the level curve from snap to cp and
+  // recording each segment.
+  var xpSegments = _rrComputeXpSegments(snap, cp);
+  var xpTotalGained = xpSegments.totalXp;
+
+  // Mastery delta — direct
+  var masteryGained = Math.max(0, (cp.masteryXp||0) - (snap.masteryXp||0));
+
+  // Quest deltas — only quests that EXISTED in snap and have higher
+  // progress now (or completed). Quests added mid-run don't appear here.
+  var questDeltas = _rrComputeQuestDeltas(snap);
+
+  // ── Reset section visuals to "before" state ────────────────
+  document.querySelectorAll('#run-results-overlay .rr-section').forEach(function(s){
+    s.classList.remove('revealed');
+  });
+  document.querySelectorAll('#run-results-overlay .rr-burst').forEach(function(b){
+    b.style.display = 'none';
+  });
+  var xpFill = document.getElementById('rr-xp-fill');
+  var msFill = document.getElementById('rr-mastery-fill');
+  if(xpFill){ xpFill.style.transition = 'none'; xpFill.style.width = (snap.xpNext>0?(snap.xp/snap.xpNext)*100:0)+'%'; xpFill.classList.remove('full'); }
+  if(msFill){ msFill.style.transition = 'none'; msFill.style.width = _rrMasteryPct(snap.masteryXp, snap.ascensionTier)+'%'; msFill.classList.remove('full'); }
+  var xpLevelEl = document.getElementById('rr-xp-level');
+  var xpFracEl  = document.getElementById('rr-xp-frac');
+  var xpGainEl  = document.getElementById('rr-xp-gain');
+  if(xpLevelEl) xpLevelEl.textContent = 'Lv.'+snap.level;
+  if(xpFracEl)  xpFracEl.textContent  = snap.xp+' / '+snap.xpNext;
+  if(xpGainEl)  xpGainEl.textContent  = '+'+xpTotalGained+' XP';
+  var msFracEl  = document.getElementById('rr-mastery-frac');
+  var msTowardEl= document.getElementById('rr-mastery-toward');
+  var msGainEl  = document.getElementById('rr-mastery-gain');
+  var snapNextTier = ASCENSION_TIERS[snap.ascensionTier];
+  if(msFracEl)   msFracEl.textContent   = (snap.masteryXp||0) + (snapNextTier ? ' / '+snapNextTier.masteryReq : ' / —');
+  if(msTowardEl) msTowardEl.textContent = snapNextTier ? ('Toward '+_rrTitleCase(snapNextTier.tier)) : 'Maximum ascension';
+  if(msGainEl)   msGainEl.textContent   = '+'+masteryGained;
+
+  // Quests section visibility
+  var qSec = document.getElementById('rr-section-quests');
+  var qList = document.getElementById('rr-quests-list');
+  if(qList) qList.innerHTML = '';
+  if(qSec) qSec.style.display = (questDeltas.length ? '' : 'none');
+
+  // CONTINUE hidden until the sequence completes
+  var contBtn = document.getElementById('rr-continue');
+  if(contBtn){ contBtn.style.opacity = '0'; contBtn.style.pointerEvents = 'none'; }
+
+  // Show overlay
+  var ov = document.getElementById('run-results-overlay');
+  if(ov) ov.style.display = 'flex';
+
+  // ── Sequence the reveals ───────────────────────────────────
+  var t = 0;
+
+  // Step 1: XP section appears + fills
+  _rrTimers.push(setTimeout(function(){
+    var sec = document.getElementById('rr-section-xp');
+    if(sec) sec.classList.add('revealed');
+    _rrTimers.push(setTimeout(function(){
+      _rrAnimateXpSegments(xpSegments, snap);
+    }, 280));
+  }, t));
+  t += 300 + (xpSegments.segments.length * 1100) + 250;
+
+  // Step 2: Mastery section
+  _rrTimers.push(setTimeout(function(){
+    var sec = document.getElementById('rr-section-mastery');
+    if(sec) sec.classList.add('revealed');
+    _rrTimers.push(setTimeout(function(){
+      _rrAnimateMastery(snap, cp, masteryGained);
+    }, 280));
+  }, t));
+  t += 1500;
+
+  // Step 3: Quests section (only if any deltas)
+  if(questDeltas.length){
+    _rrTimers.push(setTimeout(function(){
+      if(qSec) qSec.classList.add('revealed');
+      _rrAnimateQuests(questDeltas);
+    }, t));
+    t += 600 + questDeltas.length * 850;
+  }
+
+  // Step 4: enable CONTINUE
+  _rrTimers.push(setTimeout(function(){
+    if(contBtn){ contBtn.style.opacity = '1'; contBtn.style.pointerEvents = 'auto'; }
+  }, t));
+}
+
+// Compute XP segments to animate. Each segment fills from `from%` to
+// either 100% (level-up) or `to%` (final stop). `boundaries` contains
+// {fromPct, toPct, levelAfter, xpNextAfter} per segment.
+function _rrComputeXpSegments(snap, cp){
+  var segs = [];
+  var totalXp = 0;
+  // Walk from snap → cp by level. We don't know the exact intermediate
+  // xpNext ramps; recompute using the same formula as checkLevelUp:
+  //   xpNextNew = floor(xpNextOld * 1.5)
+  var curLevel  = snap.level;
+  var curXp     = snap.xp;
+  var curXpNext = snap.xpNext;
+  // Sum total XP gained: poured-in XP across all level transitions plus
+  // remaining xp at end-state.
+  var endLevel  = cp.level;
+  var endXp     = cp.xp;
+  var endXpNext = cp.xpNext;
+  if(endLevel < curLevel){
+    // Should never happen — defensive, just animate to-current.
+    segs.push({ fromPct: (snap.xpNext>0?(snap.xp/snap.xpNext)*100:0), toPct: (endXpNext>0?(endXp/endXpNext)*100:0), levelAfter: endLevel, xpNextAfter: endXpNext });
+    return { segments: segs, totalXp: 0 };
+  }
+  while(curLevel < endLevel){
+    // Fill remaining from curXp → curXpNext (one level-up)
+    var pourIn = curXpNext - curXp;
+    totalXp += pourIn;
+    segs.push({
+      fromPct: (curXpNext>0?(curXp/curXpNext)*100:0),
+      toPct: 100,
+      levelAfter: curLevel + 1,
+      xpNextAfter: Math.floor(curXpNext * 1.5)
+    });
+    curLevel++;
+    curXpNext = Math.floor(curXpNext * 1.5);
+    curXp = 0;
+  }
+  // Final partial fill toward endXp
+  if(endXp > curXp){
+    totalXp += (endXp - curXp);
+  }
+  segs.push({
+    fromPct: (curXpNext>0?(curXp/curXpNext)*100:0),
+    toPct:   (endXpNext>0?(endXp/endXpNext)*100:0),
+    levelAfter: endLevel,
+    xpNextAfter: endXpNext
+  });
+  return { segments: segs, totalXp: totalXp };
+}
+
+// Animate the XP segments in series. Bursts the LEVEL UP! caption when
+// a segment crosses a level boundary.
+function _rrAnimateXpSegments(xpSegments, snap){
+  var fill = document.getElementById('rr-xp-fill');
+  var levelEl = document.getElementById('rr-xp-level');
+  var fracEl  = document.getElementById('rr-xp-frac');
+  var burst   = document.getElementById('rr-xp-burst');
+  if(!fill) return;
+
+  var i = 0;
+  var displayedLevel = snap.level;
+  var displayedXpNext = snap.xpNext;
+
+  function runNext(){
+    if(i >= xpSegments.segments.length) return;
+    var seg = xpSegments.segments[i];
+    // Set fill instantly to fromPct (in case last segment ended early)
+    fill.style.transition = 'none';
+    fill.style.width = seg.fromPct + '%';
+    // Force reflow so the next transition fires
+    void fill.offsetWidth;
+    fill.style.transition = 'width .9s cubic-bezier(.3,.6,.4,1)';
+    fill.style.width = seg.toPct + '%';
+
+    // Update fraction text mid-flight (rough — don't tick it precisely)
+    if(fracEl) fracEl.textContent = '… filling';
+
+    _rrTimers.push(setTimeout(function(){
+      if(seg.toPct >= 100){
+        // Level-up: flash the burst, snap bar to 0, bump displayed level
+        displayedLevel = seg.levelAfter;
+        displayedXpNext = seg.xpNextAfter;
+        if(levelEl) levelEl.textContent = 'Lv.' + displayedLevel;
+        if(burst){
+          burst.style.display = 'block';
+          burst.style.animation = 'none';
+          void burst.offsetWidth;
+          burst.style.animation = 'rr-burst-pop .5s ease-out';
+        }
+        if(typeof playLevelUpSfx === 'function') playLevelUpSfx();
+        _rrTimers.push(setTimeout(function(){
+          // Hide the burst, reset bar to 0% for the next segment
+          if(burst) burst.style.display = 'none';
+          fill.style.transition = 'none';
+          fill.style.width = '0%';
+          void fill.offsetWidth;
+          if(fracEl) fracEl.textContent = '0 / ' + displayedXpNext;
+          i++;
+          runNext();
+        }, 700));
+      } else {
+        // Final segment — write the actual fraction text
+        var endXp = Math.round((seg.toPct / 100) * displayedXpNext);
+        if(fracEl) fracEl.textContent = endXp + ' / ' + displayedXpNext;
+        i++;
+        runNext();
+      }
+    }, 950));
+  }
+  runNext();
+}
+
+// Animate the mastery bar. Plays the READY TO ASCEND burst if the
+// bar fills to 100% (mastery requirement met for the next tier).
+function _rrAnimateMastery(snap, cp, gained){
+  var fill   = document.getElementById('rr-mastery-fill');
+  var fracEl = document.getElementById('rr-mastery-frac');
+  var burst  = document.getElementById('rr-mastery-burst');
+  if(!fill) return;
+  var fromPct = _rrMasteryPct(snap.masteryXp, snap.ascensionTier);
+  var toPct   = _rrMasteryPct(cp.masteryXp,   cp.ascensionTier);
+  // Edge case: if the player ascended mid-run (ascensionTier increased),
+  // the bar's reference req changes. Just fill to 100% on the old req
+  // visually — it's good enough for the recap.
+  if(cp.ascensionTier > snap.ascensionTier) toPct = 100;
+
+  fill.style.transition = 'none';
+  fill.style.width = fromPct + '%';
+  void fill.offsetWidth;
+  fill.style.transition = 'width 1.1s cubic-bezier(.3,.6,.4,1)';
+  fill.style.width = toPct + '%';
+
+  if(fracEl){
+    var nextTier = ASCENSION_TIERS[cp.ascensionTier];
+    var req = nextTier ? nextTier.masteryReq : 0;
+    fracEl.textContent = (cp.masteryXp||0) + (req ? ' / ' + req : ' / —');
+  }
+
+  _rrTimers.push(setTimeout(function(){
+    if(toPct >= 100 && ASCENSION_TIERS[cp.ascensionTier]){
+      if(burst){
+        burst.style.display = 'block';
+        burst.style.animation = 'none';
+        void burst.offsetWidth;
+        burst.style.animation = 'rr-burst-pop .5s ease-out';
+      }
+      fill.classList.add('full');
+    }
+  }, 1150));
+}
+
+// Animate the quest deltas — one row per quest, staggered ~700ms.
+function _rrAnimateQuests(questDeltas){
+  var list = document.getElementById('rr-quests-list');
+  if(!list) return;
+  list.innerHTML = '';
+  questDeltas.forEach(function(d, i){
+    var row = document.createElement('div');
+    row.className = 'rr-quest-row';
+    var fromPct = d.target>0 ? Math.min(100, (d.from/d.target)*100) : 0;
+    var toPct   = d.target>0 ? Math.min(100, (d.to/d.target)*100)   : 0;
+    var complete = d.to >= d.target;
+    row.innerHTML =
+        '<div class="rr-quest-name">'+ _rrEsc(d.title) +
+          '<span class="rr-quest-frac'+(complete?' complete':'')+'" data-from="'+d.from+'" data-to="'+d.to+'" data-target="'+d.target+'">'
+          + d.from+' / '+d.target +
+          '</span>'
+        +'</div>'
+      + '<div class="rr-quest-bar"><div class="rr-quest-bar-fill'+(complete?' complete':'')+'" style="width:'+fromPct+'%;"></div></div>';
+    list.appendChild(row);
+    var fill = row.querySelector('.rr-quest-bar-fill');
+    var frac = row.querySelector('.rr-quest-frac');
+    _rrTimers.push(setTimeout(function(){
+      if(fill){
+        void fill.offsetWidth;
+        fill.style.width = toPct + '%';
+      }
+      if(frac){
+        // Tick the fraction up to the new value
+        var startN = d.from, endN = d.to;
+        var stepMs = 60;
+        var steps  = Math.max(1, Math.min(20, endN - startN));
+        var elapsed = 0;
+        var tick = setInterval(function(){
+          elapsed++;
+          var n = Math.round(startN + (endN - startN) * (elapsed/steps));
+          frac.textContent = n + ' / ' + d.target;
+          if(elapsed >= steps){
+            clearInterval(tick);
+            frac.textContent = endN + ' / ' + d.target;
+          }
+        }, stepMs);
+      }
+    }, 350 + i*700));
+  });
+}
+
+// Compute quest deltas: only quests that existed at snapshot time AND
+// have a higher progress now. Excludes quests added mid-run (because
+// snap.quests doesn't contain them).
+function _rrComputeQuestDeltas(snap){
+  var out = [];
+  if(!snap || !snap.quests) return out;
+  var quests = (PERSIST.town && PERSIST.town.quests) ? PERSIST.town.quests : null;
+  if(!quests || !Array.isArray(quests.active)) return out;
+
+  Object.keys(snap.quests).forEach(function(qid){
+    var fromN = snap.quests[qid] || 0;
+    var active = quests.active.find(function(a){ return a && a.id === qid; });
+    if(!active) return; // quest was abandoned/claimed mid-run
+    var toN = active.progress || 0;
+    if(toN <= fromN) return;
+    var def = quests.offered ? quests.offered.find(function(o){ return o.id === qid; }) : null;
+    if(!def) return;
+    out.push({
+      title:  def.title || qid,
+      from:   fromN,
+      to:     Math.min(toN, def.target || toN),
+      target: def.target || toN
+    });
+  });
+  return out;
+}
+
+// Mastery bar percentage for snapshot/current state. ascensionTier
+// indexes into ASCENSION_TIERS for the current target.
+function _rrMasteryPct(masteryXp, ascensionTier){
+  var tier = ASCENSION_TIERS[ascensionTier];
+  if(!tier) return 100;
+  return Math.min(100, ((masteryXp||0) / tier.masteryReq) * 100);
+}
+
+function _rrTitleCase(s){
+  if(!s) return '';
+  return s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g,' ');
+}
+
+function _rrEsc(s){
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// CONTINUE button handler — closes the overlay and runs whatever was
+// queued (showSpoilsOverlay or goToAreaSelectAfterRun).
+function _runResultsContinue(){
+  _rrClearTimers();
+  var ov = document.getElementById('run-results-overlay');
+  if(ov) ov.style.display = 'none';
+  var cb = _rrContinueCb; _rrContinueCb = null;
+  if(typeof cb === 'function') cb();
+}
+
+// Snapshot the parts of champion + town state that the run-results panel
+// needs to animate deltas. Called once from startRun. Pure read — no side
+// effects on PERSIST. Active-quest progress is captured by id + value so
+// even if the active list reorders between snapshot and read, we can still
+// match deltas.
+function _captureRunSnapshot(champId){
+  var cp = getChampPersist(champId);
+  var snap = {
+    level:      cp ? (cp.level||1)        : 1,
+    xp:         cp ? (cp.xp||0)           : 0,
+    xpNext:     cp ? (cp.xpNext||80)      : 80,
+    masteryXp:  cp ? (cp.masteryXp||0)    : 0,
+    ascensionTier: cp ? (cp.ascensionTier||0) : 0,
+    quests:     {} // questId → progress
+  };
+  var quests = (PERSIST.town && PERSIST.town.quests) ? PERSIST.town.quests : null;
+  if(quests && Array.isArray(quests.active)){
+    quests.active.forEach(function(a){
+      if(a && a.id) snap.quests[a.id] = a.progress || 0;
+    });
+  }
+  return snap;
+}
+
+// Combat mastery — awarded once at run-end. enemiesBeaten is the count of
+// enemies defeated this run (gs.enemyIdx + 1 IF the last one was killed,
+// else just gs.enemyIdx). clearedAll is true if the player got through all
+// of gs.enemies. Returns the amount gained for use by run-results UI.
+//
+// Tuning (Round 30): 2 per enemy + 5 clear bonus. A typical 4-enemy
+// clear yields 13 mastery (~2.6/min over a 5-minute run). Idle
+// activities deliberately pay more per active-minute so the player
+// doesn't feel forced to grind combat for ascension.
+var COMBAT_MASTERY_PER_ENEMY = 2;
+var COMBAT_MASTERY_CLEAR_BONUS = 5;
+function grantCombatMasteryXp(){
+  if(!gs || !gs.champId) return 0;
+  var beaten = gs.enemyIdx || 0;
+  if(gs._lastFightWon) beaten += 1;
+  beaten = Math.max(0, Math.min(beaten, (gs.enemies?gs.enemies.length:beaten)));
+  var clearedAll = gs.enemies && beaten >= gs.enemies.length;
+  var gain = beaten * COMBAT_MASTERY_PER_ENEMY + (clearedAll ? COMBAT_MASTERY_CLEAR_BONUS : 0);
+  if(gain > 0){
+    var cp = getChampPersist(gs.champId);
+    if(cp){ cp.masteryXp = (cp.masteryXp||0) + gain; savePersist(); }
+  }
+  return gain;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -3181,10 +5246,20 @@ function openReplacePopup(newCardId){
 }
 
 function doDefeat(){
+  // Round 48: Arena fights have NO loss penalties (J's call). Branch
+  // off before any of the level-reset / gold-loss / mark-dead logic.
+  if(gs && gs.area && gs.area.isArena){
+    finishArenaRunLoss();
+    return;
+  }
   PERSIST.gold+=gs.goldEarned; gs.goldEarned=0;
   var lost=Math.min(PERSIST.gold,10); PERSIST.gold-=lost;
   var ch=getCreaturePlayable(gs.champId);
   var cp=getChampPersist(gs.champId);
+  // Grant combat mastery BEFORE wiping the level — enemies the champion
+  // beat before falling still count. _lastFightWon is false on defeat so
+  // the +15 clear bonus correctly doesn't fire.
+  if(typeof grantCombatMasteryXp === 'function') grantCombatMasteryXp();
   cp.level=1; cp.xp=0; cp.xpNext=80;
   cp.stats={str:ch.baseStats.str,agi:ch.baseStats.agi,wis:ch.baseStats.wis};
   cp.alive=false;
@@ -3307,7 +5382,197 @@ function nextEnemy(autoChain){
   }
 }
 
+// ════════════════════════════════════════════════════════════════
+// ARENA COMBAT — Round 48
+// ════════════════════════════════════════════════════════════════
+// Single entry point for all Arena fights (Challenge / Daily / Quest /
+// Duel). Builds a synthetic area + enemy from a decoded duel-code
+// payload, then hands off to startRun() so all the regular combat
+// machinery (cards, mana, status effects, innate, HUD) just works.
+//
+// The synthetic area is tagged `isArena:true` so the win path
+// (goToAreaSelectAfterRun) and loss path (doDefeat) can branch into
+// the lighter arena-specific finish flows below.
+//
+// opts:
+//   payload       — decoded duel code (see data/arena.js)
+//   context       — 'challenge'|'daily'|'quest'|'duel' (for telemetry)
+//   contextData   — { questId?, dailySeedYMD?, ... } passed to callbacks
+//   onWin / onLoss — fired in the finish flows. Caller handles rewards.
+
+function startArenaCombat(opts){
+  if(!opts || !opts.payload){
+    if(typeof showTownToast === 'function') showTownToast('No arena payload.');
+    return;
+  }
+  var p  = opts.payload;
+  var ch = CREATURES[p.id];
+  if(!ch){
+    if(typeof showTownToast === 'function') showTownToast('Arena: unknown opponent.');
+    return;
+  }
+
+  // Auto-use the currently-selected champion (J's call #5).
+  // Fall back to the first unlocked champion if nothing's selected.
+  var champId = selectedChampId || (PERSIST.unlockedChamps && PERSIST.unlockedChamps[0]);
+  if(!champId){
+    if(typeof showTownToast === 'function') showTownToast('Select a champion first.');
+    return;
+  }
+  // Refuse if the selected champion is locked to another activity.
+  if(typeof getChampLockLabel === 'function'){
+    var lockLabel = getChampLockLabel(champId);
+    if(lockLabel){
+      if(typeof showTownToast === 'function'){
+        showTownToast(CREATURES[champId].name + ' is ' + lockLabel.toLowerCase() + '!');
+      }
+      return;
+    }
+  }
+
+  // ── Build the synthetic enemy ──
+  var str = p.st[0], agi = p.st[1], wis = p.st[2];
+  var lv  = p.lv || 1;
+  var enemy = {
+    id:    p.id,
+    name:  p.name || ch.name,
+    icon:  ch.icon,
+    str:   str, agi: agi, wis: wis,
+    baseHp: Math.max(1, str * 5),
+    // Damage scaling parallels buildArea's normal-enemy formula
+    dmgMult:     1 + lv * 0.2,
+    atkInterval: (typeof calcDrawInterval === 'function') ? calcDrawInterval(agi) : 3000,
+    // No area-XP from arena enemies — rewards flow through callbacks
+    xp:          0,
+    innate:      ch.innate,
+    // Custom deck if the code carries one, otherwise the creature's base
+    deck:        (p.deck && p.deck.length) ? p.deck.slice() : (ch.deck || ['strike','strike','brace']),
+    openingMove: ch.openingMove,
+    // Stash relic/ascension hooks for future combat-side use (TBD)
+    _arenaRelics:    (p.rel || []).slice(),
+    _arenaAscension: p.asc || 0
+  };
+
+  // ── Build the synthetic area ──
+  var contextLabel = ({
+    challenge: 'Arena Challenge',
+    daily:     'Daily Challenge',
+    quest:     'Arena Quest',
+    duel:      'Arena Duel'
+  })[opts.context] || 'Arena';
+  var def = {
+    id:        'arena',              // setCombatBackground will try assets/backgrounds/arena.png
+    name:      contextLabel,
+    enemyPool: [p.id],
+    isBossArea: false,
+    isArena:   true,
+    arenaContext: opts.context || 'fight'
+  };
+  var area = {
+    id:       'arena-' + (opts.context || 'fight'),
+    def:      def,
+    level:    lv,
+    enemies:  [enemy],
+    isArena:  true,
+    _arenaCallbacks: {
+      onWin:  (typeof opts.onWin  === 'function') ? opts.onWin  : null,
+      onLoss: (typeof opts.onLoss === 'function') ? opts.onLoss : null,
+      context: opts.context || 'fight',
+      contextData: opts.contextData || {}
+    }
+  };
+
+  // Hand off to the standard run-start. Existing combat code doesn't
+  // need to know it's an Arena fight — the isArena flag only matters
+  // at finish-time.
+  startRun(champId, area);
+}
+
+// Arena WIN — softer finish than goToAreaSelectAfterRun.
+// - Awards gold earned (combat felt real)
+// - Grants combat mastery to the champion (already fired by saveChampionState)
+// - Skips area-loot, soul-shard grant, building-XP scatter
+// - Skips area_clear / run_complete quest hooks (uses dedicated
+//   arena_win hook for arena quests)
+// - Fires the onWin callback, then returns to town.
+function finishArenaRunWin(){
+  stopLoops(); hideOverlays();
+  if(gs && gs.conjuredCount > 0) purgeAllConjured();
+  var callbacks = null;
+  if(gs){
+    if(typeof grantCombatMasteryXp === 'function') grantCombatMasteryXp();
+    saveChampionState();
+    PERSIST.gold += gs.goldEarned; gs.goldEarned = 0;
+    callbacks = (gs.area && gs.area._arenaCallbacks) || null;
+    // Arena quest progress hook — distinct from area_clear so regular
+    // quests don't fire on arena fights.
+    if(typeof checkQuestProgress === 'function'){
+      checkQuestProgress('arena_win', {
+        enemyId: gs.enemies && gs.enemies[0] && gs.enemies[0].id,
+        context: callbacks && callbacks.context,
+        contextData: callbacks && callbacks.contextData
+      });
+    }
+    savePersist();
+    gs = null;
+  }
+  selectedArea = null;
+  _restoreTownTab();
+  // Return to TOWN (not area-screen) — Arena is a town activity.
+  showScreen('town-screen');
+  showNav(true);
+  updateNavBar('town');
+  if(typeof buildTownGrid === 'function') buildTownGrid();
+  // Fire caller's onWin LAST so it can show its own toast / refresh
+  // the Arena panel / advance a quest / etc.
+  if(callbacks && callbacks.onWin){
+    try { callbacks.onWin(); } catch(e){ /* swallow — UI must not crash run-end */ }
+  }
+}
+
+// Arena LOSS — no penalties (J's call). No gold lost, no level reset,
+// champion stays alive. Just go home.
+function finishArenaRunLoss(){
+  stopLoops(); hideOverlays();
+  if(gs && gs.conjuredCount > 0) purgeAllConjured();
+  var callbacks = null;
+  if(gs){
+    if(typeof grantCombatMasteryXp === 'function') grantCombatMasteryXp();
+    callbacks = (gs.area && gs.area._arenaCallbacks) || null;
+    // Don't keep the in-progress XP / level on a loss — but ALSO don't
+    // reset to 1. We snap stats back to the pre-run snapshot so the
+    // champion is exactly as they were before entering.
+    var cp = getChampPersist(gs.champId);
+    if(cp && gs._snapshot){
+      cp.alive = true;
+      // (XP/level were never committed mid-run — saveChampionState only
+      //  fires on win or doDefeat path, both of which we've bypassed.)
+    }
+    savePersist();
+    gs = null;
+  }
+  selectedArea = null;
+  _restoreTownTab();
+  showScreen('town-screen');
+  showNav(true);
+  updateNavBar('town');
+  if(typeof buildTownGrid === 'function') buildTownGrid();
+  if(typeof showTownToast === 'function') showTownToast('Defeated. The Arena offers no scorn — return when ready.');
+  if(callbacks && callbacks.onLoss){
+    try { callbacks.onLoss(); } catch(e){}
+  }
+}
+
 function goToAreaSelectAfterRun(){
+  // Round 48: Arena fights branch off into their own completion flow —
+  // no area-loot, no soul-shard grant, no area_clear quest hook, no
+  // building XP scatter. Arena fights live in their own reward space
+  // (sparring tick / daily reward / quest payout) handled via the
+  // onWin callback stashed on the synthetic area.
+  if(gs && gs.area && gs.area.isArena){
+    finishArenaRunWin();
+    return;
+  }
   stopLoops(); hideOverlays();
   // Clean up conjured cards (end of battle)
   if(gs && gs.conjuredCount > 0) purgeAllConjured();
@@ -3318,7 +5583,7 @@ function goToAreaSelectAfterRun(){
     // First run completion — unlock the Vault
     if(!PERSIST.town.buildings.vault.unlocked){
       PERSIST.town.buildings.vault.unlocked=true;
-      addLog('✦ The Vault is now open — visit the Town!','sys');
+      addLog('✦ The Vault is now open. Visit the Town!','sys');
     }
     if(gs.area&&gs.area.def) lootGained=rollAreaLoot(gs.area.def);
     // Quest progress — area clear and run complete

@@ -31,7 +31,7 @@
 //     _closeExpeditionReward()           — dismiss overlay
 //
 //   SEND FLOW STATE (module-private)
-//     _expSendSlot, _expSendStep, _expSendChamp, _expSendArea
+//     _expSendSlot, _expSendStep, _expSendChamps, _expSendArea, _expSendType
 //
 // Dependencies (from game.js):
 //   PERSIST, CREATURES, AREA_DEFS, MATERIAL_DROPS, MATERIALS, RELICS,
@@ -53,7 +53,7 @@ var EXPEDITION_TYPES = {
   long_haul:  { id:'long_haul',  name:'Long Haul',  icon:'🌙', durationMs:8*60*60*1000, restMs:15*60*1000,durationMult:28,   unlockLevel:3, desc:'Maximum yield. Rare drop guaranteed at Lv 4+.' },
   survey:     { id:'survey',     name:'Survey',     icon:'🗺️', durationMs:2*60*60*1000, restMs:0,        durationMult:0,    unlockLevel:3, desc:'No materials. Returns Bestiary intel and area knowledge.' },
   extraction: { id:'extraction', name:'Extraction', icon:'⛏️', durationMs:3*60*60*1000, restMs:8*60*1000, durationMult:8,    unlockLevel:4, desc:'Target a specific material. All drops from one group.' },
-  training:   { id:'training',   name:'Training',   icon:'📚', durationMs:6*60*60*1000, restMs:0,        durationMult:0,    unlockLevel:5, desc:'No materials. Champion gains ~40% of active combat XP.' },
+  training:   { id:'training',   name:'Training',   icon:'📚', durationMs:6*60*60*1000, restMs:0,        durationMult:0,    unlockLevel:5, desc:'No materials, no XP. Returns Mastery XP to the roster.' },
 };
 
 // ── Building level upgrades ───────────────────────────
@@ -112,6 +112,75 @@ function fmtExpTime(ms){
   return m+'m';
 }
 
+// ── Slot legacy compat: read champion roster from a slot ─────────────
+// Existing saves have slot.champId (string). New code stores
+// slot.champIds (array). This helper returns the array form regardless.
+function getSlotChampIds(slot){
+  if(!slot) return [];
+  if(Array.isArray(slot.champIds) && slot.champIds.length) return slot.champIds.slice();
+  if(slot.champId) return [slot.champId];
+  return [];
+}
+
+// ── Difficulty matching ──────────────────────────────────────────────
+// Per-type scaling on the area's level for the "target power" the roster
+// needs to match. Higher-tier expeditions demand more power for the
+// same area (a Long Haul in the Sewers is harder than a Scout there).
+var EXPEDITION_DIFFICULTY_MULT = {
+  scout:0.6, raid:1.0, deep:1.6, long_haul:2.0,
+  survey:1.2, extraction:1.5, training:1.0
+};
+
+// Target power for an (area, type) pair: average area level × type mult.
+function expTargetPower(areaId, typeId){
+  if(typeof AREA_DEFS === 'undefined') return 0;
+  var area = AREA_DEFS.find(function(a){return a.id===areaId;});
+  if(!area || !area.levelRange) return 0;
+  var avgLv = (area.levelRange[0] + area.levelRange[1]) / 2;
+  var mult = EXPEDITION_DIFFICULTY_MULT[typeId] || 1.0;
+  return avgLv * mult;
+}
+
+// Roster power: per champion contributes their level + ascension bumps.
+// Ascension levels add +2 each (so an ascended champ effectively counts
+// as a few levels higher for difficulty purposes).
+function expRosterPower(champIds){
+  var sum = 0;
+  (champIds||[]).forEach(function(id){
+    var cp = getChampPersist(id); if(!cp) return;
+    var asc = (typeof getAscensionLevel === 'function') ? getAscensionLevel(id) : 0;
+    sum += cp.level + asc * 2;
+  });
+  return sum;
+}
+
+// Fit grading. Returns { label, pct, severity, desc } where
+//   severity ∈ 'neutral'|'success'|'warn'|'danger'
+//   pct      is the reward-yield % (0..100, applied to gold/xp/mats)
+function expFitFor(champIds, areaId, typeId){
+  if(!champIds || !champIds.length || !areaId || !typeId){
+    return { label:'—', pct:0, severity:'neutral', desc:'Pick all three to see fit.' };
+  }
+  var rp = expRosterPower(champIds);
+  var tp = expTargetPower(areaId, typeId);
+  if(tp <= 0) return { label:'—', pct:0, severity:'neutral', desc:'No target power for this area/type.' };
+  var ratio = rp / tp;
+  if(ratio < 0.5){
+    var p = Math.max(0, Math.round(ratio*30));
+    return { label:'TOO RISKY',    pct:p,  severity:'danger',  desc:'Rewards scaled to ~'+p+'%. Power '+Math.round(rp)+' vs target '+Math.round(tp)+'.' };
+  }
+  if(ratio < 0.8){
+    var p2 = Math.round(40 + (ratio-0.5)*70);
+    return { label:'UNDERLEVELED', pct:p2, severity:'warn',    desc:'Rewards scaled to ~'+p2+'%. Power '+Math.round(rp)+' vs target '+Math.round(tp)+'.' };
+  }
+  if(ratio <= 1.2){
+    // Sweet spot — peaks at exactly ratio=1.0
+    var p3 = Math.round(95 + (1 - Math.min(0.2, Math.abs(1-ratio))) * 5);
+    return { label:'WELL-MATCHED', pct:p3, severity:'success', desc:'Rewards near full. Power '+Math.round(rp)+' vs target '+Math.round(tp)+'.' };
+  }
+  return { label:'TRIVIAL',       pct:70, severity:'neutral', desc:'Champion overleveled. ~70% rewards, no XP.' };
+}
+
 // ── Calculate reward for a completed expedition ───────
 function calcExpeditionReward(slot){
   var def = EXPEDITION_TYPES[slot.type];
@@ -133,7 +202,15 @@ function calcExpeditionReward(slot){
     return reward;
   }
   if(def.id==='training'){
-    reward.xp = Math.round(EXPEDITION_BASE_XP * def.durationMs/EXPEDITION_TYPES.scout.durationMs * 0.4);
+    // Training is the mastery-focused expedition: the champions return
+    // having drilled fundamentals rather than fought enemies. Round 30
+    // tuning: 0.25× base XP curve → 6hr Training ≈ 72 mastery per champ.
+    // Still the strongest "I just want mastery" option per real-time
+    // hour, but a 6hr commitment.
+    var trainBase = Math.round(EXPEDITION_BASE_XP * def.durationMs/EXPEDITION_TYPES.scout.durationMs * 0.25);
+    reward.xp = 0;
+    reward.masteryXp = trainBase;
+    reward.bonuses.push({icon:'✦', text:'+'+trainBase+' mastery to roster'});
     return reward;
   }
 
@@ -228,6 +305,22 @@ function calcExpeditionReward(slot){
     reward.materials = focused;
   }
 
+  // Fit-pct yield scaling. Snapshotted at dispatch (slot.fitPct) so the
+  // player can't game it by leveling up mid-expedition. If the slot
+  // pre-dates this system (no fitPct set), treat as 100% (no penalty).
+  // Trivial fits (slot.fitTrivial) zero out XP — overleveled champs
+  // don't grow on routine runs.
+  var fitPct = (typeof slot.fitPct === 'number') ? slot.fitPct : 100;
+  var scale  = Math.max(0, Math.min(2, fitPct / 100));
+  if(scale !== 1){
+    Object.keys(reward.materials).forEach(function(k){
+      reward.materials[k] = Math.max(0, Math.round(reward.materials[k] * scale));
+    });
+    reward.gold = Math.round(reward.gold * scale);
+    reward.xp   = Math.round(reward.xp   * scale);
+  }
+  if(slot.fitTrivial) reward.xp = 0;
+
   return reward;
 }
 
@@ -250,28 +343,51 @@ function applyExpeditionReward(reward){
 }
 
 // ── Send an expedition ────────────────────────────────
-function sendExpedition(slotIdx, champId, areaId, typeId, targetMaterial){
+// `champArg` accepts either a single id (legacy) or an array of ids
+// (multi-champion). The roster is stored as slot.champIds; slot.champId
+// stays as the leader (champIds[0]) for legacy compat with reward
+// calculation paths that only inspect one champion.
+function sendExpedition(slotIdx, champArg, areaId, typeId, targetMaterial){
   var b   = PERSIST.town.buildings.adventurers_hall; if(!b||!b.unlocked) return;
   var def = EXPEDITION_TYPES[typeId]; if(!def) return;
   var slot = b.expeditionSlots[slotIdx]; if(!slot) return;
-  if(slot.champId) return; // already active
+  if(slot.champId || (slot.champIds && slot.champIds.length)) return; // already active
 
-  // Lock champion
-  var cp = getChampPersist(champId);
-  cp.lockedExpedition = slotIdx;
+  var champIds = Array.isArray(champArg) ? champArg.slice() : (champArg ? [champArg] : []);
+  if(!champIds.length) return;
 
-  slot.champId       = champId;
+  // Lock all champions in the roster
+  champIds.forEach(function(id){
+    var cp = getChampPersist(id);
+    if(cp) cp.lockedExpedition = slotIdx;
+  });
+
+  // Snapshot fit at dispatch. fitPct scales reward yield; fitTrivial
+  // zeros out XP (overleveled = routine, no growth). speedBonus
+  // shortens the real-time duration via roster effective AGI.
+  var fit  = (typeof expFitFor === 'function') ? expFitFor(champIds, areaId, typeId) : { pct:100, severity:'neutral' };
+  var rfit = (typeof rosterActivitySpeedBonus === 'function') ? rosterActivitySpeedBonus(champIds, 'AGI') : { speedBonus:0 };
+  var totalMs = Math.max(1, Math.round(def.durationMs * (1 - rfit.speedBonus)));
+
+  slot.champIds      = champIds;
+  slot.champId       = champIds[0]; // leader (legacy)
   slot.areaId        = areaId;
   slot.type          = typeId;
   slot.startTime     = Date.now();
-  slot.totalMs       = def.durationMs;
+  slot.totalMs       = totalMs;
+  slot.baseTotalMs   = def.durationMs;
   slot.restUntil     = null;
   slot.targetMaterial= targetMaterial||null;
+  slot.fitPct        = fit.pct;
+  slot.fitTrivial    = (fit.severity === 'neutral' && fit.label === 'TRIVIAL');
+  slot.speedBonus    = rfit.speedBonus;
 
   savePersist();
   buildTownGrid();
   playQuestAcceptSfx();
-  showTownToast((CREATURES[champId]?CREATURES[champId].name:champId)+' sent on '+def.name+'!');
+  var leadName = CREATURES[champIds[0]] ? CREATURES[champIds[0]].name : champIds[0];
+  var partySfx = champIds.length > 1 ? ' + '+(champIds.length-1)+' more' : '';
+  showTownToast(leadName + partySfx + ' sent on '+def.name+'!');
   refreshExpeditionHallPanel();
 }
 
@@ -293,16 +409,22 @@ function recallExpedition(slotIdx){
   partialReward.bonuses = []; // no bonuses on recall
 
   // Apply
-  var champId = slot.champId;
+  var champIds = getSlotChampIds(slot);
   applyExpeditionReward(partialReward);
   if(partialReward.xp){
-    var cp=getChampPersist(champId);
-    cp.xp+=partialReward.xp; checkLevelUpForChamp(champId);
+    // Split XP evenly across the roster (recall = small, scaled XP)
+    var per = Math.floor(partialReward.xp / Math.max(1, champIds.length));
+    champIds.forEach(function(id){
+      var cp = getChampPersist(id);
+      if(cp){ cp.xp += per; checkLevelUpForChamp(id); }
+    });
   }
 
-  // Unlock champion
-  var cp2 = getChampPersist(champId);
-  if(cp2) cp2.lockedExpedition=null;
+  // Unlock all champions
+  champIds.forEach(function(id){
+    var cp = getChampPersist(id);
+    if(cp) cp.lockedExpedition = null;
+  });
 
   // Clear slot (no rest on recall)
   _clearExpeditionSlot(slot);
@@ -320,21 +442,49 @@ function collectExpedition(slotIdx){
   var slot = b.expeditionSlots[slotIdx]; if(!slot||!slot.champId) return;
   if(Date.now() < slot.startTime + slot.totalMs) return; // not done
 
-  var champId = slot.champId;
+  var champIds = getSlotChampIds(slot);
+  var leadChampId = champIds[0];
   var reward  = calcExpeditionReward(slot);
 
   // Apply materials, gold, shard, relic
   applyExpeditionReward(reward);
 
-  // XP to champion
+  // XP — split evenly across the roster
   if(reward.xp){
-    var cp=getChampPersist(champId);
-    if(cp){ cp.xp+=reward.xp; checkLevelUpForChamp(champId); }
+    var per = Math.floor(reward.xp / Math.max(1, champIds.length));
+    champIds.forEach(function(id){
+      var cp = getChampPersist(id);
+      if(cp){ cp.xp += per; checkLevelUpForChamp(id); }
+    });
+  }
+
+  // Mastery — completion grants mastery to every champion in the roster.
+  //   Training expedition (mastery-focused): full reward.masteryXp each.
+  //   All other types: scaled by duration (Round 30 retuning, /8):
+  //     Scout (15min) → 2     Raid (1hr) → 8       Deep (4hr) → 30
+  //     Long Haul (8hr) → 60  Extraction (3hr) → 23
+  //   Survey returns intel only — no mastery either.
+  // Each champion gets the FULL amount (no per-roster split). Multi-champ
+  // expeditions are still good for mastery; the trade-off is that the
+  // shared MATERIAL yield is split across the party.
+  var mastDef = EXPEDITION_TYPES[slot.type];
+  var masteryEach = 0;
+  if(reward.masteryXp){
+    masteryEach = reward.masteryXp;
+  } else if(mastDef && mastDef.id !== 'survey'){
+    masteryEach = Math.max(0, Math.round(mastDef.durationMs / 60000 / 8));
+  }
+  if(masteryEach > 0 && typeof addMasteryXpToRoster === 'function'){
+    addMasteryXpToRoster(champIds, masteryEach);
+  }
+  if(masteryEach > 0 && typeof addLog === 'function'){
+    addLog('✦ Expedition mastery: +'+masteryEach+' to '+(champIds.length>1?'each ('+champIds.length+' champs)':CREATURES[leadChampId].name)+'.','sys');
   }
 
   // Add to log
   var logEntry = {
-    champId:champId, areaId:slot.areaId, type:slot.type,
+    champId:leadChampId, champIds:champIds.slice(),
+    areaId:slot.areaId, type:slot.type,
     time:Date.now(), materials:reward.materials, gold:reward.gold, xp:reward.xp,
     bonuses:reward.bonuses
   };
@@ -345,23 +495,35 @@ function collectExpedition(slotIdx){
   if(def&&def.restMs>0) slot.restUntil = Date.now()+def.restMs;
   else slot.restUntil = null;
 
-  // Unlock champion
-  var cp2=getChampPersist(champId);
-  if(cp2) cp2.lockedExpedition=null;
+  // Unlock all champions
+  champIds.forEach(function(id){
+    var cp = getChampPersist(id);
+    if(cp) cp.lockedExpedition = null;
+  });
 
-  // Clear slot active fields
+  // Clear slot active fields (preserves last* via _clearExpeditionSlot)
   _clearExpeditionSlot(slot);
   savePersist();
   buildTownGrid();
 
-  // Store for animated UI reveal
-  _pendingExpeditionReward = {slotIdx:slotIdx, reward:reward, champId:champId};
-  _showExpeditionRewardUI(reward, champId, slotIdx);
+  // Store for animated UI reveal (legacy single-champ field)
+  _pendingExpeditionReward = {slotIdx:slotIdx, reward:reward, champId:leadChampId, champIds:champIds};
+  _showExpeditionRewardUI(reward, leadChampId, slotIdx);
 }
 
 function _clearExpeditionSlot(slot){
-  slot.champId=null; slot.areaId=null; slot.type=null;
-  slot.startTime=null; slot.totalMs=null; slot.targetMaterial=null;
+  // Preserve the last run's identity so the resting row can still
+  // show "who's recovering" and where they went. Cleared on next dispatch.
+  slot.lastChampIds = (Array.isArray(slot.champIds) && slot.champIds.length)
+    ? slot.champIds.slice()
+    : (slot.champId ? [slot.champId] : []);
+  slot.lastAreaId   = slot.areaId || null;
+  slot.lastType     = slot.type   || null;
+  // Clear active fields
+  slot.champId=null; slot.champIds=null; slot.areaId=null; slot.type=null;
+  slot.startTime=null; slot.totalMs=null; slot.baseTotalMs=null;
+  slot.targetMaterial=null; slot.fitPct=null; slot.fitTrivial=false;
+  slot.speedBonus=null;
 }
 
 function checkLevelUpForChamp(champId){
@@ -498,14 +660,17 @@ function refreshExpeditionHallPanel(){
 }
 
 // ── Send flow (per-slot popups) ────────────────────────
+// Multi-champion: _expSendChamps is an array of champion ids in roster
+// order. Cap at 3 (matches the "+ ADD" UI in the builder row).
+var EXP_MAX_ROSTER = 3;
 var _expSendSlot = null;
-var _expSendChamp = null;
+var _expSendChamps = [];
 var _expSendArea = null;
 var _expSendType = null;
 
 function _expStartSend(slotIdx){
   _expSendSlot = slotIdx;
-  _expSendChamp = null;
+  _expSendChamps = [];
   _expSendArea = null;
   _expSendType = null;
   _renderHallContent();
@@ -513,9 +678,22 @@ function _expStartSend(slotIdx){
 
 function _expCancelSend(){
   _expSendSlot = null;
-  _expSendChamp = null;
+  _expSendChamps = [];
   _expSendArea = null;
   _expSendType = null;
+  _renderHallContent();
+}
+
+// Toggle a champion in/out of the current send roster. Called by both
+// the chip × (already in roster) and the picker grid (not in roster).
+function _expToggleChamp(id){
+  if(!Array.isArray(_expSendChamps)) _expSendChamps = [];
+  var idx = _expSendChamps.indexOf(id);
+  if(idx !== -1){
+    _expSendChamps.splice(idx, 1);
+  } else if(_expSendChamps.length < EXP_MAX_ROSTER){
+    _expSendChamps.push(id);
+  }
   _renderHallContent();
 }
 
@@ -529,29 +707,68 @@ function _expPickChamp(){
   overlay.onclick = function(e){ if(e.target===overlay) overlay.remove(); };
 
   var box = document.createElement('div');
-  box.style.cssText = 'background:#1a0f06;border:1px solid #5a3418;border-radius:10px;padding:20px 24px;width:min(600px,90vw);max-height:70vh;overflow-y:auto;box-shadow:0 0 40px rgba(0,0,0,.8);';
+  box.style.cssText = 'background:#1a0f06;border:1px solid #5a3418;border-radius:10px;padding:20px 24px;width:min(620px,90vw);max-height:75vh;overflow-y:auto;box-shadow:0 0 40px rgba(0,0,0,.8);';
   box.onclick = function(e){ e.stopPropagation(); };
 
+  // Available = unlocked champions not currently locked elsewhere.
+  // Champions already IN the roster are still listed (with a "selected"
+  // mark) so the player can de-select directly from the picker.
   var available = PERSIST.unlockedChamps.filter(function(id){
     if(!CREATURES[id] || id==='dojo_tiger') return false;
     var cp = PERSIST.champions[id];
-    return !cp || cp.lockedExpedition===null || cp.lockedExpedition===undefined;
+    if(!cp) return true;
+    // If the champion is already in our roster, allow showing them
+    if(_expSendChamps.indexOf(id) !== -1) return true;
+    if(cp.lockedExpedition !== null && cp.lockedExpedition !== undefined) return false;
+    if(cp.lockedForge      !== null && cp.lockedForge      !== undefined) return false;
+    if(cp.lockedShardWell  !== null && cp.lockedShardWell  !== undefined) return false;
+    return true;
   });
 
-  var html = '<div style="font-family:Cinzel,serif;font-size:12px;color:#d4a843;letter-spacing:3px;margin-bottom:14px;">SELECT CHAMPION</div>'
+  // Sort by AGI-fit speedBonus descending so best-fit champs appear first
+  available.sort(function(a, b){
+    var fa = champActivitySpeedBonus(a, 'AGI').speedBonus;
+    var fb = champActivitySpeedBonus(b, 'AGI').speedBonus;
+    return fb - fa;
+  });
+
+  var rosterCount = _expSendChamps.length;
+  var headerLine = 'SELECT CHAMPIONS — '+rosterCount+' of '+EXP_MAX_ROSTER+' chosen';
+  var html = '<div style="font-family:Cinzel,serif;font-size:12px;color:#d4a843;letter-spacing:3px;margin-bottom:6px;">'+headerLine+'</div>'
+    +'<div style="font-family:Cinzel,serif;font-size:8px;color:#7a6030;letter-spacing:1px;margin-bottom:14px;">click to add or remove · primary <span style="color:#9adc7e;">AGI</span>, secondaries at 25%</div>'
     +'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;">';
 
   available.forEach(function(id){
     var ch = CREATURES[id]; var cp = getChampPersist(id);
-    html += '<div class="exp-pick-option '+getAscensionClass(id)+'" style="position:relative;padding:12px 8px;" onclick="document.getElementById(\'exp-popup\').remove();_expSendChamp=\''+id+'\';_renderHallContent();">'
+    var fit = champActivitySpeedBonus(id, 'AGI');
+    var bonusPct = Math.round(fit.speedBonus * 100);
+    var bonusColor = bonusPct >= 33 ? '#9adc7e' : bonusPct >= 18 ? '#c0a060' : '#7a6030';
+    var inRoster = _expSendChamps.indexOf(id) !== -1;
+    var atCap    = !inRoster && _expSendChamps.length >= EXP_MAX_ROSTER;
+    var classes  = 'exp-pick-option '+getAscensionClass(id) + (inRoster?' selected':'') + (atCap?' locked':'');
+    var clickHandler = atCap
+      ? ''
+      : ' onclick="_expToggleChamp(\''+id+'\');document.getElementById(\'exp-popup\').remove();"';
+    html += '<div class="'+classes+'" style="position:relative;padding:12px 8px;"'+clickHandler+'>'
+      +(inRoster?'<div style="position:absolute;top:4px;right:6px;font-size:11px;color:#9adc7e;">✓</div>':'')
       +'<div style="margin-bottom:6px;">'+creatureImgHTML(id,ch.icon,'44px')+'</div>'
       +'<div style="font-family:Cinzel,serif;font-size:10px;color:#c0a060;">'+ch.name+'</div>'
       +'<div style="font-size:7px;color:#5a4020;">Lv.'+cp.level+' '+getAscensionChipHTML(id)+'</div>'
-      +'<div style="font-size:7px;color:#4a3020;margin-top:3px;">STR:'+Math.round(cp.stats.str)+' AGI:'+Math.round(cp.stats.agi)+' WIS:'+Math.round(cp.stats.wis)+'</div>'
+      +'<div style="font-size:7px;color:#4a3020;margin-top:3px;"><span style="color:#e88060;">STR</span>:'+Math.round(cp.stats.str)+' <span style="color:#9adc7e;">AGI</span>:'+Math.round(cp.stats.agi)+' <span style="color:#9ad8e8;">WIS</span>:'+Math.round(cp.stats.wis)+'</div>'
+      +'<div style="font-size:7px;color:'+bonusColor+';margin-top:3px;letter-spacing:.5px;">−'+bonusPct+'% TIME</div>'
       +'</div>';
   });
   if(!available.length) html += '<div style="font-size:9px;color:#3a2010;font-style:italic;padding:12px;">All champions are on expedition or unavailable.</div>';
   html += '</div>';
+
+  // Done button — closes the picker and keeps current roster
+  if(rosterCount > 0){
+    html += '<div style="margin-top:14px;text-align:right;">'
+      +'<button onclick="document.getElementById(\'exp-popup\').remove();" '
+      +'style="font-family:Cinzel,serif;font-size:10px;letter-spacing:1.5px;padding:8px 18px;background:linear-gradient(180deg,#2a1808,#1a1208);border:1px solid #5a3a18;color:#d4a843;cursor:pointer;border-radius:3px;">'
+      +'DONE</button>'
+      +'</div>';
+  }
 
   box.innerHTML = html;
   overlay.appendChild(box);
@@ -642,10 +859,28 @@ function _expPickType(){
 }
 
 function _expConfirmSend(){
-  if(!_expSendChamp || !_expSendArea || !_expSendType) return;
-  sendExpedition(_expSendSlot, _expSendChamp, _expSendArea, _expSendType);
+  if(!_expSendChamps || !_expSendChamps.length) return;
+  if(!_expSendArea || !_expSendType) return;
+
+  // Warn before dispatching a too-risky run. Underleveled is just a yellow
+  // flag in the UI — only TOO RISKY (severity:'danger') gets a hard confirm.
+  var fit = (typeof expFitFor === 'function')
+    ? expFitFor(_expSendChamps, _expSendArea, _expSendType)
+    : { severity:'neutral', label:'—', pct:100 };
+  if(fit.severity === 'danger'){
+    var area = AREA_DEFS.find(function(a){return a.id===_expSendArea;});
+    var type = EXPEDITION_TYPES[_expSendType];
+    var ok = confirm(
+      'TOO RISKY — '+fit.desc+'\n\n'
+      +'You can still send them, but rewards will be heavily reduced.\n'
+      +'Continue with '+(area?area.name:_expSendArea)+' / '+(type?type.name:_expSendType)+'?'
+    );
+    if(!ok) return;
+  }
+
+  sendExpedition(_expSendSlot, _expSendChamps.slice(), _expSendArea, _expSendType);
   _expSendSlot = null;
-  _expSendChamp = null;
+  _expSendChamps = [];
   _expSendArea = null;
   _expSendType = null;
   _renderHallContent();
