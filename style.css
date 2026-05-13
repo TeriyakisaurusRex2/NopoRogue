@@ -4,7 +4,10 @@ body{background:#0d0804;height:100vh;display:flex;flex-direction:column;font-fam
 /* Root fills remaining height below nav */
 #root{flex:1;overflow:hidden;display:flex;flex-direction:column;width:100%;}
 /* Screens that need centered narrow layout */
-#select-screen,#area-screen{max-width:960px;margin:0 auto;width:100%;}
+#select-screen,#area-screen{margin:0 auto;width:100%;}
+/* Round 67: area-screen now uses the 3-column cs-main layout; widen
+   to match select-screen's max-width so the rails breathe. */
+#area-screen{max-width:1700px;}
 /* Champion select gets a wider canvas to host both side rails AND
    give the cards room to breathe at a 5:7 (playing-card) ratio:
      LEFT   280px  champion-info rail
@@ -332,19 +335,18 @@ body{background:#0d0804;height:100vh;display:flex;flex-direction:column;font-fam
 .exp-locked-badge{font-size:8px;color:#6a8030;font-family:'Cinzel',serif;letter-spacing:.5px;text-align:center;margin-bottom:4px;}
 .select-btn-row{text-align:center;}
 
-/* ── AREA SELECT ── */
+/* ── AREA SELECT ──
+   Round 67: rebuilt to share the 3-column cs-main layout with the
+   champion-select screen. The center column holds .area-grid; the
+   rails are duplicated asides painted by buildAreaChampRail /
+   buildAreaQuestRail. .area-title / .area-champ-row / .area-btns
+   classes retired (replaced by cs-header / cs-title and the
+   in-grid-col select-btn-row pattern from select-screen). */
 #area-screen{padding:0;}
-.area-title{text-align:center;font-family:'Cinzel',serif;font-size:15px;color:#d4a843;letter-spacing:3px;padding:12px 8px 4px;flex-shrink:0;}
-.area-champ-row{display:flex;align-items:center;justify-content:center;gap:8px;padding-bottom:8px;flex-shrink:0;}
-.area-champ-icon{font-size:18px;}
-.area-champ-nm{font-family:'Cinzel',serif;font-size:10px;color:#c09030;letter-spacing:1px;}
-.area-champ-info-btn{background:none;border:1px solid #3a2010;border-radius:4px;color:#7a6030;font-size:11px;cursor:pointer;padding:1px 6px;line-height:1.4;transition:color .15s,border-color .15s;}
-.area-champ-info-btn:hover{color:#d4a843;border-color:#d4a843;}
-.area-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:0 8px;overflow-y:auto;flex:1;scrollbar-width:thin;scrollbar-color:#2a1808 transparent;}
-.area-btns{display:flex;gap:8px;justify-content:center;padding:10px 8px;border-top:1px solid #1e1006;flex-shrink:0;}
-.area-card{background:linear-gradient(160deg,#18100a,#0e0805);border:1px solid #3a2810;border-radius:8px;padding:10px;cursor:pointer;transition:border-color .2s,transform .15s;position:relative;}
+.area-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;padding:10px 14px;overflow-y:auto;flex:1;scrollbar-width:thin;scrollbar-color:#2a1808 transparent;align-content:start;}
+.area-card{background:linear-gradient(160deg,#18100a,#0e0805);border:1px solid #3a2810;border-radius:8px;padding:12px 10px;cursor:pointer;transition:border-color .2s,transform .15s,box-shadow .15s;position:relative;}
 .area-card:hover{border-color:#8a6020;transform:translateY(-2px);}
-.area-card.selected{border-color:#d4a843;border-width:2px;}
+.area-card.selected{border-color:#d4a843;border-width:2px;box-shadow:0 0 14px rgba(212,168,67,.25);}
 .area-card.danger{border-color:#6a1a1a;}
 .area-card.danger:hover{border-color:#c03030;}
 .area-card.danger.selected{border-color:#e04040;border-width:2px;}
@@ -353,15 +355,20 @@ body{background:#0d0804;height:100vh;display:flex;flex-direction:column;font-fam
 .area-card.boss-area{border-color:#6a2020;background:linear-gradient(160deg,#1a0808,#0e0404);}
 .area-card.boss-area:hover{border-color:#c03030;transform:translateY(-2px);}
 .area-card.boss-area.selected{border-color:#e04040;border-width:2px;}
-.area-icon{font-size:26px;text-align:center;margin-bottom:3px;}
-.area-name{font-family:'Cinzel',serif;font-size:8px;color:#d4a843;text-align:center;letter-spacing:.6px;margin-bottom:2px;}
-.area-lvl{font-family:'Cinzel',serif;font-size:7px;color:#7a6030;text-align:center;margin-bottom:2px;letter-spacing:.8px;}
-.area-danger-lbl{font-family:'Cinzel',serif;font-size:7px;color:#c03030;text-align:center;margin-bottom:2px;}
-.area-stars{text-align:center;font-size:10px;margin-bottom:3px;}
-.area-theme{font-size:7px;color:#6a5028;text-align:center;font-style:italic;margin-bottom:4px;line-height:1.3;}
-.area-row{display:flex;justify-content:space-between;margin-bottom:2px;}
-.area-rl{font-family:'Cinzel',serif;font-size:6px;color:#5a4020;letter-spacing:.3px;}
-.area-rv{font-size:10px;color:#b09050;}
+.area-icon{text-align:center;margin-bottom:6px;display:flex;justify-content:center;align-items:center;height:48px;}
+.area-name{font-family:'Cinzel',serif;font-size:10px;color:#d4a843;text-align:center;letter-spacing:1px;margin-bottom:3px;}
+.area-lvl{font-family:'Cinzel',serif;font-size:8px;color:#7a6030;text-align:center;margin-bottom:4px;letter-spacing:1px;}
+.area-danger-lbl{font-family:'Cinzel',serif;font-size:7px;color:#c03030;text-align:center;margin-bottom:3px;letter-spacing:.5px;}
+.area-stars{text-align:center;font-size:11px;margin-bottom:5px;letter-spacing:1px;}
+.area-theme{font-size:9px;color:#7a6030;text-align:center;font-style:italic;margin-bottom:6px;line-height:1.35;font-family:'Crimson Text',serif;}
+.area-row{display:flex;justify-content:space-between;margin-bottom:2px;padding:0 2px;}
+.area-rl{font-family:'Cinzel',serif;font-size:7px;color:#5a4020;letter-spacing:1px;}
+.area-rv{font-size:10px;color:#b09050;font-family:'Cinzel',serif;}
+/* (i) info button — small, tucked in the top-left corner, hover
+   to reveal. Doesn't compete with card content like the old
+   button did. */
+.area-info-btn{position:absolute;top:6px;left:6px;background:rgba(8,4,1,.7);border:1px solid #3a2010;border-radius:50%;width:18px;height:18px;font-family:'Cinzel',serif;font-size:9px;color:#6a5030;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;line-height:1;transition:color .12s,border-color .12s,background .12s;}
+.area-info-btn:hover{color:#d4a843;border-color:#d4a843;background:rgba(40,25,5,.85);}
 
 /* ── CHAMPION INFO PANEL — mirrors .ach-panel exactly, but slides from left ── */
 .champ-panel{position:fixed;top:0;left:-340px;width:320px;height:100vh;z-index:360;background:#0e0804;border-right:1px solid #5a3810;display:flex;flex-direction:column;transition:left .3s ease;overflow:hidden;}
@@ -2023,8 +2030,12 @@ body.font-press .innate-card-name{font-size:8px!important;}
 .settings-divider{height:1px;background:#2a1808;margin:6px 0 4px;}
 .setting-nowplaying{display:flex;align-items:center;gap:10px;padding:4px 0;}
 .setting-nowplaying-lbl{font-family:'Cinzel',serif;font-size:8px;color:#5a4020;letter-spacing:2px;flex-shrink:0;}
-.setting-nowplaying-name{font-family:'Crimson Text',serif;font-size:11px;color:#c0a060;font-style:italic;}
+.setting-nowplaying-name{font-family:'Crimson Text',serif;font-size:11px;color:#c0a060;font-style:italic;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .setting-nowplaying-name.silent{color:#4a3010;}
+/* Round 67l: pause / skip controls beside the now-playing line. */
+.setting-nowplaying-controls{display:flex;gap:4px;flex-shrink:0;}
+.setting-player-btn{background:rgba(8,4,1,.5);border:1px solid #3a2010;border-radius:4px;color:#9a8040;font-size:12px;line-height:1;padding:4px 8px;cursor:pointer;transition:color .12s,border-color .12s,background .12s;font-family:inherit;}
+.setting-player-btn:hover{color:#d4a843;border-color:#c09030;background:rgba(40,25,5,.7);}
 
 /* Save Data tab — block form for the Import paste row (textarea can't
    sit inline with the label cleanly) and a destructive zone for delete. */
@@ -2437,6 +2448,117 @@ body.font-press .innate-card-name{font-size:8px!important;}
 .bestiary-tab-content{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;}
 
 /* ════════════════════════════════════════════════════════════
+   COMBAT TUTORIAL OVERLAY  (Round 66)
+   ════════════════════════════════════════════════════════════
+   Two surfaces:
+   - .tut-intro-overlay : full-screen modal on the login screen
+     before combat starts (BEGIN / skip).
+   - .tut-combat-overlay : bottom-anchored dialog box DURING combat.
+   Plus .tut-highlight + .tut-dim-mode for spotlighting specific
+   UI elements while the dialog is open.
+
+   Round 66b: renamed FROM .tutorial-* (which collided with the
+   existing per-system tutorial overlay at #tutorial-overlay in
+   index.html line 812 — that element has inline display:none
+   which won, so my .show class had no visible effect). */
+
+/* ── Intro modal (login screen) ── */
+.tut-intro-overlay{position:fixed;inset:0;z-index:400;background:rgba(2,1,0,.85);display:none;align-items:center;justify-content:center;}
+.tut-intro-overlay.show{display:flex;}
+.tut-intro-box{background:linear-gradient(180deg,#1a1208,#120802);border:1px solid #5a3a18;border-radius:10px;padding:24px 28px;width:min(440px,92vw);text-align:center;box-shadow:0 8px 40px rgba(0,0,0,.8);}
+.tut-intro-portrait{display:flex;justify-content:center;align-items:center;margin-bottom:12px;}
+.tut-intro-portrait img{image-rendering:pixelated;width:140px;height:140px;object-fit:contain;}
+.tut-intro-name{font-family:'Cinzel',serif;font-size:13px;letter-spacing:3px;color:#a890c0;margin-bottom:14px;}
+.tut-intro-body{font-family:'Crimson Text',serif;font-size:13px;color:#c0a060;line-height:1.5;margin-bottom:22px;font-style:italic;}
+.tut-intro-actions{display:flex;flex-direction:column;align-items:center;gap:10px;}
+.tut-intro-btn{font-family:'Cinzel',serif;cursor:pointer;transition:all .15s;letter-spacing:2px;}
+.tut-intro-btn.primary{font-size:11px;padding:10px 26px;background:linear-gradient(180deg,#3a2810,#1e1408);border:1px solid #c09030;color:#d4a843;border-radius:5px;}
+.tut-intro-btn.primary:hover{background:linear-gradient(180deg,#4a3818,#2a1c0c);border-color:#d4a843;box-shadow:0 0 14px rgba(212,168,67,.4);}
+.tut-intro-btn.skip{font-size:9px;padding:6px 14px;background:none;border:none;color:#5a4020;text-transform:lowercase;letter-spacing:1.5px;}
+.tut-intro-btn.skip:hover{color:#a07030;text-decoration:underline;}
+
+/* ── Champion first-pick story modal (Round 66e) ──
+   Triggered the first time the player selects a starter champion
+   after the tutorial. Full-screen modal with the champion's
+   portrait + name + a few short paragraphs of their story, plus
+   a BEGIN button to dismiss. Visually distinct from the in-combat
+   dialog — this is a NARRATIVE moment, not a combat instruction. */
+.tut-story-overlay{position:fixed;inset:0;z-index:380;display:none;align-items:center;justify-content:center;background:rgba(2,1,0,.88);}
+.tut-story-overlay.show{display:flex;animation:tut-story-fade .4s ease forwards;}
+@keyframes tut-story-fade{ from{opacity:0;} to{opacity:1;} }
+.tut-story-box{background:linear-gradient(180deg,#1a1208,#0e0802);border:1px solid #5a3a18;border-radius:10px;padding:32px 36px;width:min(560px,92vw);text-align:center;box-shadow:0 12px 60px rgba(0,0,0,.85),inset 0 0 40px rgba(80,50,15,.12);}
+.tut-story-portrait{display:flex;justify-content:center;align-items:center;margin-bottom:14px;height:180px;}
+.tut-story-portrait img{image-rendering:pixelated;width:180px;height:180px;object-fit:contain;}
+.tut-story-name{font-family:'Cinzel',serif;font-size:16px;letter-spacing:4px;color:#d4a843;margin-bottom:22px;text-shadow:0 1px 4px rgba(0,0,0,.6);}
+.tut-story-text{font-family:'Crimson Text',serif;font-size:14px;color:#c0a060;line-height:1.6;margin-bottom:26px;font-style:italic;text-align:left;max-width:480px;margin-left:auto;margin-right:auto;}
+.tut-story-para{margin:0 0 12px;}
+.tut-story-para:last-child{margin-bottom:0;}
+.tut-story-btn{font-family:'Cinzel',serif;font-size:11px;letter-spacing:3px;padding:11px 32px;background:linear-gradient(180deg,#3a2810,#1e1408);border:1px solid #c09030;color:#d4a843;border-radius:5px;cursor:pointer;transition:all .15s;}
+.tut-story-btn:hover{background:linear-gradient(180deg,#4a3818,#2a1c0c);border-color:#d4a843;box-shadow:0 0 14px rgba(212,168,67,.4);}
+
+/* ── In-combat dialog box ── */
+/* Round 67g: bumped z-index 350 → 1100 so card-play animations
+   (.card-ghost at 1000, float-nums / echo-bursts at 999) can't
+   briefly cover the dialog when it paints right after a play. */
+.tut-combat-overlay{position:fixed;left:0;right:0;bottom:0;z-index:1100;display:none;justify-content:center;padding:0 20px 24px;pointer-events:none;}
+.tut-combat-overlay.show{display:flex;}
+.tut-combat-dialog{background:linear-gradient(180deg,#1a1208 0%,#120802 100%);border:1px solid #5a3a18;border-top:2px solid #c09030;border-radius:8px;padding:14px 18px;width:min(640px,94vw);box-shadow:0 -6px 28px rgba(0,0,0,.7);pointer-events:auto;display:flex;align-items:center;gap:14px;}
+.tut-combat-dialog-portrait{flex-shrink:0;width:64px;height:64px;display:flex;align-items:center;justify-content:center;background:rgba(8,4,1,.6);border:1px solid #3a2010;border-radius:6px;}
+.tut-combat-dialog-portrait img{image-rendering:pixelated;width:56px;height:56px;object-fit:contain;}
+.tut-combat-dialog-body{flex:1;min-width:0;}
+.tut-combat-dialog-name{font-family:'Cinzel',serif;font-size:9px;letter-spacing:2.5px;color:#a890c0;margin-bottom:4px;}
+.tut-combat-dialog-text{font-family:'Crimson Text',serif;font-size:14px;color:#e8d7a8;line-height:1.45;font-style:italic;letter-spacing:.3px;}
+.tut-combat-dialog-next{flex-shrink:0;font-family:'Cinzel',serif;font-size:10px;letter-spacing:2.5px;padding:10px 22px;background:linear-gradient(180deg,#3a2810,#1e1408);border:1px solid #c09030;color:#d4a843;border-radius:5px;cursor:pointer;transition:all .15s;align-self:center;}
+.tut-combat-dialog-next:hover{background:linear-gradient(180deg,#4a3818,#2a1c0c);border-color:#d4a843;box-shadow:0 0 12px rgba(212,168,67,.4);}
+
+/* ── Spotlight / highlight ──
+   Round 66d: the dim DOES come back, but via CSS filter rather than
+   z-index/backdrop. Filter on parent applies to rendered output;
+   filter on a CHILD compounds with the parent's filter (parent
+   dims first, then child re-brightens) — so the highlight gets
+   restored to ~normal brightness even though its parent is dimmed.
+   This sidesteps every stacking-context problem the backdrop
+   approach had. The tutorial dialog overlay sits OUTSIDE
+   #game-screen (it's appended to body), so it isn't dimmed. */
+/* Round 67d: softer dim values. brightness(0.35) was too aggressive —
+   even with the child filter compounding, the highlight only emerged
+   to ~0.9× normal because parent's filter clips after the child's
+   amplification. Going milder so the contrast is clear without the
+   screen feeling drowned. */
+body.tut-dim-mode #game-screen{
+  filter: brightness(0.55) saturate(0.8);
+  transition: filter .3s ease;
+}
+.tut-highlight{
+  filter: brightness(1.85) saturate(1.4);
+  box-shadow:
+    0 0 0 2px #d4a843,
+    0 0 0 5px rgba(212,168,67,.35),
+    0 0 26px 8px rgba(212,168,67,.7),
+    0 0 70px 20px rgba(212,168,67,.3) !important;
+  border-radius:6px;
+  transition:box-shadow .25s ease;
+  animation:tut-pulse 1.4s ease-in-out infinite;
+  outline:none;
+}
+@keyframes tut-pulse{
+  0%, 100%{
+    box-shadow:
+      0 0 0 2px #d4a843,
+      0 0 0 5px rgba(212,168,67,.35),
+      0 0 26px 8px rgba(212,168,67,.7),
+      0 0 70px 20px rgba(212,168,67,.3);
+  }
+  50%{
+    box-shadow:
+      0 0 0 2px #ffd060,
+      0 0 0 7px rgba(255,208,96,.45),
+      0 0 36px 14px rgba(255,208,96,.9),
+      0 0 90px 28px rgba(255,208,96,.4);
+  }
+}
+
+/* ════════════════════════════════════════════════════════════
    LOADING SCREEN + LOGIN SCREEN  (Round 63)
    ════════════════════════════════════════════════════════════
    Both are .screen instances so they slot into the existing
@@ -2464,9 +2586,15 @@ body.font-press .innate-card-name{font-size:8px!important;}
 .login-bg{position:absolute;inset:0;background:#0a0601 url('assets/backgrounds/texture.png') center/cover no-repeat;z-index:0;}
 .login-shade{position:absolute;inset:0;background:radial-gradient(ellipse at center, rgba(8,4,1,.55) 0%, rgba(4,2,0,.85) 80%);z-index:1;}
 
-/* Settings cog top-right — borrows the existing .nav-icon-btn rules
-   for hover but is positioned absolutely. */
-.login-settings-btn{position:absolute;top:18px;right:22px;z-index:5;font-size:22px;padding:6px 12px;}
+/* Top-right cluster: mute buttons + settings cog. Round 65. */
+.login-top-right{position:absolute;top:18px;right:22px;z-index:5;display:flex;align-items:center;gap:6px;}
+.login-settings-btn{font-size:22px;padding:6px 12px;}
+.login-mute-btn{background:none;border:1px solid transparent;border-radius:4px;color:#d4a843;opacity:.65;font-size:18px;line-height:1;cursor:pointer;padding:6px 10px;transition:opacity .15s,color .15s,background .15s;font-family:inherit;}
+.login-mute-btn:hover{opacity:1;background:rgba(212,168,67,.08);}
+.login-mute-btn.muted{opacity:1;color:#a06040;}
+/* Music note variant uses a slightly larger glyph since ♪ renders smaller
+   than emoji speakers. SFX button keeps the speaker emoji native size. */
+#login-music-mute{font-size:22px;}
 
 /* Title block — sits in the top third (~60% from top). Big wordmark
    plus a tagline. */
@@ -2529,7 +2657,11 @@ body.font-press .innate-card-name{font-size:8px!important;}
 .login-save-info{flex:1;min-width:0;}
 .login-save-name{font-family:'Cinzel',serif;font-size:11px;color:#d4a843;letter-spacing:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .login-save-sub{font-family:'Crimson Text',serif;font-size:9px;color:#7a6030;font-style:italic;}
-.login-save-delete{background:none;border:none;color:#5a4020;font-size:13px;cursor:pointer;padding:4px 6px;border-radius:3px;transition:color .12s;}
+/* Per-save row action buttons (export + delete). Round 65. */
+.login-save-action{background:none;border:none;color:#5a4020;font-size:13px;cursor:pointer;padding:4px 6px;border-radius:3px;transition:color .12s,background .12s;font-family:inherit;line-height:1;}
+.login-save-action:hover{background:rgba(80,55,20,.3);}
+.login-save-export{color:#7a8050;font-weight:bold;}
+.login-save-export:hover{color:#9adc7e;}
 .login-save-delete:hover{color:#a04040;}
 
 .login-save-newbtn{display:flex;align-items:center;gap:10px;padding:10px;border-radius:4px;cursor:pointer;color:#9a8040;font-family:'Cinzel',serif;font-size:10px;letter-spacing:2px;border-top:1px dashed #3a2010;margin-top:6px;padding-top:14px;}

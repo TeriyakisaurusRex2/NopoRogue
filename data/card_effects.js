@@ -390,8 +390,13 @@ function _applyAura(actor, auraDef){
     addLog(actor.creature.name + ' — ' + (eff.label || auraDef.id) + '!', 'innate');
   }
   // Modifier aura — set keys on actor.auras
+  // Round 67c: attackCritMult added — multiplies the final crit% of
+  // attack cards by the given factor. Dire wolf's Hunter's Edge uses
+  // 2.0 ("double crit rate"). Applies AFTER all additive bonuses
+  // (base + card modifiers + attackCritBonus) so the doubling counts
+  // every crit source the card receives.
   var modKeys = ['debuffDurMult','poisonTickMult','poisonDurMult','burnDurMult',
-                 'shieldMult','healMult','critDmgMult','attackCritBonus'];
+                 'shieldMult','healMult','critDmgMult','attackCritBonus','attackCritMult'];
   modKeys.forEach(function(key){
     if(eff[key] !== undefined) actor.auras[key] = eff[key];
   });
@@ -408,8 +413,13 @@ function _removeAura(actor, auraDef){
     removeTagByLabel(actor.side, eff.label || auraDef.id);
   }
   // Remove modifier keys
+  // Round 67c: attackCritMult added — multiplies the final crit% of
+  // attack cards by the given factor. Dire wolf's Hunter's Edge uses
+  // 2.0 ("double crit rate"). Applies AFTER all additive bonuses
+  // (base + card modifiers + attackCritBonus) so the doubling counts
+  // every crit source the card receives.
   var modKeys = ['debuffDurMult','poisonTickMult','poisonDurMult','burnDurMult',
-                 'shieldMult','healMult','critDmgMult','attackCritBonus'];
+                 'shieldMult','healMult','critDmgMult','attackCritBonus','attackCritMult'];
   modKeys.forEach(function(key){
     if(eff[key] !== undefined) delete actor.auras[key];
   });
@@ -873,6 +883,12 @@ function generateCardText(actor, cardId, item){
     if(card && card.type === 'attack' && actor){
       var auraCrit = getAura(actor, 'attackCritBonus');
       if(auraCrit) critDelta += auraCrit;
+      // Round 67c: attackCritMult applies AFTER additive bonuses.
+      // Dire wolf doubles → e.g. base 15 from Howl Sorcery becomes 30.
+      var auraCritMult = getAura(actor, 'attackCritMult');
+      if(auraCritMult && auraCritMult > 0 && auraCritMult !== 1){
+        critDelta = Math.round(critDelta * auraCritMult);
+      }
     }
     var hasDmg = layers.normal.some(function(e){ return e.type==='dmg_conditional'||e.type==='dmg_scaling'||e.type==='churn_all_damage'; });
 
@@ -1060,6 +1076,13 @@ var EFFECT_TYPES = {
         if (ctx.card && ctx.card.type === 'attack') {
           var auraCrit = getAura(ctx.actor, 'attackCritBonus');
           if (auraCrit) critPct += auraCrit;
+          // Round 67c: attackCritMult multiplies the FINAL crit% on
+          // attack cards (additive bonuses already folded into
+          // critPct above). Dire wolf's Hunter's Edge uses 2.0.
+          var auraCritMult = getAura(ctx.actor, 'attackCritMult');
+          if (auraCritMult && auraCritMult > 0 && auraCritMult !== 1) {
+            critPct = Math.round(critPct * auraCritMult);
+          }
         }
         // Overflow Crystal relic: each percentage of crit chance over 100
         // becomes 1% bonus damage, applied after the crit doubling.
@@ -1541,8 +1564,28 @@ var EFFECT_TYPES = {
           break;
 
         case 'haste':
-          // Use existing haste effect
-          if (EFFECT_TYPES.haste) EFFECT_TYPES.haste.run({pct: val, dur: +v.dur}, ctx);
+          // Round 67d: real implementation. The legacy `EFFECT_TYPES.haste`
+          // it tried to call was never defined, so haste effects on cards
+          // silently no-op'd. Apply as a buff status (for has_haste checks
+          // + Wolf-style auras to activate) AND bump the actor's draw-speed
+          // multiplier, scheduling a rollback after the duration. Matches
+          // the pattern used by shrine War Cry / Battle Trance.
+          applyStatus(targetSide, 'buff', 'Haste ('+Math.round(val*100)+'%)', val, 'haste', dur,
+            'Haste: draw speed +'+Math.round(val*100)+'% for '+(+v.dur||4)+'s.');
+          if(targetSide === 'player'){
+            gs.drawSpeedBonus = (gs.drawSpeedBonus || 1) + val;
+            setTimeout(function(){
+              if(gs) gs.drawSpeedBonus = Math.max(1, (gs.drawSpeedBonus || 1) - val);
+            }, dur);
+          } else if(gs.actors && gs.actors.enemy){
+            gs.actors.enemy.drawSpeedMult = (gs.actors.enemy.drawSpeedMult || 1) + val;
+            setTimeout(function(){
+              if(gs.actors && gs.actors.enemy){
+                gs.actors.enemy.drawSpeedMult = Math.max(1, (gs.actors.enemy.drawSpeedMult || 1) - val);
+              }
+            }, dur);
+          }
+          addLog(ctx.cardName + '! [Haste] '+Math.round(val*100)+'% ' + (+v.dur||4) + 's.', 'buff');
           break;
 
         case 'thorns':

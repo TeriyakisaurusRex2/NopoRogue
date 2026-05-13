@@ -67,7 +67,16 @@
 <div id="login-screen" class="screen">
   <div class="login-bg"></div>
   <div class="login-shade"></div>
-  <button class="login-settings-btn nav-icon-btn" onclick="openSettings()" title="Settings">⚙</button>
+  <!-- Round 65: quick mute buttons sit beside the settings cog so the
+       player can silence music or SFX without diving into Settings.
+       Music has its own dedicated icon (note glyph) so it visually
+       distinguishes from the speaker SFX button. Updated by
+       refreshLoginMuteIcons() on render and on every applySetting. -->
+  <div class="login-top-right">
+    <button class="login-mute-btn" id="login-music-mute" onclick="toggleMute('music');refreshLoginMuteIcons();" title="Mute / unmute music">♪</button>
+    <button class="login-mute-btn" id="login-sfx-mute"   onclick="toggleMute('sfx');refreshLoginMuteIcons();"   title="Mute / unmute sound effects">🔊</button>
+    <button class="login-settings-btn nav-icon-btn" onclick="openSettings()" title="Settings">⚙</button>
+  </div>
 
   <div class="login-title-block">
     <div class="login-title">NOPOROGUE</div>
@@ -194,18 +203,87 @@
   </div>
 </div>
 
-<!-- AREA SELECT -->
+<!-- AREA SELECT
+     Round 67: restructured to mirror the champion-select layout —
+     three columns (champion-info rail | area grid | quests rail).
+     The asides are DUPLICATES of the cs-* asides (same internal
+     shape, ar-cr-* IDs instead of cs-cr-* so HTML stays valid)
+     and the rail painters take an id-prefix arg so the same
+     function paints both surfaces. -->
 <div id="area-screen" class="screen">
-  <div class="area-title">CHOOSE YOUR DESTINATION</div>
-  <div class="area-champ-row">
-    <span id="area-icon" class="area-champ-icon">🧙</span>
-    <span id="area-champ-nm" class="area-champ-nm">Champion</span>
-    <button class="area-champ-info-btn" onclick="openChampPanel()" title="Champion info">ℹ</button>
+  <div class="cs-header">
+    <div class="cs-title">CHOOSE YOUR DESTINATION</div>
   </div>
-  <div class="area-grid" id="area-grid"></div>
-  <div class="area-btns">
-    <button class="btn btn-dim" style="font-size:9px;padding:5px 12px;" onclick="goToSelect()">← BACK</button>
-    <button class="btn btn-gold" id="area-confirm-btn" onclick="confirmArea()" disabled>ENTER AREA →</button>
+  <div class="cs-main">
+    <!-- Champion info rail — same structure as the select-screen aside,
+         populated by buildAreaChampRail(selectedChampId). -->
+    <aside class="cs-champ-rail" id="area-champ-rail" aria-label="Champion details">
+      <div class="cs-cr-empty" id="ar-cr-empty">
+        <div class="cs-cr-empty-icon">👤</div>
+        <div class="cs-cr-empty-line">Select a champion first.</div>
+      </div>
+      <div class="cs-cr-body" id="ar-cr-body" style="display:none;">
+        <div class="cs-cr-status" id="ar-cr-status"></div>
+        <div class="cs-cr-portrait" id="ar-cr-portrait"></div>
+        <div class="cs-cr-name" id="ar-cr-name"></div>
+        <div class="cs-cr-asc" id="ar-cr-asc"></div>
+
+        <div class="cs-cr-stats">
+          <div class="cs-cr-stat-cell"><div class="cs-cr-stat-v" id="ar-cr-level">—</div><div class="cs-cr-stat-l">LVL</div></div>
+          <div class="cs-cr-stat-cell"><div class="cs-cr-stat-v str" id="ar-cr-str">—</div><div class="cs-cr-stat-l">STR</div></div>
+          <div class="cs-cr-stat-cell"><div class="cs-cr-stat-v agi" id="ar-cr-agi">—</div><div class="cs-cr-stat-l">AGI</div></div>
+          <div class="cs-cr-stat-cell"><div class="cs-cr-stat-v wis" id="ar-cr-wis">—</div><div class="cs-cr-stat-l">WIS</div></div>
+        </div>
+        <div class="cs-cr-growth" id="ar-cr-growth"></div>
+
+        <div class="cs-cr-section">
+          <div class="cs-cr-row-line"><span>XP</span><span id="ar-cr-xp-txt"></span></div>
+          <div class="cs-cr-bar-wrap"><div class="cs-cr-bar xp" id="ar-cr-xp-bar"></div></div>
+        </div>
+
+        <div class="cs-cr-section">
+          <div class="cs-cr-row-line">
+            <span class="cs-cr-section-label">MASTERY</span>
+            <span id="ar-cr-mastery-toward"></span>
+          </div>
+          <div class="cs-cr-bar-wrap"><div class="cs-cr-bar mastery" id="ar-cr-mastery-bar"></div></div>
+          <div class="cs-cr-bar-frac" id="ar-cr-mastery-frac"></div>
+        </div>
+
+        <div class="cs-cr-section">
+          <div class="cs-cr-section-label">✦ INNATE</div>
+          <div class="cs-cr-innate-name" id="ar-cr-innate-name"></div>
+          <div class="cs-cr-innate-desc" id="ar-cr-innate-desc"></div>
+        </div>
+
+        <div class="cs-cr-section">
+          <div class="cs-cr-section-label">DECK <span id="ar-cr-deck-count" class="cs-cr-section-sub"></span></div>
+          <div class="cs-cr-deck-summary" id="ar-cr-deck-summary"></div>
+        </div>
+
+        <div class="cs-cr-section">
+          <div class="cs-cr-section-label">RELICS <span id="ar-cr-relic-count" class="cs-cr-section-sub"></span></div>
+          <div class="cs-cr-relics" id="ar-cr-relics"></div>
+        </div>
+
+        <div class="cs-cr-actions">
+          <button class="btn btn-dim" id="ar-cr-view-deck" style="font-size:9px;padding:6px;flex:1;">👁 VIEW DECK</button>
+          <button class="btn btn-gold" id="ar-cr-edit-deck" style="font-size:9px;padding:6px;flex:1;">✦ EDIT DECK</button>
+        </div>
+      </div>
+    </aside>
+
+    <div class="cs-grid-col">
+      <div class="area-grid" id="area-grid"></div>
+      <div class="select-btn-row" style="display:flex;justify-content:space-between;gap:10px;">
+        <button class="btn btn-dim" style="font-size:9px;padding:8px 16px;" onclick="goToSelect()">← BACK</button>
+        <button class="btn btn-gold" id="area-confirm-btn" onclick="confirmArea()" disabled>ENTER AREA →</button>
+      </div>
+    </div>
+
+    <!-- Active quests rail — same structure as cs-quests-rail.
+         buildAreaQuestRail() populates it. -->
+    <aside class="cs-quests-rail" id="area-quests-rail" aria-label="Active quests"></aside>
   </div>
 </div>
 
@@ -1129,11 +1207,14 @@
       <button class="ach-close-btn" onclick="closeSettings()">✕</button>
     </div>
 
-    <!-- Tab row — slim, no big icons (settings tabs don't need them) -->
+    <!-- Tab row — slim, no big icons (settings tabs don't need them).
+         Round 65: SAVE DATA tab removed. Save management (export /
+         import / delete / return-to-menu) now lives entirely on the
+         login screen — saves are a "main menu" concept, not a
+         per-session preference. -->
     <div class="settings-tab-row">
       <button class="settings-tab active" id="stab-audio"    onclick="switchSettingsTab('audio')">AUDIO</button>
       <button class="settings-tab"        id="stab-gameplay" onclick="switchSettingsTab('gameplay')">GAMEPLAY</button>
-      <button class="settings-tab"        id="stab-save"     onclick="switchSettingsTab('save')">SAVE DATA</button>
     </div>
 
     <!-- Tab bodies -->
@@ -1144,19 +1225,25 @@
         <div class="setting-row">
           <div class="setting-lbl">Music Volume</div>
           <button class="setting-mute" id="s-music-mute" onclick="toggleMute('music')" title="Mute / unmute">🔊</button>
-          <input class="s-slider" type="range" min="0" max="100" step="5" value="70" id="s-music" oninput="applySetting('music',this.value)">
-          <div class="s-val" id="sv-music">70%</div>
+          <input class="s-slider" type="range" min="0" max="100" step="5" value="20" id="s-music" oninput="applySetting('music',this.value)">
+          <div class="s-val" id="sv-music">20%</div>
         </div>
         <div class="setting-row">
           <div class="setting-lbl">SFX Volume</div>
           <button class="setting-mute" id="s-sfx-mute" onclick="toggleMute('sfx')" title="Mute / unmute">🔊</button>
-          <input class="s-slider" type="range" min="0" max="100" step="5" value="85" id="s-sfx" oninput="applySetting('sfx',this.value)">
-          <div class="s-val" id="sv-sfx">85%</div>
+          <input class="s-slider" type="range" min="0" max="100" step="5" value="20" id="s-sfx" oninput="applySetting('sfx',this.value)">
+          <div class="s-val" id="sv-sfx">20%</div>
         </div>
         <div class="settings-divider"></div>
+        <!-- Round 67l: music player — track display + pause/skip controls.
+             Mini media-player feel, sits below the volume sliders. -->
         <div class="setting-nowplaying" id="s-nowplaying">
           <span class="setting-nowplaying-lbl">NOW PLAYING</span>
           <span class="setting-nowplaying-name" id="s-nowplaying-name">—</span>
+          <div class="setting-nowplaying-controls">
+            <button class="setting-player-btn" id="s-player-pause" onclick="toggleMusicPause();refreshNowPlaying();" title="Pause / play">⏸</button>
+            <button class="setting-player-btn" id="s-player-skip"  onclick="skipMusicTrack();refreshNowPlaying();" title="Skip to next track">⏭</button>
+          </div>
         </div>
       </div>
 
@@ -1180,37 +1267,9 @@
         </div>
       </div>
 
-      <!-- SAVE DATA -->
-      <div class="settings-pane" id="spane-save" style="display:none;">
-        <div class="setting-row">
-          <div class="setting-lbl">Export Save<small>Copy save string to clipboard</small></div>
-          <button class="btn btn-dim setting-action-btn" onclick="exportSave()">EXPORT</button>
-        </div>
-        <div class="setting-block">
-          <div class="setting-lbl">Import Save<small>Paste a save string and click Load</small></div>
-          <div class="setting-import-row">
-            <textarea id="s-import-txt" rows="2" class="setting-import-text" placeholder="Paste save string here..."></textarea>
-            <button class="btn btn-dim setting-action-btn" onclick="importSave()">LOAD</button>
-          </div>
-          <div id="s-import-msg" class="setting-import-msg"></div>
-        </div>
-        <div class="settings-divider"></div>
-        <div class="setting-destructive-zone">
-          <div class="setting-destructive-hdr">DANGER ZONE</div>
-          <div class="setting-row" style="margin-bottom:0;">
-            <div class="setting-lbl">Delete Save<small>Permanently wipe all progress</small></div>
-            <button class="btn btn-red setting-action-btn" id="s-delete-btn" onclick="deleteSaveStep1()">DELETE</button>
-          </div>
-          <div id="s-delete-confirm" class="setting-delete-confirm" style="display:none;">
-            <div class="setting-delete-confirm-hdr">⚠ THIS CANNOT BE UNDONE</div>
-            <div class="setting-delete-confirm-body">All champions, gold, achievements and unlocks will be lost forever.</div>
-            <div class="setting-delete-confirm-btns">
-              <button class="btn btn-red" onclick="deleteSaveConfirm()">YES, DELETE EVERYTHING</button>
-              <button class="btn btn-dim" onclick="deleteSaveCancel()">CANCEL</button>
-            </div>
-          </div>
-        </div>
-      </div>
+      <!-- SAVE DATA tab removed Round 65. Save management lives on
+           the login screen instead. ESC from town/select offers a
+           quick path to the main menu. -->
 
     </div>
   </div>
@@ -1252,6 +1311,7 @@
        on page load. -->
   <script src="data/creatures/bandit.js"></script>
   <script src="data/creatures/bloom.js"></script>
+  <script src="data/creatures/dire_wolf.js"></script>
   <script src="data/creatures/dojo_tiger.js"></script>
   <script src="data/creatures/drain_lurker.js"></script>
   <script src="data/creatures/druid.js"></script>
@@ -1274,6 +1334,9 @@
 
   <!-- ── Audio system ── -->
   <script src="audio.js"></script>
+
+  <!-- ── Tutorial (Round 66) — first-run wolf-vs-goblin lesson ── -->
+  <script src="tutorial.js"></script>
 
   <!-- ── Boot: runs after all data is loaded ── -->
   <script src="init.js"></script>

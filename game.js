@@ -297,7 +297,11 @@ function gemImgHTML(tier, size){
 // auto-play. Also dropped ASPEED_DELAYS for the same reason. Added
 // _muteStash so the new mute-button toggle can restore the prior slider
 // value when you unmute.
-var SETTINGS = { music:70, sfx:85, logd:'normal', confirm:false, tutorial:true };
+// Round 67l: default music/sfx lowered 70/85 → 20/20 — kinder
+// to a player landing on the main menu for the first time. Stored
+// settings (cetd_settings localStorage) override these for returning
+// players, so existing volumes are preserved.
+var SETTINGS = { music:20, sfx:20, logd:'normal', confirm:false, tutorial:true };
 var pendingConfirmIdx = -1;
 var _muteStash = { music:70, sfx:85 };
 var _settingsTab = 'audio';
@@ -312,14 +316,20 @@ function openSettings(){
 function closeSettings(){
   playUiCloseSfx();
   document.getElementById('settings-overlay').classList.remove('show');
-  deleteSaveCancel();
+  // Round 65: deleteSaveCancel() call removed — Save Data tab no
+  // longer lives in Settings (moved to login screen). Function
+  // still exists for any lingering call sites.
 }
 
 // Round 62l: tab switcher for the settings panel. Stashes the active
 // tab in _settingsTab so re-opening returns you to the same tab.
 function switchSettingsTab(tab){
+  // Round 65: 'save' removed — only audio + gameplay remain.
+  // Defensive: if a stale localStorage / module value still says
+  // 'save', fall back to 'audio'.
+  if(tab !== 'audio' && tab !== 'gameplay') tab = 'audio';
   _settingsTab = tab;
-  ['audio','gameplay','save'].forEach(function(t){
+  ['audio','gameplay'].forEach(function(t){
     var btn  = document.getElementById('stab-'+t);
     var pane = document.getElementById('spane-'+t);
     if(btn)  btn.classList.toggle('active', t===tab);
@@ -365,14 +375,23 @@ function refreshMuteButtons(){
 // or muted (getCurrentMusicName returns null in both cases).
 function refreshNowPlaying(){
   var nameEl = document.getElementById('s-nowplaying-name');
-  if(!nameEl) return;
-  var name = (typeof getCurrentMusicName === 'function') ? getCurrentMusicName() : null;
-  if(name){
-    nameEl.textContent = '♪ ' + name;
-    nameEl.classList.remove('silent');
-  } else {
-    nameEl.textContent = '— silent —';
-    nameEl.classList.add('silent');
+  if(nameEl){
+    var name = (typeof getCurrentMusicName === 'function') ? getCurrentMusicName() : null;
+    if(name){
+      nameEl.textContent = '♪ ' + name;
+      nameEl.classList.remove('silent');
+    } else {
+      nameEl.textContent = '— silent —';
+      nameEl.classList.add('silent');
+    }
+  }
+  // Round 67l: pause button glyph reflects state — pause icon when
+  // playing, play icon when paused. isMusicPaused() lives in audio.js.
+  var pauseBtn = document.getElementById('s-player-pause');
+  if(pauseBtn){
+    var pausedNow = (typeof isMusicPaused === 'function') ? isMusicPaused() : false;
+    pauseBtn.textContent = pausedNow ? '▶' : '⏸';
+    pauseBtn.title = pausedNow ? 'Resume music' : 'Pause music';
   }
 }
 
@@ -472,13 +491,16 @@ function applySetting(k,v){
     document.getElementById('sv-music').textContent=v+'%';
     updateMusicVolume();
     // Round 62l: mute button + now-playing line both react to volume.
+    // Round 65: login-screen mute icons too if visible.
     if(typeof refreshMuteButtons === 'function') refreshMuteButtons();
     if(typeof refreshNowPlaying === 'function') refreshNowPlaying();
+    if(typeof refreshLoginMuteIcons === 'function') refreshLoginMuteIcons();
   }
   else if(k==='sfx'){
     SETTINGS.sfx=+v;
     document.getElementById('sv-sfx').textContent=v+'%';
     if(typeof refreshMuteButtons === 'function') refreshMuteButtons();
+    if(typeof refreshLoginMuteIcons === 'function') refreshLoginMuteIcons();
   }
   else if(k==='logd'){ SETTINGS.logd=v; }
   else if(k==='confirm'){ SETTINGS.confirm=!!v; pendingConfirmIdx=-1; if(gs) renderHand(); }
@@ -547,6 +569,9 @@ var PERSIST_KEY='cetd_v6'; // legacy — kept for migration only
 var PERSIST={
   unlockedChamps:['druid','paladin','thief'],
   favoriteChamps:{}, // Round 62: champion ids the player has starred; sort to top of select grid
+  lastUsedChamp:null, // Round 64: champion id last committed via confirmChampion — used for the login card portrait
+  tutorialComplete:false, // Round 66: set true after the first-run wolf-vs-goblin tutorial finishes or is skipped
+  champStorySeen:{}, // Round 66e: per-champion flag map for first-pick story dialogs (CHAMP_INTRO_STORY in tutorial.js)
   seenEnemies:[], gold:50, metaCurrency:0, achievements:{},
   champions:{}, // keyed by champId: {level,xp,xpNext,stats,alive,lastArea}
   townUnlocked:true,
@@ -600,7 +625,7 @@ var PERSIST={
       offeredRefresh:0,// timestamp of last refresh
     },
   },
-  bestiary:{ entries:{}, areaCompletions:{} },
+  bestiary:{ entries:{}, areaCompletions:{}, research:{}, researchAcc:0 },
   sanctum:{ deckMods:{}, levelFloors:{}, unlockedCards:{} },
   shrineCounters:{ run_count:0, cards_played:0, cards_discarded:0, deaths:0, nodamage_clears:0, clutch_wins:0, fast_wins:0, debuffs_applied:0, area_level:0 },
   soulShards:0,          // gacha currency
@@ -1152,6 +1177,9 @@ function createNewSave(name){
 function _resetPersistToDefaults(){
   PERSIST.unlockedChamps = ['druid','paladin','thief'];
   PERSIST.favoriteChamps = {};
+  PERSIST.lastUsedChamp = null;
+  PERSIST.tutorialComplete = false;
+  PERSIST.champStorySeen = {};
   PERSIST.seenEnemies = [];
   PERSIST.gold = 50;
   PERSIST.metaCurrency = 0;
@@ -1203,6 +1231,59 @@ function switchToSave(id){
   if(typeof selectedChampId !== 'undefined') selectedChampId = null;
   applyOfflineProgressWithDiff();
   updateSaveMeta(id, { lastPlayed: Date.now() });
+}
+
+// Round 65: per-save export. Reads a save's blob without loading it
+// into PERSIST, base64-encodes it (matches the original exportSave
+// format so existing exports stay importable), and copies to clipboard.
+// Returns 'clipboard' on success, the raw string on clipboard failure
+// (caller can then show a fallback popup), or null on failure.
+function exportSaveById(id){
+  var data = peekSave(id);
+  if(!data) return null;
+  try{
+    var raw = JSON.stringify(data);
+    var encoded = btoa(unescape(encodeURIComponent(raw)));
+    return encoded;
+  } catch(e){ return null; }
+}
+
+// Round 65: import a save string as a NEW slot (doesn't overwrite
+// the active save like the old importSave did — multi-save means
+// imported data lives alongside existing saves). Returns the new
+// meta on success, or { error: 'message' } on failure. The caller
+// is responsible for refreshing the login UI.
+function importSaveString(saveString, name){
+  if(!saveString || typeof saveString !== 'string'){
+    return { error: 'Empty save string.' };
+  }
+  saveString = saveString.trim();
+  var raw, parsed;
+  try{
+    raw = decodeURIComponent(escape(atob(saveString)));
+  } catch(e){
+    return { error: 'Could not decode the save string. Check that you copied the full export.' };
+  }
+  try{
+    parsed = JSON.parse(raw);
+  } catch(e){
+    return { error: 'Save string is not valid JSON.' };
+  }
+  if(!parsed.unlockedChamps || !Array.isArray(parsed.unlockedChamps)){
+    return { error: 'Save data is missing required fields.' };
+  }
+  // Mint a new slot for the imported data. If the player provided a
+  // name, use it; otherwise borrow playerName from the imported blob,
+  // otherwise default to "Imported Save".
+  var id = _newSaveId();
+  var trimmed = (name || '').trim() || (parsed.playerName || '').trim() || 'Imported Save';
+  var meta = { id: id, name: trimmed, createdAt: Date.now(), lastPlayed: Date.now(), imported: true };
+  var arr = listSaves();
+  arr.push(meta);
+  writeSavesRegistry(arr);
+  try{ localStorage.setItem(SAVE_PREFIX + id, JSON.stringify(parsed)); }
+  catch(e){ return { error: 'Could not write to localStorage (full?).' }; }
+  return { meta: meta, id: id };
 }
 
 // Migrate the legacy cetd_v6 single-save into a fresh slot named
@@ -1277,19 +1358,17 @@ function _diffOfflineSnap(before){
 }
 function getOfflineGains(){ return _offlineGains; }
 
-// Round 63: human-readable elapsed-seconds formatter used by the
-// "Away for X" line on the login card. Caps were enforced earlier
-// (OFFLINE_CAP_SEC = 12h) so the longest string we'll emit is "12h".
+// Round 64: compact stat-readout style — "2H 30M" / "45M" / "12H".
+// Used by the IDLE TIME line on the login card (no longer says "Away
+// for X" — the row's own label IS "IDLE TIME"). Caps still hold
+// (OFFLINE_CAP_SEC = 12h) so the longest output is "12H".
 function _formatAwayDuration(seconds){
-  if(seconds < 60)   return 'less than a minute';
-  if(seconds < 3600){
-    var m = Math.floor(seconds / 60);
-    return m + ' minute' + (m === 1 ? '' : 's');
-  }
+  if(seconds < 60) return '0M';
   var h = Math.floor(seconds / 3600);
-  var mins = Math.floor((seconds % 3600) / 60);
-  if(mins === 0) return h + ' hour' + (h === 1 ? '' : 's');
-  return h + 'h ' + mins + 'm';
+  var m = Math.floor((seconds % 3600) / 60);
+  if(h === 0) return m + 'M';
+  if(m === 0) return h + 'H';
+  return h + 'H ' + m + 'M';
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1306,8 +1385,15 @@ function _formatAwayDuration(seconds){
 function _buildPreloadList(){
   var list = [];
   // Music — these are big and fade-in benefits from being ready.
-  list.push({ kind:'audio', src:'assets/audio/music/menu_theme.mp3'  });
-  list.push({ kind:'audio', src:'assets/audio/music/theme_town.mp3'  });
+  // Round 67m: filenames updated to match the current MUSIC_SETS map
+  // in audio.js. The old menu_theme.mp3 / theme_town.mp3 paths were
+  // stale post-rename — menu music wasn't pre-cached so the very
+  // first playMusic('menu') after the loading screen hit a fresh
+  // network fetch (compounding with the autoplay block).
+  list.push({ kind:'audio', src:'assets/audio/music/theme_menu.mp3'     });
+  list.push({ kind:'audio', src:'assets/audio/music/theme_town.mp3'     });
+  list.push({ kind:'audio', src:'assets/audio/music/theme_battle_1.mp3' });
+  list.push({ kind:'audio', src:'assets/audio/music/theme_battle_2.mp3' });
   // Backgrounds for the login screen (texture) + early gameplay.
   list.push({ kind:'image', src:'assets/backgrounds/texture.png'      });
   // Icons that show in the nav from the very first frame after login.
@@ -1369,14 +1455,22 @@ function _shortAssetName(src){
 }
 
 // Helper: pick a "representative" champion from a save's PERSIST blob
-// for the login-card portrait. Prefers the most recently selected /
-// highest-level champion; falls back to the first unlocked.
+// for the login-card portrait. Round 64: prefers data.lastUsedChamp
+// (recorded on confirmChampion — the actual last champion the player
+// PLAYED with). Falls back to highest level/XP for saves that pre-
+// date the lastUsedChamp field or have never run a champion.
 function _pickSaveChampionId(data){
   if(!data) return null;
-  // Highest XP first — feels like "the champ you've been playing"
-  var champs = data.champions || {};
   var unlocked = (data.unlockedChamps || []).filter(function(id){ return CREATURES[id]; });
   if(!unlocked.length) return null;
+  // Round 64: prefer the explicitly-tracked last-used champion, but
+  // only if it's still in the unlocked roster (defensive — could be
+  // stale if the player somehow lost a champion).
+  if(data.lastUsedChamp && CREATURES[data.lastUsedChamp] && unlocked.indexOf(data.lastUsedChamp) !== -1){
+    return data.lastUsedChamp;
+  }
+  // Fallback: highest level + xpTotal score.
+  var champs = data.champions || {};
   var best = unlocked[0], bestScore = -1;
   unlocked.forEach(function(id){
     var cp = champs[id];
@@ -1396,14 +1490,34 @@ function _pickSaveChampionId(data){
 function showLoginScreen(){
   showNav(false);
   showScreen('login-screen');
-  // Music: menu theme is the right vibe for the title screen.
-  if(typeof playMusic === 'function') playMusic('menu_theme');
+  // Music: menu set plays as soon as the login screen mounts. Legacy
+  // aliases still accept 'menu_theme' but new code uses set keys.
+  if(typeof playMusic === 'function') playMusic('menu');
   buildLoginScreen();
+}
+
+// Round 65: paint the mute-button icons + .muted class on the login
+// screen's top-right pair. Called on every login render and after
+// any volume change via applySetting.
+function refreshLoginMuteIcons(){
+  var music = document.getElementById('login-music-mute');
+  var sfx   = document.getElementById('login-sfx-mute');
+  if(music){
+    var mMuted = !SETTINGS.music || SETTINGS.music === 0;
+    music.textContent = mMuted ? '𝄽' : '♪';     // music rest vs note
+    music.classList.toggle('muted', mMuted);
+  }
+  if(sfx){
+    var sMuted = !SETTINGS.sfx || SETTINGS.sfx === 0;
+    sfx.textContent = sMuted ? '🔇' : '🔊';
+    sfx.classList.toggle('muted', sMuted);
+  }
 }
 
 function buildLoginScreen(){
   var verEl = document.getElementById('login-version');
   if(verEl) verEl.textContent = (typeof GAME_VERSION === 'string' ? GAME_VERSION : '');
+  refreshLoginMuteIcons();
 
   var saves = listSaves();
   var activeId = getActiveSaveId();
@@ -1457,6 +1571,26 @@ function _renderNewSaveForm(){
     + '</div>';
 }
 
+// Round 66: a save is "fresh" if it has never played a run. Used to
+// switch the card's CTA between BEGIN (new) and CONTINUE (existing),
+// and also to suppress the "while you were away" block on a brand-
+// new save (offline gains aren't meaningful before the first run).
+// Multiple signals so legacy saves (pre-lastUsedChamp) still register
+// as played: explicit lastUsedChamp, any gold spent or earned beyond
+// default 50, any extra champions unlocked, or any champion above
+// level 1.
+function _saveHasBeenPlayed(data){
+  if(!data) return false;
+  if(data.lastUsedChamp) return true;
+  if((data.gold || 0) !== 50) return true;
+  if((data.unlockedChamps || []).length !== 3) return true;
+  var champs = data.champions || {};
+  for(var id in champs){
+    if(champs[id] && (champs[id].level || 1) > 1) return true;
+  }
+  return false;
+}
+
 function _renderSaveCard(saveId){
   var meta = getSaveMeta(saveId) || {};
   var data = peekSave(saveId) || {};
@@ -1466,6 +1600,7 @@ function _renderSaveCard(saveId){
   var champCount = (data.unlockedChamps || []).filter(function(id){ return CREATURES[id]; }).length;
   var gold = data.gold || 0;
   var shards = data.soulShards || 0;
+  var hasPlayed = _saveHasBeenPlayed(data);
 
   // Portrait — fall back to a "?" plaque if no champion / sprite.
   var portrait;
@@ -1490,7 +1625,10 @@ function _renderSaveCard(saveId){
     + '<div class="login-card-stat"><span class="login-card-stat-label">GOLD</span> ' + (typeof goldImgHTML==='function' ? goldImgHTML('16px') : '✦') + ' ' + gold + '</div>'
     + '<div class="login-card-stat"><span class="login-card-stat-label">SHARDS</span> ' + (typeof soulShardImgHTML==='function' ? soulShardImgHTML('16px') : '🔮') + ' ' + shards + '</div>';
 
-  var awayHtml = _renderWhileAwayBlock();
+  // Round 66: suppress "while you were away" on a save that has never
+  // played — there's nothing meaningful to report, and idle-time
+  // accumulation on a fresh save would be misleading.
+  var awayHtml = hasPlayed ? _renderWhileAwayBlock() : '';
 
   return ''
     + '<div class="login-card-body">'
@@ -1503,13 +1641,17 @@ function _renderSaveCard(saveId){
     +   '</div>'
     + '</div>'
     + '<div class="login-card-actions">'
-    +   '<button class="login-continue" onclick="enterGameFromLogin()">CONTINUE ►</button>'
+    +   '<button class="login-continue" onclick="enterGameFromLogin()">' + (hasPlayed ? 'CONTINUE ►' : 'BEGIN ►') + '</button>'
     + '</div>';
 }
 
 function _renderWhileAwayBlock(){
   var g = getOfflineGains();
   if(!g) return '';
+  // Round 64: skip once the player has clicked CONTINUE — the gains
+  // were already delivered the first time. Avoids a stale block when
+  // returning to main menu mid-session.
+  if(g.consumed) return '';
 
   // Round 63 followup: card focuses on duration + shards. Vault / well
   // XP gains aren't listed here — those animate on the Shard Well's
@@ -1524,7 +1666,11 @@ function _renderWhileAwayBlock(){
 
   var rows = [];
   if(awayDur){
-    rows.push('<div class="login-card-away-row login-card-away-duration">Away for <span class="dur">' + awayDur + '</span></div>');
+    // Round 64: "WHILE YOU WERE AWAY" header dropped — it was
+    // redundant with the duration line. The line itself now reads
+    // "IDLE TIME: 2H 30M" and acts as the de-facto header for the
+    // block.
+    rows.push('<div class="login-card-away-row login-card-away-duration">IDLE TIME: <span class="dur">' + awayDur + '</span></div>');
   }
   if(hasShards){
     var icon = (typeof soulShardImgHTML === 'function') ? soulShardImgHTML('16px') : '🔮';
@@ -1538,7 +1684,6 @@ function _renderWhileAwayBlock(){
   }
   return ''
     + '<div class="login-card-away">'
-    +   '<div class="login-card-away-hdr">WHILE YOU WERE AWAY</div>'
     +   '<div class="login-card-away-rows">' + rows.join('') + '</div>'
     + '</div>';
 }
@@ -1564,6 +1709,8 @@ function _renderSavesMenu(){
       ? champ.name + (cp ? ' · Lv.' + (cp.level||1) : '')
       : 'Fresh save';
     var cls = 'login-save-row' + (s.id === activeId ? ' active' : '');
+    // Round 65: per-row export + delete icons. Both stopPropagation
+    // so clicking them doesn't also fire the row's pick handler.
     return ''
       + '<div class="' + cls + '" onclick="_loginPickSave(\'' + s.id + '\')">'
       +   '<div class="login-save-portrait">' + portrait + '</div>'
@@ -1571,14 +1718,21 @@ function _renderSavesMenu(){
       +     '<div class="login-save-name">' + s.name + '</div>'
       +     '<div class="login-save-sub">' + subLine + '</div>'
       +   '</div>'
-      +   '<button class="login-save-delete" title="Delete this save" onclick="event.stopPropagation();_loginDeleteSave(\'' + s.id + '\')">✕</button>'
+      +   '<button class="login-save-action login-save-export" title="Export save string" onclick="event.stopPropagation();_loginExportSave(\'' + s.id + '\')">↓</button>'
+      +   '<button class="login-save-action login-save-delete" title="Delete this save" onclick="event.stopPropagation();_loginDeleteSave(\'' + s.id + '\')">✕</button>'
       + '</div>';
   }).join('');
 
+  // Round 65: footer rows for create-new + import. Both inside the
+  // menu so save management lives in one obvious spot.
   var newBtn = ''
     + '<div class="login-save-newbtn" onclick="_loginStartNewSave()">'
     +   '<span class="login-save-newbtn-plus">+</span>'
     +   '<span>NEW SAVE</span>'
+    + '</div>'
+    + '<div class="login-save-newbtn" onclick="_loginStartImport()">'
+    +   '<span class="login-save-newbtn-plus">↑</span>'
+    +   '<span>IMPORT SAVE</span>'
     + '</div>';
 
   menu.innerHTML = rows + newBtn;
@@ -1629,6 +1783,125 @@ function _loginDeleteSave(id){
   buildLoginScreen();
 }
 
+// Round 65: per-save EXPORT from the dropdown. Encodes via the same
+// base64 format as the original Settings → Export so anything the
+// player previously copied still imports cleanly.
+function _loginExportSave(id){
+  var encoded = exportSaveById(id);
+  if(!encoded){
+    _loginShowToast('Could not export this save.', '#c05050');
+    return;
+  }
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(encoded).then(
+      function(){ _loginShowToast('✦ Save copied to clipboard!', '#60b060'); },
+      function(){ _loginShowExportFallback(encoded); }
+    );
+  } else {
+    _loginShowExportFallback(encoded);
+  }
+}
+
+// Fallback: clipboard API blocked / unsupported — show the encoded
+// string in a small modal so the player can manually copy it.
+function _loginShowExportFallback(encoded){
+  var existing = document.getElementById('login-export-fallback');
+  if(existing) existing.remove();
+  var ov = document.createElement('div');
+  ov.id = 'login-export-fallback';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:400;background:rgba(4,2,0,.85);display:flex;align-items:center;justify-content:center;';
+  ov.onclick = function(e){ if(e.target===ov) ov.remove(); };
+  ov.innerHTML = ''
+    + '<div style="background:#140c02;border:1px solid #5a3a18;border-radius:8px;padding:18px 22px;width:min(520px,92vw);">'
+    +   '<div style="font-family:Cinzel,serif;font-size:11px;letter-spacing:2px;color:#d4a843;margin-bottom:8px;">EXPORT — COPY MANUALLY</div>'
+    +   '<div style="font-size:10px;color:#7a6030;margin-bottom:10px;font-style:italic;">Clipboard access was unavailable. Select all and copy.</div>'
+    +   '<textarea readonly style="width:100%;height:120px;background:#0e0802;border:1px solid #3a2010;border-radius:4px;color:#c0a060;font-size:9px;padding:8px;font-family:monospace;resize:none;">'+encoded+'</textarea>'
+    +   '<div style="text-align:right;margin-top:10px;"><button onclick="document.getElementById(\'login-export-fallback\').remove()" style="font-family:Cinzel,serif;font-size:9px;padding:6px 16px;border-radius:4px;border:1px solid #5a3a18;background:#1a1208;color:#c0a060;cursor:pointer;letter-spacing:1px;">CLOSE</button></div>'
+    + '</div>';
+  document.body.appendChild(ov);
+  // Auto-select the textarea contents
+  var ta = ov.querySelector('textarea');
+  if(ta){ ta.focus(); ta.select(); }
+}
+
+// Quick toast for login-screen feedback (export copied, import bad,
+// etc). Lives at the top of the login card area, fades after 3.5s.
+function _loginShowToast(msg, color){
+  var existing = document.getElementById('login-toast');
+  if(existing) existing.remove();
+  var t = document.createElement('div');
+  t.id = 'login-toast';
+  t.textContent = msg;
+  t.style.cssText = 'position:absolute;top:36px;left:50%;transform:translateX(-50%);z-index:6;'
+    + 'background:rgba(20,12,2,.95);border:1px solid #5a3a18;border-radius:5px;'
+    + 'padding:8px 16px;font-family:Cinzel,serif;font-size:10px;letter-spacing:1.5px;'
+    + 'color:'+(color || '#d4a843')+';transition:opacity .4s ease;';
+  var loginScreen = document.getElementById('login-screen');
+  if(loginScreen) loginScreen.appendChild(t);
+  setTimeout(function(){
+    if(!t.parentNode) return;
+    t.style.opacity = '0';
+    setTimeout(function(){ if(t.parentNode) t.parentNode.removeChild(t); }, 450);
+  }, 3500);
+}
+
+// Show the import-save form in the card area. Closes the saves menu
+// (player clicked through it). They paste a save string and click
+// IMPORT to mint a new slot.
+function _loginStartImport(){
+  var card = document.getElementById('login-card');
+  if(!card) return;
+  card.classList.add('empty');
+  card.innerHTML = ''
+    + '<div class="login-newsave-hdr">IMPORT SAVE</div>'
+    + '<div class="login-newsave-tag">Paste a previously-exported save string.</div>'
+    + '<textarea id="login-import-text" rows="4" placeholder="Paste save string here..." '
+    +   'style="display:block;width:100%;background:#0e0802;border:1px solid #3a2010;border-radius:5px;color:#c0a060;font-family:monospace;font-size:9px;padding:10px 12px;outline:none;resize:none;transition:border-color .15s;" '
+    +   'onfocus="this.style.borderColor=\'#c09030\'" onblur="this.style.borderColor=\'#3a2010\'"></textarea>'
+    + '<input id="login-import-name" class="login-newsave-input" type="text" maxlength="24" placeholder="Optional: name for this save" '
+    +   'style="margin-top:8px;" onkeydown="if(event.key===\'Enter\')_loginImportSaveCommit();">'
+    + '<div class="login-newsave-hint">A new save slot is created. Existing saves are untouched.</div>'
+    + '<div class="login-card-actions">'
+    +   '<button class="login-continue" style="background:linear-gradient(180deg,#1e1408,#120802);border-color:#5a3a18;color:#7a6030;" onclick="_loginCancelNewSave()">CANCEL</button>'
+    +   '<button class="login-continue" onclick="_loginImportSaveCommit()">IMPORT ►</button>'
+    + '</div>';
+  setTimeout(function(){
+    var ta = document.getElementById('login-import-text');
+    if(ta) ta.focus();
+  }, 50);
+  // Close dropdown
+  var menu = document.getElementById('login-saves-menu');
+  if(menu) menu.style.display = 'none';
+  var btn = document.getElementById('login-saves-toggle');
+  if(btn) btn.classList.remove('open');
+}
+
+// Commit an import: read both fields, call importSaveString, set
+// the new save active so the player sees its card immediately.
+function _loginImportSaveCommit(){
+  var ta   = document.getElementById('login-import-text');
+  var nm   = document.getElementById('login-import-name');
+  var str  = ta ? ta.value : '';
+  var name = nm ? nm.value : '';
+  var result = importSaveString(str, name);
+  if(result.error){
+    _loginShowToast(result.error, '#c05050');
+    return;
+  }
+  // Set imported save as active so the player sees it immediately
+  setActiveSaveId(result.id);
+  loadPersist();
+  if(typeof selectedChampId !== 'undefined') selectedChampId = null;
+  // Don't run offline-progress on a freshly imported save — the
+  // imported lastSeen could be days old and grant the new owner a
+  // free 12h dump. Just stamp lastSeen now.
+  PERSIST.lastSeen = Date.now();
+  savePersist();
+  _offlineGains = null;
+  buildLoginScreen();
+  _loginShowToast('✦ Save imported.', '#60b060');
+}
+
 // Open the new-save form in the main card area (keeps existing
 // saves intact, just shows the input). User clicks BEGIN to commit.
 function _loginStartNewSave(){
@@ -1669,12 +1942,67 @@ function enterGameFromLogin(){
   }
   // Update lastPlayed stamp for this save
   updateSaveMeta(getActiveSaveId(), { lastPlayed: Date.now() });
+  // Round 64: mark the offline gains as "card-consumed" so a later
+  // return-to-main-menu doesn't show the stale "while you were away"
+  // block. The shard-well animation has its own gating flag
+  // (wellAnimated) so it can still fire when the player first opens
+  // the well, regardless of how many times they bounce between game
+  // and main menu.
+  if(_offlineGains) _offlineGains.consumed = true;
+
+  // Round 66: tutorial intro on first launch. maybeStartTutorial
+  // shows its own modal (BEGIN / skip) on top of the login screen.
+  // If it returns true the tutorial flow drives the screen change
+  // into combat (or BEGIN-skip into champion select); we don't fall
+  // through to the normal select-screen transition.
+  if(typeof maybeStartTutorial === 'function' && typeof _saveHasBeenPlayed === 'function'){
+    var saveBlob = peekSave(getActiveSaveId());
+    if(!_saveHasBeenPlayed(saveBlob) && !PERSIST.tutorialComplete){
+      if(maybeStartTutorial()) return;
+    }
+  }
+
   showNav(true);
   showScreen('select-screen');
   if(typeof buildSelectScreen === 'function') buildSelectScreen();
   if(typeof updateNavBar === 'function') updateNavBar('adventure');
   if(typeof checkBestiaryAutoUnlock === 'function') checkBestiaryAutoUnlock();
   if(typeof restoreQuestBadge === 'function') restoreQuestBadge();
+}
+
+// Round 64: return from gameplay to the main menu (login screen).
+// Confirms before abandoning an in-progress combat run. Saves the
+// current state, closes any open building / settings panels, then
+// rebuilds and shows the login screen with the current save card.
+//
+// Why not just "switch save" instead? Two reasons:
+//   1. The act of returning to the title screen is a known UX pattern
+//      players reach for ("I want out of this run").
+//   2. From the main menu the player can ALSO switch saves via the
+//      bottom-left dropdown — so this single button gets you both
+//      behaviours without bloating the in-game UI.
+function returnToMainMenu(){
+  if(typeof gs !== 'undefined' && gs && gs.running){
+    if(!confirm('A run is in progress. Return to main menu?\n\nYour current run will be abandoned.')){
+      return;
+    }
+    if(typeof stopLoops === 'function') stopLoops();
+    gs = null;
+  }
+  // Persist current state so anything in-flight is captured.
+  if(typeof savePersist === 'function') savePersist();
+  // Bump lastPlayed — returning to menu still counts as activity.
+  var id = getActiveSaveId();
+  if(id) updateSaveMeta(id, { lastPlayed: Date.now() });
+  // Close any open building panels / overlays so they don't peek
+  // through after the screen transition.
+  document.querySelectorAll('.town-panel-bg.show').forEach(function(p){ p.classList.remove('show'); });
+  if(typeof closeSettings === 'function') closeSettings();
+  // Hand off to login screen. _offlineGains is intentionally NOT
+  // cleared — the consumed flag (set in enterGameFromLogin) gates
+  // the "while you were away" block, and wellAnimated gates the
+  // shard well anim. Both flags persist across menu round-trips.
+  showLoginScreen();
 }
 
 // Round 47: offline progress catch-up. Reads PERSIST.lastSeen (set by
@@ -1721,6 +2049,9 @@ function loadPersist(){
     if(p){
       PERSIST.unlockedChamps=p.unlockedChamps||['druid','paladin','thief'];
       PERSIST.favoriteChamps = (p.favoriteChamps && typeof p.favoriteChamps === 'object') ? p.favoriteChamps : {};
+      PERSIST.lastUsedChamp = (typeof p.lastUsedChamp === 'string') ? p.lastUsedChamp : null;
+      PERSIST.tutorialComplete = !!p.tutorialComplete;
+      PERSIST.champStorySeen = (p.champStorySeen && typeof p.champStorySeen === 'object') ? p.champStorySeen : {};
       PERSIST.playerName = (typeof p.playerName === 'string') ? p.playerName : '';
       // Round 62 migration: scrub any unimplemented stub champs that
       // were rollable from a pre-fix gacha pool. Refund 100 soul shards
@@ -2053,7 +2384,10 @@ function getCreatureRarity(e){
 // have a full card set + innate hook implemented. Also used as a
 // migration filter in loadPersist to strip any stubs already in a
 // player's unlockedChamps from a pre-fix pull.
-var UNIMPLEMENTED_CHAMPS = { 'plagued_one': true, 'smuggler': true };
+// Round 67c: dire_wolf is the tutorial-only inhabit creature; it's
+// not in default unlockedChamps and shouldn't be rollable from the
+// summons gacha pool either.
+var UNIMPLEMENTED_CHAMPS = { 'plagued_one': true, 'smuggler': true, 'dire_wolf': true };
 
 function buildGachaPool(){
   // All creatures in pool — exclude special unplayable boss encounters
@@ -2726,10 +3060,17 @@ function rebuildChampGrid(){
 // rebuildChampGrid on screen entry (auto-selects first unlocked).
 // Locked champions still render — player wants to inspect what
 // their busy champion is doing, even if they can't pick them.
-function buildCsChampRail(id){
-  var rail   = document.getElementById('cs-champ-rail');
-  var emptyEl = document.getElementById('cs-cr-empty');
-  var bodyEl  = document.getElementById('cs-cr-body');
+function buildCsChampRail(id, idPrefix, railId){
+  // Round 67: parameterised so the area-screen can reuse this painter
+  // against its own duplicate aside (ar-cr-*). Defaults preserve the
+  // original cs-cr-* behaviour for the champion-select screen.
+  var P = idPrefix || 'cs-cr';
+  var R = railId   || 'cs-champ-rail';
+  var $ = function(suffix){ return document.getElementById(P + '-' + suffix); };
+
+  var rail   = document.getElementById(R);
+  var emptyEl = $('empty');
+  var bodyEl  = $('body');
   if(!rail || !emptyEl || !bodyEl) return;
   if(!id || !CREATURES[id] || (PERSIST.unlockedChamps||[]).indexOf(id) === -1){
     emptyEl.style.display = '';
@@ -2744,7 +3085,7 @@ function buildCsChampRail(id){
   var s  = cp.stats || {str:0,agi:0,wis:0};
 
   // Status badge (FALLEN / lock / empty — reserved space)
-  var statusEl = document.getElementById('cs-cr-status');
+  var statusEl = $('status');
   var lockLabel = (typeof getChampLockLabel === 'function') ? getChampLockLabel(id) : null;
   var lockIcon  = (cp.lockedForge !== null && cp.lockedForge !== undefined) ? '⚒' : '🏕️';
   if(!cp.alive){
@@ -2756,21 +3097,21 @@ function buildCsChampRail(id){
   }
 
   // Portrait + name + ascension chip
-  var portraitEl = document.getElementById('cs-cr-portrait');
+  var portraitEl = $('portrait');
   if(portraitEl) portraitEl.innerHTML = creatureImgHTML(id, ch.icon, '120px', 'flip-x');
-  document.getElementById('cs-cr-name').textContent = ch.name;
-  var ascEl = document.getElementById('cs-cr-asc');
+  $('name').textContent = ch.name;
+  var ascEl = $('asc');
   ascEl.innerHTML = (typeof getAscensionChipHTML === 'function') ? getAscensionChipHTML(id) : '';
 
   // Stats grid
-  document.getElementById('cs-cr-level').textContent = cp.level;
-  document.getElementById('cs-cr-str').textContent   = Math.round(s.str);
-  document.getElementById('cs-cr-agi').textContent   = Math.round(s.agi);
-  document.getElementById('cs-cr-wis').textContent   = Math.round(s.wis);
+  $('level').textContent = cp.level;
+  $('str').textContent   = Math.round(s.str);
+  $('agi').textContent   = Math.round(s.agi);
+  $('wis').textContent   = Math.round(s.wis);
 
   // Growth-per-level line
   var g = ch.growth || {str:0,agi:0,wis:0};
-  document.getElementById('cs-cr-growth').innerHTML =
+  $('growth').innerHTML =
       '<span class="str">+'+g.str+' STR</span>'
     + '<span class="agi">+'+g.agi+' AGI</span>'
     + '<span class="wis">+'+g.wis+' WIS</span>'
@@ -2778,8 +3119,8 @@ function buildCsChampRail(id){
 
   // XP bar
   var xpPct = Math.min(100, Math.round((cp.xp/(cp.xpNext||1))*100));
-  document.getElementById('cs-cr-xp-txt').textContent = cp.xp + ' / ' + cp.xpNext;
-  document.getElementById('cs-cr-xp-bar').style.width = xpPct + '%';
+  $('xp-txt').textContent = cp.xp + ' / ' + cp.xpNext;
+  $('xp-bar').style.width = xpPct + '%';
 
   // Mastery bar (toward next ascension tier)
   var ascLv  = (typeof getAscensionLevel === 'function') ? getAscensionLevel(id) : 0;
@@ -2787,17 +3128,17 @@ function buildCsChampRail(id){
   var mast    = cp.masteryXp || 0;
   var mastReq = nextTier ? nextTier.masteryReq : 0;
   var mastPct = mastReq > 0 ? Math.min(100, Math.round((mast/mastReq)*100)) : 100;
-  var mastBar = document.getElementById('cs-cr-mastery-bar');
+  var mastBar = $('mastery-bar');
   mastBar.style.width = mastPct + '%';
   mastBar.classList.toggle('full', mastPct >= 100 && !!nextTier);
-  document.getElementById('cs-cr-mastery-toward').textContent =
+  $('mastery-toward').textContent =
     nextTier ? ('Toward ' + nextTier.tier.charAt(0).toUpperCase() + nextTier.tier.slice(1).replace('_',' ')) : 'Maximum ascension';
-  document.getElementById('cs-cr-mastery-frac').textContent =
+  $('mastery-frac').textContent =
     nextTier ? (mast + ' / ' + mastReq) : '—';
 
   // Innate
-  document.getElementById('cs-cr-innate-name').textContent = ch.innateName || (ch.innate && ch.innate.name) || 'Innate';
-  document.getElementById('cs-cr-innate-desc').innerHTML   = (typeof renderKeywords === 'function')
+  $('innate-name').textContent = ch.innateName || (ch.innate && ch.innate.name) || 'Innate';
+  $('innate-desc').innerHTML   = (typeof renderKeywords === 'function')
     ? renderKeywords(ch.innateDesc || (ch.innate && ch.innate.desc) || '')
     : (ch.innateDesc || '');
 
@@ -2807,7 +3148,7 @@ function buildCsChampRail(id){
   // STR-based deck cap. The earlier `cp.deck || ch.deck` lookup was
   // hitting `undefined` on most champions and showing "Empty deck".
   var deck = (typeof buildStartDeck === 'function') ? buildStartDeck(id) : [];
-  document.getElementById('cs-cr-deck-count').textContent = deck.length ? '· '+deck.length+' cards' : '';
+  $('deck-count').textContent = deck.length ? '· '+deck.length+' cards' : '';
   // Group by id for tidy summary (icon + count)
   var counts = {};
   deck.forEach(function(cid){ counts[cid] = (counts[cid]||0)+1; });
@@ -2818,15 +3159,15 @@ function buildCsChampRail(id){
     var n = counts[cid];
     return '<div>'+icon+' '+name+(n>1?' ×'+n:'')+'</div>';
   }).join('') || '<em style="color:#5a4020;">No cards.</em>';
-  document.getElementById('cs-cr-deck-summary').innerHTML = deckHtml;
+  $('deck-summary').innerHTML = deckHtml;
 
   // Relics — equipped strip with hover info via existing relic system
-  var relicEl = document.getElementById('cs-cr-relics');
+  var relicEl = $('relics');
   var equipped = (typeof getEquippedRelics === 'function') ? getEquippedRelics(id) : (cp.relics||[]);
   var slotCount = (typeof getRelicSlotCount === 'function') ? getRelicSlotCount(id) : 0;
   // Hide the "X / Y" count when there are no slots yet — "0 / 0" reads
   // confusingly. The placeholder line below carries the message.
-  document.getElementById('cs-cr-relic-count').textContent = slotCount > 0
+  $('relic-count').textContent = slotCount > 0
     ? equipped.length + ' / ' + slotCount
     : '';
   if(slotCount === 0){
@@ -2843,8 +3184,8 @@ function buildCsChampRail(id){
   }
 
   // Action buttons — point to existing deck view + Sanctum entry points
-  var viewBtn = document.getElementById('cs-cr-view-deck');
-  var editBtn = document.getElementById('cs-cr-edit-deck');
+  var viewBtn = $('view-deck');
+  var editBtn = $('edit-deck');
   if(viewBtn){
     viewBtn.onclick = function(){
       selectedChampId = id;
@@ -2857,6 +3198,12 @@ function buildCsChampRail(id){
       if(typeof openChampSanctum === 'function') openChampSanctum();
     };
   }
+}
+
+// Round 67: thin wrapper for the area-screen's duplicate rail aside.
+// Points the shared painter at ar-cr-* IDs inside #area-champ-rail.
+function buildAreaChampRail(id){
+  buildCsChampRail(id, 'ar-cr', 'area-champ-rail');
 }
 
 function buyChampionUnlock(id){
@@ -2885,6 +3232,13 @@ function selectChamp(id){
   selectedChampId=id;
   document.querySelectorAll('.champ-card').forEach(function(c){c.classList.remove('selected');});
   var el=document.getElementById('cc-'+id); if(el) el.classList.add('selected');
+  // Round 67l: champion intro stories TABLED for ship. The hook is
+  // disabled (not deleted) so the story arc can be re-enabled later.
+  // CHAMP_INTRO_STORY + maybeShowChampStory + the modal CSS all
+  // remain in the file ready to wire back up by uncommenting.
+  // if(PERSIST.tutorialComplete && typeof maybeShowChampStory === 'function'){
+  //   maybeShowChampStory(id);
+  // }
 }
 
 function confirmChampion(){
@@ -2895,6 +3249,11 @@ function confirmChampion(){
     showTownToast(CREATURES[selectedChampId].name + ' is ' + lockLabel.toLowerCase() + '!');
     return;
   }
+  // Round 64: record the chosen champion as "last used" so the login
+  // card portrait reflects who the player actually plays as, not just
+  // whoever happens to have the highest level/XP score.
+  PERSIST.lastUsedChamp = selectedChampId;
+  if(typeof savePersist === 'function') savePersist();
   playUiClickSfx();
   showScreen('area-screen');
   showNav(true);
@@ -2970,7 +3329,7 @@ function navTo(tab){
     // back to adventure left the TOWN tab visually highlighted
     // because no code path repainted the active-tab class state.
     updateNavBar('adventure');
-    playMusic('menu_theme');
+    playMusic('menu');
   } else if(tab==='town'){
     openTown();
   }
@@ -3006,6 +3365,8 @@ function goToHub(){
   document.getElementById('btn-pause').textContent='PAUSE';
   document.getElementById('btn-deck-view').style.display='none';
   _restoreTownTab();
+  // Round 67l: leaving combat → swap from battle music back to menu.
+  if(typeof playMusic === 'function') playMusic('menu');
   if(selectedChampId){
     showScreen('area-screen');
     showNav(true);
@@ -3033,8 +3394,13 @@ function buildAreaScreen(){
   var ch=getCreaturePlayable(selectedChampId);
   var cp=getChampPersist(selectedChampId);
   var champLevel=cp.level;
-  setCreatureImg(document.getElementById('area-icon'), selectedChampId, ch.icon, '40px');
-  document.getElementById('area-champ-nm').textContent=ch.name+' (Lv.'+champLevel+')';
+
+  // Round 67: paint the duplicated rails that mirror the select-screen
+  // layout. Champion info on the left, active quests on the right —
+  // same data, same widgets, just a different surface.
+  if(typeof buildAreaChampRail === 'function') buildAreaChampRail(selectedChampId);
+  if(typeof buildAreaQuestRail === 'function') buildAreaQuestRail();
+
   var areas=generateAreas(champLevel);
   var grid=document.getElementById('area-grid'); grid.innerHTML='';
   document.getElementById('area-confirm-btn').disabled=true;
@@ -3054,11 +3420,13 @@ function buildAreaScreen(){
     };
     var stars=Math.min(5,Math.ceil(area.level/3)),starStr='';
     for(var i=0;i<5;i++) starStr+='<span style="color:'+(i<stars?'#d4a843':'#2a1808')+';">★</span>';
-    var eIcons=[],seen={};
-    area.enemies.forEach(function(e){if(!seen[e.icon]){eIcons.push(e.icon);seen[e.icon]=true;}});
     var xpMult=calcXpMult(champLevel,area.level);
     var xpLabel=grind?'<div style="font-size:7px;color:#806030;font-family:Cinzel,serif;text-align:center;margin-bottom:2px;">'+Math.round(xpMult*100)+'% XP</div>':'';
     var bossLabel=isBoss?'<div style="font-size:8px;color:#a03030;font-family:Cinzel,serif;text-align:center;margin-bottom:3px;letter-spacing:1px;">⚠ BOSS ENCOUNTER</div>':'';
+    // Round 67: dropped the CREATURES row (the eIcons preview). Bestiary
+    // icons mid-card were noisy and not load-bearing for the decision
+    // — players who want to know what's in the area can hit the (i)
+    // button. FIGHTS line stays.
     card.innerHTML=(isBoss?'<div style="position:absolute;top:6px;right:6px;font-size:16px;">💀</div>':'')
       +'<div class="area-icon">'+areaImgHTML(area.def.id, area.def.icon, '36px')+'</div>'
       +'<div class="area-name">'+area.def.name+'</div>'
@@ -3068,7 +3436,6 @@ function buildAreaScreen(){
       +xpLabel
       +'<div class="area-stars">'+starStr+'</div>'
       +'<div class="area-theme">'+area.def.theme+'</div>'
-      +'<div class="area-row"><span class="area-rl">CREATURES</span><span class="area-rv">'+eIcons.slice(0,3).join(' ')+'</span></div>'
       +'<div class="area-row"><span class="area-rl">FIGHTS</span><span class="area-rv">'+area.enemies.length+(isBoss?' (boss)':'')+'</span></div>'
       +'<button class="area-info-btn" onclick="event.stopPropagation();openLocationInBestiary(\''+area.def.id+'\')" title="Location info">ℹ</button>';
     if(isBoss) card.style.position='relative'; // for skull positioning
@@ -3242,8 +3609,17 @@ function setCombatBackground(areaId){
 }
 // ────────────────────────────────────────────────────────────────────────
 function startRun(champId,area){
-  stopMusic();
+  // Round 67l: combat now plays battle music (theme_battle_1/_2 from
+  // the 'battle' set) instead of going silent. The set has two tracks
+  // that alternate as each ends.
+  if(typeof playMusic === 'function') playMusic('battle');
   gs=makeGS(champId,area);
+  // Round 66: tutorial-mode overrides — buff wolf, force deck order,
+  // swap enemy to a low-HP goblin. Runs BEFORE the snapshot so the
+  // snapshot captures the buffed state (not used in tutorial flow
+  // anyway since the run-summary path bypasses for tutorials, but
+  // still safest order).
+  if(typeof applyTutorialOverrides === 'function') applyTutorialOverrides(gs);
   // Snapshot start-of-run state for the post-area "RUN SUMMARY" panel.
   // Captures champion XP/level/mastery and active-quest progress so the
   // panel can animate the deltas at run-end. Stored on gs (cleared with
@@ -3301,13 +3677,21 @@ function startRun(champId,area){
   var retBtn=document.getElementById('btn-return-battle');
   if(retBtn) retBtn.style.display='none'; // hidden until town is opened mid-run
   showScreen('game-screen');
-  setCombatBackground(area.def.id);
+  // Round 67e: tutorial uses forest_2.png regardless of area def.id —
+  // single setCombatBackground call avoids a race where the duplicate
+  // tutorial-side call would lose to a cached sewers.png that loaded
+  // first. applyTutorialOverrides runs before this, so gs._tutorial
+  // is already set when we get here.
+  setCombatBackground((gs && gs._tutorial) ? 'forest_2' : area.def.id);
   setEnemyUI(0); updateAll(); renderHand(); renderPiles();
   addLog('✦ '+ch.name+' enters '+area.def.name+'.','sys');
-  trackAreaEnter(area.def.id);
+  // Round 67f: skip achievement tracking for tutorial runs — the
+  // 'deep_woods' tutorial area is a one-off prelude, not a real area
+  // the player has "discovered". Keeping it out of the achievements
+  // table avoids cruft in the save.
+  if(!(gs && gs._tutorial)) trackAreaEnter(area.def.id);
   // (Removed stale call to updateQuestIndicator() — function was deleted in
   // a prior refactor. Quest HUD already refreshes via updateAll() above.)
-  showTutorial('combat_intro');
   // Auto-show begin battle modal
   showBeginBattleModal();
 }
@@ -3502,6 +3886,19 @@ function startBattle(){
   for(var i=0;i<startCards;i++) doDraw(null,true);
 
   startLoops();
+
+  // Round 66: tutorial step machine starts after the initial draw
+  // animation completes (cards have a ~250ms .card-arriving fly-in
+  // transition; 800ms safely covers all 3 initial draws plus a
+  // beat of breath before pause). _tutorialEnterStep pauses combat
+  // itself, so the player has a moment to see the hand land,
+  // then the first dialog overlays a frozen-with-hand-visible scene.
+  if(typeof isTutorialActive === 'function' && isTutorialActive()){
+    setTimeout(function(){
+      if(typeof _tutorialStartFromTop === 'function') _tutorialStartFromTop();
+      else if(typeof _tutorialEnterStep === 'function') _tutorialEnterStep();
+    }, 800);
+  }
 }
 function startLoops(){ stopLoops(); tickTimer=setInterval(gameTick,100); scheduleEnemyAction(); }
 function stopLoops(){ clearInterval(tickTimer); tickTimer=null; clearTimeout(enemyTimer); enemyTimer=null; clearInterval(_enemyDrawBarTimer); _enemyDrawBarTimer=null; }
@@ -4064,8 +4461,20 @@ function forceAutoplay(){
 function doDraw(overrideId, silent) {
   if (!gs.actors || !gs.actors.player) return;
   if (typeof syncGSToActors === 'function') syncGSToActors();
+  var beforeLen = (gs.actors.player.hand || []).length;
   actorDraw(gs.actors.player, overrideId || null, silent);
   if (typeof syncActorsToGS === 'function') syncActorsToGS();
+  // Round 67d: tutorial hook — fire card_drawn event when a new card
+  // arrives in the player's hand. The tutorial state machine uses this
+  // for transitional waits ("wait until wolf_howl is drawn before
+  // painting the dialog"). Cheap no-op outside tutorial.
+  if (typeof tutorialEvent === 'function'){
+    var afterHand = gs.actors.player.hand || [];
+    if (afterHand.length > beforeLen) {
+      var newItem = afterHand[afterHand.length - 1];
+      if (newItem && newItem.id) tutorialEvent('card_drawn', newItem.id);
+    }
+  }
   renderHand(); renderPiles();
 }
 
@@ -4077,6 +4486,12 @@ function playCard(idx){
 
   var c=CARDS[item.id];
   if(!c){ addLog('Unknown card: '+item.id,'sys'); return; }
+
+  // Round 66: notify the tutorial state machine of this card play.
+  // Fires before the card actually resolves so a 'play_card:X' wait
+  // step pauses combat immediately after the player's input — the
+  // dialog can then narrate the effect.
+  if(typeof tutorialEvent === 'function') tutorialEvent('play_card', item.id);
 
   // Sync before play
   if(gs.actors && typeof syncGSToActors === 'function') syncGSToActors();
@@ -4135,6 +4550,20 @@ function applyStatus(target,cls,label,val,stat,dur,desc){
   for(var i=0;i<list.length;i++){ if(list[i].label===label){ list[i].remaining=dur; return; } }
   list.push({label:label,cls:cls,val:val,stat:stat,remaining:dur,maxRemaining:dur,desc:desc||label});
   addTag(target,cls,label,val,stat,desc);
+  // Round 67b / 67k: tutorial hook — let the step machine react to
+  // specific status applications (e.g. Weaken on player triggers the
+  // debuff explanation beat).
+  // Round 67k fix: derive statusId from the FIRST WORD of the label
+  // (before any space or opening paren) so decorated labels like
+  // "Haste (30%)" or "Shield (20)" still match the canonical name
+  // ("haste", "shield"). Previous regex produced "haste_(30%)" which
+  // never matched the tutorial wait token "haste" — the haste
+  // transitional + every downstream beat (Sorcery, Weaken, Victory,
+  // Conclusion) was unreachable. Cheap no-op outside tutorial.
+  if(typeof tutorialEvent === 'function'){
+    var statusId = String(label||'').toLowerCase().split(/[\s(]/)[0];
+    tutorialEvent('status_applied', { target: target, statusId: statusId });
+  }
 }
 function applyDoT(target,id,dpt,tickMs,dur,desc){
   var list=gs.statusEffects[target];
@@ -4423,12 +4852,36 @@ function checkEnd(){
     }
     gs.running=false; stopLoops();
     shakeIcon('enemy',true); flashHpBar('enemy','hp-flash-red');
-    setTimeout(function(){ doVictory(); }, 600);
+    // Round 66: tutorial fires its "victory" event so the final
+    // narration beats can play. Does nothing outside tutorial.
+    if(typeof tutorialEvent === 'function') tutorialEvent('victory');
+    // Round 66e / 67d: tutorial victory bypasses the regular reward
+    // flow. No XP / gold / quest progress / run-summary — the tutorial
+    // is a narrative prelude, not a real run. The tutorial state
+    // machine handles the transition itself once its final beat
+    // is dismissed (see _tutorialEnd → _tutorialFinishToChampSelect).
+    if(gs && gs._tutorial){
+      // No setTimeout here — the victory event already fired via
+      // tutorialEvent('victory') above; tutorial's own conclusion beat
+      // and NEXT click drive the screen change.
+    } else {
+      setTimeout(function(){ doVictory(); }, 600);
+    }
   } else if(gs.playerHp<=0){
     gs.running=false; stopLoops();
     playDefeatSfx();
     shakeIcon('player',true); flashHpBar('player','hp-flash-red');
-    setTimeout(function(){ doDefeat(); }, 600);
+    // Round 67j: tutorial defeat bypasses the regular defeat-overlay
+    // (no gold loss, no champion fall, no Lv→1 reset — the wolf isn't
+    // a real champion). Shows a tutorial-specific dialog with a
+    // RETRY button that restarts the fight.
+    if(gs && gs._tutorial){
+      setTimeout(function(){
+        if(typeof _tutorialShowDefeat === 'function') _tutorialShowDefeat();
+      }, 600);
+    } else {
+      setTimeout(function(){ doDefeat(); }, 600);
+    }
   }
 }
 
@@ -6351,7 +6804,31 @@ document.addEventListener('keydown',function(e){
     if(modal==='pile'){ closePilePopup({target:document.getElementById('pile-popup')}); return; }
     if(modal==='tutorial'){ dismissTutorial(); return; }
     if(modal==='settings'){ closeSettings(); return; }
+    // Round 65: ESC closes the topmost open building panel before any
+    // screen-level handling. Players reach for ESC as the universal
+    // "back" gesture; closing what's currently in front feels natural.
+    var openTownPanel = document.querySelector('.town-panel-bg.show');
+    if(openTownPanel){
+      var pid = openTownPanel.id || '';
+      var bid = pid.replace(/-panel-bg$/, '');
+      if(bid && typeof closeBuildingPanel === 'function'){
+        closeBuildingPanel(bid);
+      } else {
+        openTownPanel.classList.remove('show');
+      }
+      return;
+    }
     if(screen==='deck-screen'){ continueDeckView(); return; }
+    // Round 65: on town-screen / select-screen with no overlays open,
+    // ESC offers to return to the main menu (login screen). Browser
+    // confirm() matches the existing returnToMainMenu pattern (used
+    // for the run-abandon prompt). One-key home button.
+    if(screen==='town-screen' || screen==='select-screen'){
+      if(typeof returnToMainMenu === 'function' && confirm('Return to Main Menu?')){
+        returnToMainMenu();
+      }
+      return;
+    }
     if(screen==='deck-edit-screen'){
       // Show confirmation before leaving
       var overlay = document.getElementById('de-esc-confirm');

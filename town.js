@@ -226,7 +226,7 @@ function unslotCard(cardId){
 // ── Town screen ──
 function openTown(){
   showScreen('town-screen');
-  playMusic('theme_town');
+  playMusic('town');
   updateNavBar('town');
   // Round 62g: town-gold removed (nav-gold owns it). subtitle stays
   // as the flavour/toast surface — showTownToast paints into it.
@@ -1667,8 +1667,11 @@ function _questRewardChipsHTML(quest){
 // PERSIST.town.quests.active and pulls each entry's def out of .offered
 // so we can show title/issuer/target. Rebuilt by rebuildChampGrid each
 // time the screen refreshes — no separate ticker needed.
-function buildCsQuestRail(){
-  var rail = document.getElementById('cs-quests-rail');
+function buildCsQuestRail(railIdOpt){
+  // Round 67: railIdOpt lets the area-screen reuse this painter on
+  // its own duplicate quests aside (#area-quests-rail). Defaults to
+  // 'cs-quests-rail' for the existing champ-select call sites.
+  var rail = document.getElementById(railIdOpt || 'cs-quests-rail');
   if(!rail) return;
   var quests = (PERSIST.town && PERSIST.town.quests) ? PERSIST.town.quests : null;
   var active = (quests && Array.isArray(quests.active)) ? quests.active : [];
@@ -1715,6 +1718,9 @@ function buildCsQuestRail(){
   rail.innerHTML = head + rows
     + '<a class="cs-quests-rail-link" onclick="navToTown();">OPEN HALL FOR DETAILS →</a>';
 }
+
+// Round 67: thin wrapper for area-screen's duplicate quests aside.
+function buildAreaQuestRail(){ buildCsQuestRail('area-quests-rail'); }
 
 function _csqEsc(s){
   return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -6804,26 +6810,10 @@ var TUTORIALS = {
       {body:'<strong>Ascension sharing:</strong> once a champion reaches Ruby tier or above, they can use cards from other Ruby+ champions via the <span style="color:#d4a843;">SHARED</span> filter. Borrowed cards display a gold "↗" badge and the inspector shows where they came from. Their effects fire normally; stat scaling uses the active champion\'s stats.', tip:null},
     ]
   },
-  combat_intro: {
-    title:'Combat Basics',
-    isNpc: true,
-    pages:[
-      {body:'Cards are drawn from your deck into your hand on a timer. Your hand holds up to 7 cards. When a new card is drawn into a full hand, the oldest card in hand is played automatically. You can click any card in hand to play it immediately. Playing a card costs <span style="color:#5080c0;">mana</span>.',
-       tip:null},
-      {body:'<span style="color:#c05050;">STR</span> determines maximum HP. <span style="color:#c0a030;">AGI</span> determines draw speed and card play speed. <span style="color:#5080c0;">WIS</span> determines maximum mana and mana regeneration rate. All three stats increase each level according to your champion\'s growth rates.',
-       tip:null},
-      {body:'Enemies operate on the same card system. Each enemy has a deck and a draw timer shown as a bar below their portrait. Every enemy plays a fixed <strong>opening move</strong> on their first action before entering their normal draw cycle.',
-       tip:null},
-    ]
-  },
-  combat_mana: {
-    title:'Mana System',
-    isNpc: true,
-    pages:[
-      {body:'Your mana pool maximum is <span style="color:#5080c0;">WIS × 5</span>. Mana regenerates at approximately <span style="color:#5080c0;">WIS × 0.8 + 2</span> per second. Some card effects require mana; look for the <span style="color:#5080c0;">[Sorcery]</span> keyword. If your mana is too low, the sorcery effect won\'t fire but the base effect still plays.',
-       tip:null},
-    ]
-  },
+  // Round 67o: combat_intro removed — the scripted wolf-vs-goblin
+  // tutorial (tutorial.js) now teaches all combat basics. combat_mana
+  // was an orphan entry from the same era (never invoked from any
+  // call site); removed alongside.
   town_intro: {
     title:'Welcome to Town',
     isNpc: true,
@@ -6963,6 +6953,11 @@ var _tutPage=0;
 
 function showTutorial(id){
   if(!SETTINGS.tutorial) return;
+  // Round 66: suppress per-system tutorials while the scripted
+  // wolf-vs-goblin combat tutorial is running — the mysterious
+  // figure handles ALL teaching during that flow, and stacking
+  // a second tutorial on top would be chaos.
+  if(typeof isTutorialActive === 'function' && isTutorialActive()) return;
   if(!TUTORIALS[id]) return;
   if(PERSIST.seenTutorials[id]) return; // already seen
   // Queue it if one is already showing
