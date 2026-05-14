@@ -7,21 +7,39 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&family=Press+Start+2P&display=swap" rel="stylesheet">
+  <!-- Round 67p: only Press Start 2P. Cinzel + Crimson Text both
+       retired — the pixel font is now the single typeface across the
+       game. (Crimson Text removal pass: ~55 declarations stripped
+       across css + js inline styles.) -->
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<!-- Round 67o: PokeRogue-style uniform scaling wrapper. Everything
+     visible to the player lives inside #game-root, which is a fixed
+     1920×1080 design surface. fitGameToWindow() in init.js scales the
+     whole wrapper to fit the viewport while preserving the 16:9 aspect
+     ratio (letterboxed on mismatched ratios). The CSS transform also
+     turns #game-root into the containing block for all `position:fixed`
+     descendants — so modals/overlays/tooltips inside scale and position
+     correctly even though they use position:fixed. -->
+<div id="game-root">
 <div id="kw-tooltip"></div>
 
-<!-- NAV BAR — sibling of root, always at top of page -->
+<!-- NAV BAR — sibling of root, always at top of page.
+     Round 67p: wordmark replaced with the active save name (orienting
+     the player to which save they're playing). Adventure tab's label
+     is dynamic — reflects the current adventure screen (CHAMPION /
+     AREA / BATTLE · <area name>) and is locked from clicking when
+     it's the active tab. Town tab also locks when it's active. -->
 <div id="main-nav" style="display:none;">
   <div class="nav-bar">
     <div class="nav-left">
-      <div class="nav-title">NOPOROGUE</div>
+      <div class="nav-savename" id="nav-savename"></div>
     </div>
     <div class="nav-tabs">
-      <button class="nav-tab active" id="nav-adventure" onclick="navTo('adventure')">⚔ ADVENTURE</button>
-      <button class="nav-tab" id="nav-town" onclick="navToTown()">🏘 TOWN<span id="quest-badge"></span></button>
+      <button class="nav-tab active" id="nav-adventure" onclick="navTo('adventure')"><span id="nav-adventure-label">CHAMPION</span></button>
+      <button class="nav-tab" id="nav-town" onclick="navToTown()">TOWN<span id="quest-badge"></span></button>
     </div>
     <div class="nav-right">
       <!-- Round 62f: Soul Shards counter added beside gold so the
@@ -29,7 +47,7 @@
            only readable inside the Shard Well / Summons panel). -->
       <div class="nav-gold" id="nav-gold"></div>
       <div class="nav-shards" id="nav-shards"></div>
-      <button id="btn-return-battle" onclick="returnToBattle()" style="display:none;font-family:'Cinzel',serif;font-size:9px;padding:3px 10px;background:rgba(80,30,10,.7);border:1px solid #c06020;color:#d4a843;border-radius:4px;cursor:pointer;letter-spacing:.5px;">⚔ RETURN TO BATTLE</button>
+      <button id="btn-return-battle" onclick="returnToBattle()" style="display:none;font-size:9px;padding:3px 10px;background:rgba(80,30,10,.7);border:1px solid #c06020;color:#d4a843;border-radius:4px;cursor:pointer;letter-spacing:.5px;">⚔ RETURN TO BATTLE</button>
       <button class="nav-icon-btn" onclick="openSettings()" title="Settings">⚙</button>
     </div>
   </div>
@@ -65,7 +83,13 @@
      saves; top-right cog opens settings. Round 63.
      ════════════════════════════════════════════════════════════ -->
 <div id="login-screen" class="screen">
-  <div class="login-bg"></div>
+  <!-- Round 67p: static texture.png background replaced with an
+       interactive WebGL pixel-art shader (Claude Design handoff —
+       "Enchanted Glade"). Fireflies swarm toward the cursor; the
+       cursor itself acts as a small lantern. The shade overlay
+       below stays — it darkens the background so the save card
+       reads clearly. Implementation lives in background_glade.js. -->
+  <canvas class="login-bg" id="glade-bg"></canvas>
   <div class="login-shade"></div>
   <!-- Round 65: quick mute buttons sit beside the settings cog so the
        player can silence music or SFX without diving into Settings.
@@ -78,9 +102,10 @@
     <button class="login-settings-btn nav-icon-btn" onclick="openSettings()" title="Settings">⚙</button>
   </div>
 
+  <!-- Round 67o: subtitle dropped. NOPOROGUE wordmark stands alone for
+       now; a title logo (asset) is the intended replacement later. -->
   <div class="login-title-block">
     <div class="login-title">NOPOROGUE</div>
-    <div class="login-tag">A real-time roguelite deckbuilder</div>
   </div>
 
   <!-- Save card — rendered by buildLoginScreen() in game.js. Two
@@ -186,8 +211,8 @@
         </div>
 
         <div class="cs-cr-actions">
-          <button class="btn btn-dim" id="cs-cr-view-deck" style="font-size:9px;padding:6px;flex:1;">👁 VIEW DECK</button>
-          <button class="btn btn-gold" id="cs-cr-edit-deck" style="font-size:9px;padding:6px;flex:1;">✦ EDIT DECK</button>
+          <button class="btn btn-dim" id="cs-cr-view-deck" style="font-size:13px;padding:10px 8px;flex:1;">👁 VIEW DECK</button>
+          <button class="btn btn-gold" id="cs-cr-edit-deck" style="font-size:13px;padding:10px 8px;flex:1;">✦ EDIT DECK</button>
         </div>
       </div>
     </aside>
@@ -267,16 +292,16 @@
         </div>
 
         <div class="cs-cr-actions">
-          <button class="btn btn-dim" id="ar-cr-view-deck" style="font-size:9px;padding:6px;flex:1;">👁 VIEW DECK</button>
-          <button class="btn btn-gold" id="ar-cr-edit-deck" style="font-size:9px;padding:6px;flex:1;">✦ EDIT DECK</button>
+          <button class="btn btn-dim" id="ar-cr-view-deck" style="font-size:13px;padding:10px 8px;flex:1;">👁 VIEW DECK</button>
+          <button class="btn btn-gold" id="ar-cr-edit-deck" style="font-size:13px;padding:10px 8px;flex:1;">✦ EDIT DECK</button>
         </div>
       </div>
     </aside>
 
     <div class="cs-grid-col">
       <div class="area-grid" id="area-grid"></div>
-      <div class="select-btn-row" style="display:flex;justify-content:space-between;gap:10px;">
-        <button class="btn btn-dim" style="font-size:9px;padding:8px 16px;" onclick="goToSelect()">← BACK</button>
+      <div class="select-btn-row" style="display:flex;justify-content:space-between;gap:14px;">
+        <button class="btn btn-dim" style="font-size:14px;padding:12px 22px;" onclick="goToSelect()">← BACK</button>
         <button class="btn btn-gold" id="area-confirm-btn" onclick="confirmArea()" disabled>ENTER AREA →</button>
       </div>
     </div>
@@ -290,14 +315,14 @@
 <!-- QUEST POPUP (shown in-battle instead of navigating away) -->
 <div id="quest-popup-backdrop" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:400;" onclick="closeQuestPopup()"></div>
 <div id="quest-popup" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:401;background:#0f0904;border:1px solid #5a3010;border-radius:10px;padding:18px 20px;min-width:260px;max-width:320px;">
-  <div style="font-family:'Cinzel',serif;font-size:11px;color:#d4a843;letter-spacing:1px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;">
+  <div style="font-size:11px;color:#d4a843;letter-spacing:1px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;">
     <div style="display:flex;align-items:center;gap:6px;">
       <img src="assets/icons/quest.png" style="width:20px;height:20px;image-rendering:pixelated;" onerror="this.style.display='none'">
       ACTIVE QUEST
     </div>
     <button onclick="closeQuestPopup()" style="background:none;border:1px solid #3a2010;border-radius:4px;color:#7a6030;font-size:12px;cursor:pointer;padding:2px 7px;">✕</button>
   </div>
-  <div id="qp-title" style="font-family:'Cinzel',serif;font-size:10px;color:#c09030;margin-bottom:6px;"></div>
+  <div id="qp-title" style="font-size:10px;color:#c09030;margin-bottom:6px;"></div>
   <div id="qp-desc" style="font-size:9px;color:#806040;line-height:1.5;margin-bottom:10px;"></div>
   <div style="height:3px;background:rgba(0,0,0,.5);border-radius:2px;overflow:hidden;margin-bottom:4px;">
     <div id="qp-bar" style="height:100%;background:#c09030;border-radius:2px;transition:width .3s;width:0%;"></div>
@@ -346,8 +371,12 @@
     <!-- Right side: battle counter, gold, quest, controls -->
     <div style="display:flex;align-items:center;gap:8px;margin-left:auto;flex-shrink:0;">
       <div class="tb-battle" id="battle-counter">Battle 1 of 1</div>
-      <div class="tb-gold" id="gold-d"></div>
-      <div id="quest-indicator" style="display:none;font-family:'Cinzel',serif;font-size:8px;color:#c09030;background:rgba(10,6,1,.85);border:1px solid #5a3010;border-radius:5px;padding:3px 8px;max-width:140px;cursor:pointer;flex-shrink:0;" onclick="openQuestPopup()">
+      <!-- Round 67p: removed in-combat gold display. The nav-bar gold
+           counter at the top already shows the live total — having a
+           second one in the combat HUD was redundant. JS calls that
+           targeted #gold-d (updateTopBar etc.) silently no-op now. -->
+      <div class="tb-gold" id="gold-d" style="display:none;"></div>
+      <div id="quest-indicator" style="display:none;font-size:8px;color:#c09030;background:rgba(10,6,1,.85);border:1px solid #5a3010;border-radius:5px;padding:3px 8px;max-width:140px;cursor:pointer;flex-shrink:0;" onclick="openQuestPopup()">
         <div style="display:flex;align-items:center;gap:4px;color:#6a4010;letter-spacing:.5px;margin-bottom:1px;white-space:nowrap;">
           <img src="assets/icons/quest.png" style="width:14px;height:14px;image-rendering:pixelated;vertical-align:middle;" onerror="this.style.display='none'">
           QUEST
@@ -433,7 +462,7 @@
 
   <!-- HAND AREA -->
   <div class="hand-area">
-    <div id="kb-hints" style="display:none;text-align:center;font-size:8px;color:#2a1808;letter-spacing:.5px;font-family:'Cinzel',serif;padding:2px 0;flex-shrink:0;">
+    <div id="kb-hints" style="display:none;text-align:center;font-size:8px;color:#2a1808;letter-spacing:.5px;padding:2px 0;flex-shrink:0;">
       [1–7] play &nbsp;·&nbsp; [←→] select &nbsp;·&nbsp; [Enter] confirm &nbsp;·&nbsp; [Space] innate &nbsp;·&nbsp; [P] pause &nbsp;·&nbsp; [D] deck &nbsp;·&nbsp; [Esc] close
     </div>
 
@@ -862,18 +891,22 @@
 </div>
 
 <!-- BEGIN BATTLE MODAL -->
+<!-- Round 67p: pre-fight begin-battle modal scaled up to match
+     combat HUD. Bigger panel (max 400→560 wide, padding bumped),
+     bigger title / stats / innate block. Enemy portrait already at
+     192 (set in showBeginBattleModal). -->
 <div id="begin-battle-modal" style="display:none;position:fixed;inset:0;z-index:500;background:rgba(0,0,0,.75);align-items:center;justify-content:center;">
-  <div style="background:#0e0802;border:1px solid #6a4010;border-radius:12px;padding:24px 28px;min-width:280px;max-width:400px;width:90%;text-align:center;box-shadow:0 0 60px rgba(0,0,0,.9);animation:tut-slidein .2s ease-out;">
-    <div style="margin-bottom:10px;display:flex;align-items:center;justify-content:center;" id="bbm-enemy-icon">👺</div>
-    <div style="font-family:'Cinzel',serif;font-size:14px;color:#d4a843;letter-spacing:2px;margin-bottom:4px;" id="bbm-enemy-name">Enemy</div>
-    <div style="font-size:9px;color:#5a4020;margin-bottom:14px;" id="bbm-enemy-desc"></div>
-    <div style="display:flex;justify-content:center;gap:12px;margin-bottom:16px;" id="bbm-enemy-stats"></div>
-    <div style="background:rgba(80,40,0,.15);border:1px solid #3a2010;border-radius:6px;padding:8px 12px;margin-bottom:16px;text-align:left;" id="bbm-innate-block" style="display:none;">
-      <div style="font-size:8px;color:#c09030;font-family:'Cinzel',serif;margin-bottom:3px;" id="bbm-innate-name"></div>
-      <div style="font-size:8px;color:#806040;line-height:1.5;" id="bbm-innate-desc"></div>
+  <div style="background:#0e0802;border:1px solid #6a4010;border-radius:12px;padding:32px 38px;min-width:380px;max-width:560px;width:90%;text-align:center;box-shadow:0 0 60px rgba(0,0,0,.9);animation:tut-slidein .2s ease-out;">
+    <div style="margin-bottom:16px;display:flex;align-items:center;justify-content:center;" id="bbm-enemy-icon">👺</div>
+    <div style="font-size:22px;color:#d4a843;letter-spacing:2px;margin-bottom:8px;" id="bbm-enemy-name">Enemy</div>
+    <div style="font-size:13px;color:#5a4020;margin-bottom:20px;" id="bbm-enemy-desc"></div>
+    <div style="display:flex;justify-content:center;gap:18px;margin-bottom:22px;" id="bbm-enemy-stats"></div>
+    <div style="background:rgba(80,40,0,.15);border:1px solid #3a2010;border-radius:6px;padding:14px 18px;margin-bottom:22px;text-align:left;" id="bbm-innate-block" style="display:none;">
+      <div style="font-size:12px;color:#c09030;margin-bottom:6px;letter-spacing:1px;" id="bbm-innate-name"></div>
+      <div style="font-size:12px;color:#806040;line-height:1.5;" id="bbm-innate-desc"></div>
     </div>
-    <button class="btn btn-gold" style="width:100%;font-size:13px;padding:12px;" onclick="beginBattleFromModal()">⚔ BEGIN BATTLE</button>
-    <button class="btn btn-dim" style="width:100%;font-size:9px;padding:6px;margin-top:6px;" onclick="showDeckView()">View Deck First</button>
+    <button class="btn btn-gold" style="width:100%;font-size:18px;padding:16px;" onclick="beginBattleFromModal()">⚔ BEGIN BATTLE</button>
+    <button class="btn btn-dim" style="width:100%;font-size:13px;padding:10px;margin-top:10px;" onclick="showDeckView()">View Deck First</button>
   </div>
 </div>
 
@@ -883,20 +916,20 @@
     <div style="display:flex;align-items:flex-start;gap:16px;">
       <div id="tut-icon" style="font-size:32px;flex-shrink:0;line-height:1;"></div>
       <div style="flex:1;min-width:0;">
-        <div id="tut-title" style="font-family:'Cinzel',serif;font-size:15px;color:#d4a843;letter-spacing:1.5px;margin-bottom:10px;"></div>
+        <div id="tut-title" style="font-size:15px;color:#d4a843;letter-spacing:1.5px;margin-bottom:10px;"></div>
         <div id="tut-body" style="font-size:12px;color:#a08060;line-height:1.8;"></div>
       </div>
     </div>
     <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end;align-items:center;">
-      <span id="tut-step" style="font-size:9px;color:#4a3010;flex:1;font-family:'Cinzel',serif;"></span>
-      <button onclick="dismissTutorial()" style="font-family:'Cinzel',serif;font-size:10px;padding:8px 16px;border-radius:4px;border:1px solid #3a2010;background:transparent;color:#5a4020;cursor:pointer;">Dismiss</button>
-      <button onclick="dismissAllTutorials()" style="font-family:'Cinzel',serif;font-size:10px;padding:8px 16px;border-radius:4px;border:1px solid #2a1808;background:transparent;color:#3a2010;cursor:pointer;">Disable All Tips</button>
-      <button id="tut-next-btn" onclick="tutorialNext()" style="font-family:'Cinzel',serif;font-size:10px;padding:8px 20px;border-radius:4px;border:1px solid #c09030;background:rgba(30,18,4,.8);color:#d4a843;cursor:pointer;display:none;">Next →</button>
+      <span id="tut-step" style="font-size:9px;color:#4a3010;flex:1;"></span>
+      <button onclick="dismissTutorial()" style="font-size:10px;padding:8px 16px;border-radius:4px;border:1px solid #3a2010;background:transparent;color:#5a4020;cursor:pointer;">Dismiss</button>
+      <button onclick="dismissAllTutorials()" style="font-size:10px;padding:8px 16px;border-radius:4px;border:1px solid #2a1808;background:transparent;color:#3a2010;cursor:pointer;">Disable All Tips</button>
+      <button id="tut-next-btn" onclick="tutorialNext()" style="font-size:10px;padding:8px 20px;border-radius:4px;border:1px solid #c09030;background:rgba(30,18,4,.8);color:#d4a843;cursor:pointer;display:none;">Next →</button>
     </div>
   </div>
 </div>
 
-<div id="creature-tuner" style="display:none;position:fixed;bottom:16px;right:16px;z-index:9999;background:rgba(10,6,1,.95);border:1px solid #6a4010;border-radius:8px;padding:10px 14px;font-family:'Cinzel',serif;font-size:10px;color:#d4a843;min-width:200px;box-shadow:0 4px 20px rgba(0,0,0,.8);">
+<div id="creature-tuner" style="display:none;position:fixed;bottom:16px;right:16px;z-index:9999;background:rgba(10,6,1,.95);border:1px solid #6a4010;border-radius:8px;padding:10px 14px;font-size:10px;color:#d4a843;min-width:200px;box-shadow:0 4px 20px rgba(0,0,0,.8);">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
     <span style="letter-spacing:1px;">CREATURE SIZE</span>
     <button onclick="document.getElementById('creature-tuner').style.display='none'" style="background:none;border:none;color:#5a4020;cursor:pointer;font-size:14px;padding:0 2px;">✕</button>
@@ -912,7 +945,7 @@
 
 <!-- CHEST OPENING OVERLAY -->
 <div id="chest-overlay" style="display:none;position:fixed;inset:0;z-index:400;background:rgba(4,2,0,.96);flex-direction:column;align-items:center;justify-content:center;gap:0;">
-  <div style="font-family:'Cinzel',serif;font-size:12px;color:#7a6030;letter-spacing:4px;margin-bottom:24px;" id="chest-ov-label">OPENING CHEST</div>
+  <div style="font-size:12px;color:#7a6030;letter-spacing:4px;margin-bottom:24px;" id="chest-ov-label">OPENING CHEST</div>
   <div class="chest-ov-icon" id="chest-ov-icon">📦</div>
   <div class="chest-loot-list" id="chest-loot-list"></div>
   <button class="btn btn-gold" id="chest-ov-btn" style="display:none;margin-top:20px;font-size:13px;padding:12px 30px;" onclick="closeChestOverlay()">COLLECT LOOT ✦</button>
@@ -928,14 +961,19 @@
 </div>
 
 <!-- OVERLAYS -->
+<!-- Round 67p: defeat flow matches victory — a single CONTINUE button
+     returns the player to the champion-select hub. RALLY & RETRY
+     dropped (and retryBattle() removed in game.js) so defeats can't
+     be redone — a run lost is a run lost. The fall consequence (level
+     reset, gold loss) is already applied by doDefeat() before this
+     overlay shows. -->
 <div id="defeat-overlay" style="display:none;position:fixed;inset:0;z-index:150;pointer-events:none;">
   <div class="defeat-panel">
     <div class="ov-title defeat">✦ DEFEATED ✦</div>
     <div class="ov-sub" id="defeat-sub">Lost 10 gold.</div>
     <div class="defeat-log-hint">↓ Combat log below — review what happened</div>
     <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;pointer-events:all;">
-      <button class="btn btn-gold" onclick="retryBattle()">RALLY & RETRY</button>
-      <button class="btn btn-dim" onclick="goToHub()">CHANGE CHAMPION</button>
+      <button class="btn btn-gold" style="font-size:16px;padding:14px 36px;letter-spacing:2px;" onclick="goToHub()">CONTINUE</button>
     </div>
   </div>
 </div>
@@ -948,8 +986,8 @@
       <div class="reward-section-title" id="reward-section-title">CHOOSE ONE REWARD</div>
       <div class="reward-row" id="reward-all-row"></div>
       <div class="reward-actions" id="reward-actions">
-        <button class="btn btn-dim" style="font-size:10px;" onclick="openDeckPopup()">VIEW DECK</button>
-        <button class="btn btn-dim" style="font-size:10px;" onclick="skipAll()">SKIP</button>
+        <button class="btn btn-dim" style="font-size:14px;padding:10px 20px;" onclick="openDeckPopup()">VIEW DECK</button>
+        <button class="btn btn-dim" style="font-size:14px;padding:10px 20px;" onclick="skipAll()">SKIP</button>
       </div>
       <div class="reward-countdown-lbl" id="reward-countdown-lbl"></div>
       <div class="reward-countdown-wrap"><div class="reward-countdown-bar" id="reward-countdown-bar"></div></div>
@@ -1003,35 +1041,37 @@
       <div id="rr-quests-list"></div>
     </div>
 
-    <button class="btn btn-gold" id="rr-continue" style="margin-top:18px;width:100%;font-size:11px;letter-spacing:2.5px;padding:10px;opacity:0;pointer-events:none;transition:opacity .25s;" onclick="_runResultsContinue()">CONTINUE</button>
+    <button class="btn btn-gold" id="rr-continue" style="margin-top:24px;width:100%;font-size:16px;letter-spacing:2.5px;padding:14px;opacity:0;pointer-events:none;transition:opacity .25s;" onclick="_runResultsContinue()">CONTINUE</button>
   </div>
 </div>
 
 <!-- SPOILS CARD PICK -->
+<!-- Round 67p: post-fight rewards card scaled up to match combat HUD. -->
 <div id="spoils-overlay" style="display:none;position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.82);align-items:center;justify-content:center;">
-  <div style="background:rgba(10,6,1,.97);border:1px solid #7a5010;border-radius:12px;padding:22px 26px;max-width:480px;width:95%;text-align:center;box-shadow:0 0 40px rgba(0,0,0,.9);">
-    <div style="font-family:'Cinzel',serif;font-size:11px;color:#d4a843;letter-spacing:3px;margin-bottom:4px;">SPOILS OF WAR</div>
-    <div style="font-size:9px;color:#5a4020;margin-bottom:18px;letter-spacing:.5px;">Resources earned from your victory</div>
-    <div id="spoils-rewards-row" style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-bottom:20px;"></div>
-    <div id="spoils-card-earned" style="display:none;margin-bottom:16px;padding:12px;background:rgba(20,10,0,.6);border:1px solid #3a2010;border-radius:8px;">
-      <div style="font-size:8px;color:#7a6030;letter-spacing:1px;margin-bottom:8px;font-family:'Cinzel',serif;">CARD ADDED TO SANCTUM COLLECTION</div>
-      <div id="spoils-card-inner" style="display:flex;align-items:center;justify-content:center;gap:10px;"></div>
+  <div style="background:rgba(10,6,1,.97);border:1px solid #7a5010;border-radius:12px;padding:32px 38px;max-width:680px;width:95%;text-align:center;box-shadow:0 0 40px rgba(0,0,0,.9);">
+    <div style="font-size:18px;color:#d4a843;letter-spacing:3px;margin-bottom:8px;">SPOILS OF WAR</div>
+    <div style="font-size:13px;color:#5a4020;margin-bottom:26px;letter-spacing:.5px;">Resources earned from your victory</div>
+    <div id="spoils-rewards-row" style="display:flex;gap:18px;justify-content:center;flex-wrap:wrap;margin-bottom:26px;"></div>
+    <div id="spoils-card-earned" style="display:none;margin-bottom:22px;padding:18px;background:rgba(20,10,0,.6);border:1px solid #3a2010;border-radius:8px;">
+      <div style="font-size:11px;color:#7a6030;letter-spacing:1px;margin-bottom:12px;">CARD ADDED TO SANCTUM COLLECTION</div>
+      <div id="spoils-card-inner" style="display:flex;align-items:center;justify-content:center;gap:14px;"></div>
     </div>
-    <button class="btn btn-gold" style="font-size:10px;padding:10px 28px;" onclick="closeSpoilsOverlay()">COLLECT ✦</button>
+    <button class="btn btn-gold" style="font-size:14px;padding:14px 36px;letter-spacing:2px;" onclick="closeSpoilsOverlay()">COLLECT ✦</button>
   </div>
 </div>
 
+<!-- Round 67p: between-fights toast scaled up to match HUD bumps. -->
 <div id="gold-toast" style="display:none;position:fixed;inset:0;z-index:170;align-items:center;justify-content:center;">
-  <div id="gold-toast-inner" style="background:rgba(10,6,1,.96);border:1px solid #7a5010;border-radius:10px;padding:16px 24px;text-align:center;min-width:240px;max-width:300px;box-shadow:0 0 30px rgba(0,0,0,.8);animation:lu-toast-in .25s ease-out;">
-    <div style="font-family:'Cinzel',serif;font-size:9px;color:#60a060;letter-spacing:2px;margin-bottom:10px;">✦ ENEMY DEFEATED ✦</div>
-    <div style="font-size:8px;color:#5a4020;letter-spacing:2px;font-family:'Cinzel',serif;margin-bottom:6px;">NEXT ENEMY</div>
-    <div id="gold-toast-next-icon" style="font-size:32px;margin-bottom:4px;">👺</div>
-    <div id="gold-toast-next" style="font-size:12px;color:#d4a843;font-family:'Cinzel',serif;letter-spacing:1px;"></div>
-    <div id="gold-toast-next-hp" style="font-size:9px;color:#806040;margin-top:3px;margin-bottom:12px;"></div>
-    <div style="height:3px;background:rgba(0,0,0,.5);border-radius:3px;overflow:hidden;margin-bottom:6px;">
+  <div id="gold-toast-inner" style="background:rgba(10,6,1,.96);border:1px solid #7a5010;border-radius:10px;padding:24px 32px;text-align:center;min-width:340px;max-width:420px;box-shadow:0 0 30px rgba(0,0,0,.8);animation:lu-toast-in .25s ease-out;">
+    <div style="font-size:13px;color:#60a060;letter-spacing:2px;margin-bottom:14px;">✦ ENEMY DEFEATED ✦</div>
+    <div style="font-size:11px;color:#5a4020;letter-spacing:2px;margin-bottom:8px;">NEXT ENEMY</div>
+    <div id="gold-toast-next-icon" style="font-size:44px;margin-bottom:6px;">👺</div>
+    <div id="gold-toast-next" style="font-size:16px;color:#d4a843;letter-spacing:1px;"></div>
+    <div id="gold-toast-next-hp" style="font-size:12px;color:#806040;margin-top:5px;margin-bottom:18px;"></div>
+    <div style="height:4px;background:rgba(0,0,0,.5);border-radius:3px;overflow:hidden;margin-bottom:8px;">
       <div id="gold-toast-bar" style="height:100%;width:100%;background:#c09030;border-radius:3px;transition:width .1s linear;"></div>
     </div>
-    <div id="gold-toast-lbl" style="font-size:8px;color:#5a4020;font-family:'Cinzel',serif;letter-spacing:.3px;">Continuing in 3s...</div>
+    <div id="gold-toast-lbl" style="font-size:11px;color:#5a4020;letter-spacing:.3px;">Continuing in 3s...</div>
   </div>
 </div>
 
@@ -1132,23 +1172,23 @@
   </div>
   <div class="champ-panel-body">
     <div class="champ-panel-portrait" id="csp-portrait">🧙</div>
-    <div id="csp-name" style="font-family:'Cinzel',serif;font-size:14px;color:#d4a843;letter-spacing:1px;margin-bottom:2px;text-align:center;"></div>
+    <div id="csp-name" style="font-size:14px;color:#d4a843;letter-spacing:1px;margin-bottom:2px;text-align:center;"></div>
     <div id="csp-role" style="font-size:8px;color:#7a6030;letter-spacing:2px;margin-bottom:12px;text-align:center;"></div>
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:12px;">
       <div style="text-align:center;background:rgba(0,0,0,.3);border-radius:5px;padding:7px 4px;">
-        <div id="csp-level" style="font-family:'Cinzel',serif;font-size:16px;color:#d4a843;"></div>
+        <div id="csp-level" style="font-size:16px;color:#d4a843;"></div>
         <div style="font-size:7px;color:#5a4020;margin-top:2px;">LVL</div>
       </div>
       <div style="text-align:center;background:rgba(0,0,0,.3);border-radius:5px;padding:7px 4px;">
-        <div id="csp-str" style="font-family:'Cinzel',serif;font-size:16px;color:#c05050;"></div>
+        <div id="csp-str" style="font-size:16px;color:#c05050;"></div>
         <div style="font-size:7px;color:#5a4020;margin-top:2px;">STR</div>
       </div>
       <div style="text-align:center;background:rgba(0,0,0,.3);border-radius:5px;padding:7px 4px;">
-        <div id="csp-agi" style="font-family:'Cinzel',serif;font-size:16px;color:#c0a030;"></div>
+        <div id="csp-agi" style="font-size:16px;color:#c0a030;"></div>
         <div style="font-size:7px;color:#5a4020;margin-top:2px;">AGI</div>
       </div>
       <div style="text-align:center;background:rgba(0,0,0,.3);border-radius:5px;padding:7px 4px;">
-        <div id="csp-wis" style="font-family:'Cinzel',serif;font-size:16px;color:#4080c0;"></div>
+        <div id="csp-wis" style="font-size:16px;color:#4080c0;"></div>
         <div style="font-size:7px;color:#5a4020;margin-top:2px;">WIS</div>
       </div>
     </div>
@@ -1160,12 +1200,12 @@
         <div id="csp-xp-bar" style="height:100%;background:#c09030;border-radius:2px;transition:width .3s;width:0%;"></div>
       </div>
     </div>
-    <div style="font-family:'Cinzel',serif;font-size:8px;color:#6a5020;letter-spacing:2px;margin-bottom:6px;">INNATE</div>
+    <div style="font-size:8px;color:#6a5020;letter-spacing:2px;margin-bottom:6px;">INNATE</div>
     <div style="background:rgba(80,40,0,.15);border:1px solid #2a1808;border-radius:6px;padding:10px;margin-bottom:14px;">
-      <div id="csp-innate-name" style="font-size:9px;color:#c09030;font-family:'Cinzel',serif;margin-bottom:4px;"></div>
+      <div id="csp-innate-name" style="font-size:9px;color:#c09030;margin-bottom:4px;"></div>
       <div id="csp-innate-desc" style="font-size:8px;color:#806040;line-height:1.5;"></div>
     </div>
-    <div style="font-family:'Cinzel',serif;font-size:8px;color:#6a5020;letter-spacing:2px;margin-bottom:6px;">DECK <span id="csp-deck-count" style="color:#3a2010;font-size:7px;letter-spacing:0;"></span></div>
+    <div style="font-size:8px;color:#6a5020;letter-spacing:2px;margin-bottom:6px;">DECK <span id="csp-deck-count" style="color:#3a2010;font-size:7px;letter-spacing:0;"></span></div>
     <div id="csp-deck-summary" style="font-size:8px;color:#806040;line-height:1.8;margin-bottom:16px;"></div>
   </div>
   <div class="champ-panel-footer">
@@ -1275,6 +1315,7 @@
   </div>
 </div>
 
+</div><!-- /#game-root -->
 
   <!-- ── Core engine (defines all functions + empty data stubs) ── -->
   <script src="game.js?v=2"></script>
@@ -1340,6 +1381,11 @@
 
   <!-- ── Boot: runs after all data is loaded ── -->
   <script src="init.js"></script>
+
+  <!-- ── Login-screen background: Enchanted Glade WebGL shader.
+        Loads after init.js because it uses clientToGameCoords()
+        defined there. Self-starting; pauses when login not active. -->
+  <script src="background_glade.js"></script>
 
   <!-- ── Build innate effects/triggers registry LAST — after everything ── -->
   <!-- Fallback: re-reads effect/triggers from creature files if stripped -->

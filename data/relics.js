@@ -33,6 +33,17 @@ var RELICS = {
     apply: function(gs){ gs._relicBonusStartCards = (gs._relicBonusStartCards||0) + 2; },
   },
 
+  // Round 67p: Safety Net — first relic available in the early-game
+  // quest line. Trades 100g on defeat to preserve the champion's
+  // levels (XP still resets to 0, so level progress is lost but the
+  // tier-up doesn't unwind). Death-revive logic lives in doDefeat.
+  safety_net: {
+    id:'safety_net', name:'Safety Net', icon:'🪢', tier:'base',
+    desc:'On defeat: pay 100g to keep your levels (XP resets to 0). Auto-activates if you can afford it.',
+    flavor:'"For every fall, a fold of cloth."',
+    apply: function(gs){ gs._relicSafetyNet = true; },
+  },
+
   // ── Ruby tier (build-enabling) ────────────────────────────
 
   overflow_crystal: {
@@ -76,6 +87,12 @@ var RELIC_CRAFT_TIMES = {
 
 // Material cost per relic — {materialId: count}
 var RELIC_RECIPES = {
+  // Round 67p: Safety Net is the starter recipe — only one unlocked by
+  // default on a new save. Other recipes are gated by story-quest
+  // progress (see isRecipeUnlocked / PERSIST.unlockedRelicRecipes).
+  // Sewer-area mats so it's craftable straight after the first quest
+  // chain landing the player in the Sewers.
+  safety_net:         {tier:'base',    mats:{slick_stone:3, bog_iron:2}},
   wildfire_focus:     {tier:'base',    mats:{slick_stone:3, rancid_bile:2}},
   gamblers_coin:      {tier:'base',    mats:{bog_iron:3, vault_bronze:1}},
   quick_draw_holster: {tier:'base',    mats:{thornwood_resin:4, harpy_talon:1}},

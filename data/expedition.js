@@ -553,12 +553,12 @@ function _showExpeditionRewardUI(reward, champId, slotIdx){
 
   var inner = document.createElement('div');
   inner.style.cssText='background:#0e0601;border:2px solid #c09030;border-radius:12px;padding:24px 28px;min-width:260px;max-width:340px;text-align:center;';
-  inner.innerHTML='<div style="font-family:Cinzel,serif;font-size:14px;color:#d4a843;letter-spacing:2px;margin-bottom:4px;">EXPEDITION COMPLETE</div>'
+  inner.innerHTML='<div style="font-size:14px;color:#d4a843;letter-spacing:2px;margin-bottom:4px;">EXPEDITION COMPLETE</div>'
     +'<div style="font-size:22px;margin-bottom:4px;">'+(ch?ch.icon:'?')+'</div>'
-    +'<div style="font-family:Cinzel,serif;font-size:9px;color:#8a6030;letter-spacing:1px;margin-bottom:16px;">'+(ch?ch.name:'Champion')+'</div>'
+    +'<div style="font-size:9px;color:#8a6030;letter-spacing:1px;margin-bottom:16px;">'+(ch?ch.name:'Champion')+'</div>'
     +'<div id="exp-reward-drops" style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px;"></div>'
     +'<div id="exp-reward-bonuses" style="margin-bottom:12px;"></div>'
-    +'<button onclick="_closeExpeditionReward()" style="font-family:Cinzel,serif;font-size:9px;padding:7px 20px;border-radius:4px;border:1px solid #c09030;background:rgba(40,22,4,.9);color:#d4a843;cursor:pointer;letter-spacing:1px;">COLLECT</button>';
+    +'<button onclick="_closeExpeditionReward()" style="font-size:9px;padding:7px 20px;border-radius:4px;border:1px solid #c09030;background:rgba(40,22,4,.9);color:#d4a843;cursor:pointer;letter-spacing:1px;">COLLECT</button>';
   panel.innerHTML='';
   panel.appendChild(inner);
   panel.style.display='flex';
@@ -579,8 +579,8 @@ function _showExpeditionRewardUI(reward, champId, slotIdx){
       var row=document.createElement('div');
       row.style.cssText='display:flex;align-items:center;gap:10px;background:rgba(20,10,2,.8);border:1px solid #2a1808;border-radius:4px;padding:5px 10px;opacity:0;transition:opacity .3s;';
       row.innerHTML='<span style="font-size:16px;">'+item.icon+'</span>'
-        +'<span style="font-family:Cinzel,serif;font-size:9px;color:#8a6030;flex:1;text-align:left;">'+item.text+'</span>'
-        +'<span style="font-family:Cinzel,serif;font-size:11px;color:'+item.color+';">'+item.qty+'</span>';
+        +'<span style="font-size:9px;color:#8a6030;flex:1;text-align:left;">'+item.text+'</span>'
+        +'<span style="font-size:11px;color:'+item.color+';">'+item.qty+'</span>';
       dropsEl.appendChild(row);
       requestAnimationFrame(function(){ row.style.opacity='1'; });
     }, delay);
@@ -734,8 +734,8 @@ function _expPickChamp(){
 
   var rosterCount = _expSendChamps.length;
   var headerLine = 'SELECT CHAMPIONS — '+rosterCount+' of '+EXP_MAX_ROSTER+' chosen';
-  var html = '<div style="font-family:Cinzel,serif;font-size:12px;color:#d4a843;letter-spacing:3px;margin-bottom:6px;">'+headerLine+'</div>'
-    +'<div style="font-family:Cinzel,serif;font-size:8px;color:#7a6030;letter-spacing:1px;margin-bottom:14px;">click to add or remove · primary <span style="color:#9adc7e;">AGI</span>, secondaries at 25%</div>'
+  var html = '<div style="font-size:12px;color:#d4a843;letter-spacing:3px;margin-bottom:6px;">'+headerLine+'</div>'
+    +'<div style="font-size:8px;color:#7a6030;letter-spacing:1px;margin-bottom:14px;">click to add or remove · primary <span style="color:#9adc7e;">AGI</span>, secondaries at 25%</div>'
     +'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;">';
 
   available.forEach(function(id){
@@ -751,8 +751,8 @@ function _expPickChamp(){
       : ' onclick="_expToggleChamp(\''+id+'\');document.getElementById(\'exp-popup\').remove();"';
     html += '<div class="'+classes+'" style="position:relative;padding:12px 8px;"'+clickHandler+'>'
       +(inRoster?'<div style="position:absolute;top:4px;right:6px;font-size:11px;color:#9adc7e;">✓</div>':'')
-      +'<div style="margin-bottom:6px;">'+creatureImgHTML(id,ch.icon,'44px')+'</div>'
-      +'<div style="font-family:Cinzel,serif;font-size:10px;color:#c0a060;">'+ch.name+'</div>'
+      +'<div style="margin-bottom:6px;">'+creatureImgHTML(id,ch.icon,'32px')+'</div>'
+      +'<div style="font-size:10px;color:#c0a060;">'+ch.name+'</div>'
       +'<div style="font-size:7px;color:#5a4020;">Lv.'+cp.level+' '+getAscensionChipHTML(id)+'</div>'
       +'<div style="font-size:7px;color:#4a3020;margin-top:3px;"><span style="color:#e88060;">STR</span>:'+Math.round(cp.stats.str)+' <span style="color:#9adc7e;">AGI</span>:'+Math.round(cp.stats.agi)+' <span style="color:#9ad8e8;">WIS</span>:'+Math.round(cp.stats.wis)+'</div>'
       +'<div style="font-size:7px;color:'+bonusColor+';margin-top:3px;letter-spacing:.5px;">−'+bonusPct+'% TIME</div>'
@@ -765,7 +765,7 @@ function _expPickChamp(){
   if(rosterCount > 0){
     html += '<div style="margin-top:14px;text-align:right;">'
       +'<button onclick="document.getElementById(\'exp-popup\').remove();" '
-      +'style="font-family:Cinzel,serif;font-size:10px;letter-spacing:1.5px;padding:8px 18px;background:linear-gradient(180deg,#2a1808,#1a1208);border:1px solid #5a3a18;color:#d4a843;cursor:pointer;border-radius:3px;">'
+      +'style="font-size:10px;letter-spacing:1.5px;padding:8px 18px;background:linear-gradient(180deg,#2a1808,#1a1208);border:1px solid #5a3a18;color:#d4a843;cursor:pointer;border-radius:3px;">'
       +'DONE</button>'
       +'</div>';
   }
@@ -790,7 +790,7 @@ function _expPickArea(){
 
   var visited = AREA_DEFS.filter(function(a){ return PERSIST.areaRuns && (PERSIST.areaRuns[a.id]||0) > 0; });
 
-  var html = '<div style="font-family:Cinzel,serif;font-size:12px;color:#d4a843;letter-spacing:3px;margin-bottom:14px;">SELECT LOCATION</div>'
+  var html = '<div style="font-size:12px;color:#d4a843;letter-spacing:3px;margin-bottom:14px;">SELECT LOCATION</div>'
     +'<div style="display:flex;flex-direction:column;gap:8px;">';
 
   visited.forEach(function(area){
@@ -806,7 +806,7 @@ function _expPickArea(){
     html += '<div class="exp-pick-option" style="flex-direction:row;align-items:center;padding:12px 16px;gap:14px;cursor:pointer;" onclick="document.getElementById(\'exp-popup\').remove();_expSendArea=\''+area.id+'\';_renderHallContent();">'
       +'<div style="width:50px;height:50px;background:'+(area.bg||'#1a1208')+';border:1px solid #3a2818;border-radius:6px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">'+areaImgHTML(area.id,area.icon,'36px')+'</div>'
       +'<div style="flex:1;min-width:0;">'
-        +'<div style="font-family:Cinzel,serif;font-size:11px;color:#c0a060;">'+area.name+'</div>'
+        +'<div style="font-size:11px;color:#c0a060;">'+area.name+'</div>'
         +'<div style="font-size:8px;color:#5a4020;margin-top:2px;">Lv.'+area.levelRange[0]+'–'+area.levelRange[1]+'</div>'
         +'<div style="margin-top:4px;line-height:1.8;">'+matHtml+'</div>'
       +'</div>'
@@ -833,7 +833,7 @@ function _expPickType(){
   box.style.cssText = 'background:#1a0f06;border:1px solid #5a3418;border-radius:10px;padding:20px 24px;width:min(500px,90vw);max-height:70vh;overflow-y:auto;box-shadow:0 0 40px rgba(0,0,0,.8);';
   box.onclick = function(e){ e.stopPropagation(); };
 
-  var html = '<div style="font-family:Cinzel,serif;font-size:12px;color:#d4a843;letter-spacing:3px;margin-bottom:14px;">SELECT DURATION</div>'
+  var html = '<div style="font-size:12px;color:#d4a843;letter-spacing:3px;margin-bottom:14px;">SELECT DURATION</div>'
     +'<div style="display:flex;flex-direction:column;gap:6px;">';
 
   if(typeof EXPEDITION_TYPES !== 'undefined'){
@@ -843,10 +843,10 @@ function _expPickType(){
         +(unlocked?'onclick="document.getElementById(\'exp-popup\').remove();_expSendType=\''+def.id+'\';_renderHallContent();"':'')+'>'
         +'<span style="font-size:20px;flex-shrink:0;">'+def.icon+'</span>'
         +'<div style="flex:1;">'
-          +'<div style="font-family:Cinzel,serif;font-size:11px;color:'+(unlocked?'#c0a060':'#3a2010')+';">'+def.name+'</div>'
+          +'<div style="font-size:11px;color:'+(unlocked?'#c0a060':'#3a2010')+';">'+def.name+'</div>'
           +'<div style="font-size:8px;color:'+(unlocked?'#5a4020':'#2a1808')+';">'+def.desc+'</div>'
         +'</div>'
-        +'<div style="font-family:Cinzel,serif;font-size:11px;color:'+(unlocked?'#d4a843':'#3a2010')+';">'+fmtExpTime(def.durationMs)+'</div>'
+        +'<div style="font-size:11px;color:'+(unlocked?'#d4a843':'#3a2010')+';">'+fmtExpTime(def.durationMs)+'</div>'
         +(unlocked?'':'<div style="font-size:8px;color:#3a2010;margin-left:4px;">🔒</div>')
         +'</div>';
     });

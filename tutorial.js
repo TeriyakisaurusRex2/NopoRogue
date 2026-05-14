@@ -695,12 +695,12 @@ function _tutorialFinishToChampSelect(){
   if(ov) ov.classList.remove('show');
   if(_tutorial.fallbackT){ clearTimeout(_tutorial.fallbackT); _tutorial.fallbackT = null; }
   PERSIST.tutorialComplete = true;
-  // Round 67l: story quest activation TABLED for ship. The hook is
-  // intentionally disabled (not deleted) so the story arc can be
-  // re-enabled by uncommenting these lines once the content is
-  // finalised. STORY_QUESTS / _activateStoryQuest / etc all remain
-  // in the file ready to wire back up.
-  // _activateStoryQuest(STORY_QUESTS.pick_first_champion);
+  // Round 67p: kick off the starter story-quest chain. story_reach_lv2
+  // is the first link; subsequent quests are added via the .next chain
+  // when each one is claimed (see claimQuest in town.js).
+  if(typeof STORY_QUESTS !== 'undefined' && STORY_QUESTS.story_reach_lv2 && typeof _activateStoryQuest === 'function'){
+    _activateStoryQuest(STORY_QUESTS.story_reach_lv2);
+  }
   if(typeof savePersist === 'function') savePersist();
   // Reset transient run state — gs is now done.
   if(typeof gs !== 'undefined') gs = null;
@@ -732,6 +732,18 @@ function _tutorialFinishToChampSelect(){
 // Each story quest defines its own completion trigger; tutorial.js
 // owns the trigger wiring (e.g. _completeStoryQuest is called from
 // _dismissChampStory when the player closes a champion's intro).
+// Round 67p: starter quest chain. Activates after the tutorial fight
+// (replacing the older pick_first_champion stub) and walks the player
+// through: hitting level 2, editing their deck, hitting level 3, then
+// crafting & equipping the Safety Net relic. Each quest's `next` field
+// points to the id of the quest that activates on claim; null ends the
+// chain. `onClaim` runs side-effects (e.g. unlocking buildings) after
+// rewards are granted.
+//
+// Auto-skip: when a quest is activated, _activateStoryQuest checks the
+// goal against current PERSIST state and marks it claimable immediately
+// if the player has already met the bar (e.g. already level 3 by the
+// time the chain reaches story_reach_lv3).
 var STORY_QUESTS = {
   pick_first_champion: {
     id:     'story_pick_first_champion',
@@ -743,11 +755,90 @@ var STORY_QUESTS = {
     rewards:[],
     issuer: '???',
   },
+
+  story_reach_lv2: {
+    id:           'story_reach_lv2',
+    title:        'First Steps',
+    desc:         'Earn enough from a run to reach level 2. The road begins to ask things of you.',
+    type:         'reach_level',
+    targetLevel:  2,
+    target:       1,
+    isStory:      true,
+    rewards:      [{type:'gold', icon:'✦', amount:50, label:'Gold'}],
+    issuer:       '???',
+    next:         'story_edit_deck',
+  },
+
+  story_edit_deck: {
+    id:           'story_edit_deck',
+    title:        'Hone Your Cards',
+    desc:         'Open your deck and save a change — shape the run before it shapes you.',
+    type:         'edit_deck',
+    target:       1,
+    isStory:      true,
+    rewards:      [{type:'gold', icon:'✦', amount:30, label:'Gold'}],
+    issuer:       '???',
+    next:         'story_reach_lv3',
+  },
+
+  story_reach_lv3: {
+    id:           'story_reach_lv3',
+    title:        'Find Your Stride',
+    desc:         'Reach level 3. Steadier ground. Heavier weight.',
+    type:         'reach_level',
+    targetLevel:  3,
+    target:       1,
+    isStory:      true,
+    rewards:      [{type:'gold', icon:'✦', amount:75, label:'Gold'}],
+    issuer:       '???',
+    next:         'story_craft_safety_net',
+    // Unlocks the Forge AND the Sanctum (the player needs the Sanctum
+    // to equip the relic they're about to craft).
+    onClaim: function(){
+      if(PERSIST && PERSIST.town && PERSIST.town.buildings){
+        if(PERSIST.town.buildings.forge)   PERSIST.town.buildings.forge.unlocked   = true;
+        if(PERSIST.town.buildings.sanctum) PERSIST.town.buildings.sanctum.unlocked = true;
+        if(typeof showTownToast === 'function') showTownToast('✦ The Forge and Sanctum open their doors.');
+      }
+    },
+  },
+
+  story_craft_safety_net: {
+    id:             'story_craft_safety_net',
+    title:          'A Hedge Against Falling',
+    desc:           'Craft the Safety Net at the Forge.',
+    type:           'craft_relic',
+    targetRelicId:  'safety_net',
+    target:         1,
+    isStory:        true,
+    rewards:        [{type:'gold', icon:'✦', amount:100, label:'Gold'}],
+    issuer:         '???',
+    next:           'story_equip_safety_net',
+  },
+
+  story_equip_safety_net: {
+    id:             'story_equip_safety_net',
+    title:          'Carry It With You',
+    desc:           'Equip the Safety Net on any champion at the Sanctum.',
+    type:           'equip_relic',
+    targetRelicId:  'safety_net',
+    target:         1,
+    isStory:        true,
+    rewards:        [{type:'gold', icon:'✦', amount:100, label:'Gold'}],
+    issuer:         '???',
+    next:           null,
+  },
 };
 
 // Adds a story quest def to quests.offered (so the rail can look it up)
 // and pushes { id, progress:0 } to active. Idempotent — re-adding the
 // same id is a no-op.
+//
+// Round 67p: also checks the goal against current PERSIST state on
+// activation. If the player has already satisfied the goal (e.g.
+// activating "reach level 3" while already level 5), progress is set
+// to target immediately so the quest is claimable straight away —
+// no busywork.
 function _activateStoryQuest(def){
   if(!def || !def.id) return;
   if(!PERSIST.town) return;
@@ -761,7 +852,43 @@ function _activateStoryQuest(def){
   if(q.active.some(function(a){ return a.id === def.id; })) return;
   if(q.completed.indexOf(def.id) !== -1) return;
   if(!q.offered.some(function(o){ return o.id === def.id; })) q.offered.push(def);
-  q.active.push({ id: def.id, progress: 0 });
+  var startProgress = _checkStoryQuestAlreadyMet(def) ? (def.target || 1) : 0;
+  q.active.push({ id: def.id, progress: startProgress });
+  if(typeof savePersist === 'function') savePersist();
+}
+
+// Check whether the player has already met the quest's goal at the
+// moment of activation. Returns true → quest activates as claimable.
+function _checkStoryQuestAlreadyMet(def){
+  if(!def) return false;
+  if(def.type === 'reach_level'){
+    // Any unlocked champion at or above the target level satisfies it.
+    var targetLv = def.targetLevel || 2;
+    var champs = (PERSIST.champions || {});
+    for(var cid in champs){
+      var cp = champs[cid];
+      if(cp && (cp.level || 1) >= targetLv) return true;
+    }
+    return false;
+  }
+  if(def.type === 'craft_relic'){
+    var rid = def.targetRelicId;
+    if(!rid) return false;
+    return !!(PERSIST.town && PERSIST.town.relics && PERSIST.town.relics[rid] && PERSIST.town.relics[rid] > 0);
+  }
+  if(def.type === 'equip_relic'){
+    var rid2 = def.targetRelicId;
+    if(!rid2) return false;
+    var champs2 = (PERSIST.champions || {});
+    for(var cid2 in champs2){
+      var cp2 = champs2[cid2];
+      if(cp2 && Array.isArray(cp2.relics) && cp2.relics.indexOf(rid2) !== -1) return true;
+    }
+    return false;
+  }
+  // edit_deck always requires the in-game action — we can't tell
+  // retroactively whether the player ever saved a deck change.
+  return false;
 }
 
 // Mark a story quest complete by setting its progress to target and

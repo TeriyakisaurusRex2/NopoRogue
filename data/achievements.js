@@ -258,7 +258,7 @@ function buildAchList(filter){
     return true;
   });
   if(!toShow.length){
-    list.innerHTML='<div style="text-align:center;color:#5a4020;font-family:Cinzel,serif;font-size:10px;padding:24px;">Nothing here yet.</div>';
+    list.innerHTML='<div style="text-align:center;color:#5a4020;font-size:10px;padding:24px;">Nothing here yet.</div>';
     return;
   }
   toShow.forEach(function(ach){

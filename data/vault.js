@@ -517,12 +517,12 @@ function renderVaultInventory(){
   if(totalItems === 0){
     html += '<div class="vault-inv-empty">'
       +'<div style="font-size:32px;opacity:.4;margin-bottom:10px;">📦</div>'
-      +'<div style="font-family:Cinzel,serif;font-size:11px;color:#3a2810;letter-spacing:2px;">INVENTORY EMPTY</div>'
+      +'<div style="font-size:11px;color:#3a2810;letter-spacing:2px;">INVENTORY EMPTY</div>'
       +'<div style="font-size:9px;color:#2a1808;margin-top:6px;">Items from runs, chests, and rewards will appear here.</div>'
       +'</div>';
   } else if(filtered.length === 0){
     html += '<div class="vault-inv-empty">'
-      +'<div style="font-family:Cinzel,serif;font-size:10px;color:#3a2810;letter-spacing:2px;">NO ITEMS IN THIS CATEGORY</div>'
+      +'<div style="font-size:10px;color:#3a2810;letter-spacing:2px;">NO ITEMS IN THIS CATEGORY</div>'
       +'</div>';
   } else {
     html += '<div class="vault-inv-grid">';
@@ -563,13 +563,13 @@ function _renderInvInspectorHTML(){
   if(!_vaultInvSelected){
     return '<div class="vault-inv-insp-empty">'
       +'<div style="font-size:24px;opacity:.4;margin-bottom:8px;">↩</div>'
-      +'<div style="font-family:Cinzel,serif;font-size:9px;color:#3a2810;letter-spacing:1.5px;">SELECT AN ITEM</div>'
+      +'<div style="font-size:9px;color:#3a2810;letter-spacing:1.5px;">SELECT AN ITEM</div>'
       +'<div style="font-size:8px;color:#2a1808;margin-top:4px;">to view details</div>'
       +'</div>';
   }
   var item = _vaultInvLastList.find(function(it){ return it.key===_vaultInvSelected; });
   if(!item){
-    return '<div class="vault-inv-insp-empty"><div style="font-size:9px;color:#3a2810;font-family:Cinzel,serif;letter-spacing:1px;">NOT IN VIEW</div></div>';
+    return '<div class="vault-inv-insp-empty"><div style="font-size:9px;color:#3a2810;letter-spacing:1px;">NOT IN VIEW</div></div>';
   }
 
   var u = PERSIST.town.vaultUpgrades || {};
@@ -835,10 +835,10 @@ function showChestOverlay(def, entries){
   }
   var inner=document.createElement('div');
   inner.style.cssText='background:#0e0601;border:2px solid #c09030;border-radius:12px;padding:22px 26px;min-width:240px;max-width:320px;text-align:center;';
-  inner.innerHTML='<div style="font-family:Cinzel,serif;font-size:13px;color:#d4a843;letter-spacing:2px;margin-bottom:4px;">'+def.name.toUpperCase()+'</div>'
+  inner.innerHTML='<div style="font-size:13px;color:#d4a843;letter-spacing:2px;margin-bottom:4px;">'+def.name.toUpperCase()+'</div>'
     +'<div style="font-size:28px;margin-bottom:14px;">'+def.icon+'</div>'
     +'<div id="chest-drops" style="display:flex;flex-direction:column;gap:5px;margin-bottom:14px;"></div>'
-    +'<button onclick="closeChestOverlay()" style="font-family:Cinzel,serif;font-size:9px;padding:7px 20px;border-radius:4px;border:1px solid #c09030;background:rgba(40,22,4,.9);color:#d4a843;cursor:pointer;letter-spacing:1px;">COLLECT</button>';
+    +'<button onclick="closeChestOverlay()" style="font-size:9px;padding:7px 20px;border-radius:4px;border:1px solid #c09030;background:rgba(40,22,4,.9);color:#d4a843;cursor:pointer;letter-spacing:1px;">COLLECT</button>';
   overlay.innerHTML='';
   overlay.appendChild(inner);
   overlay.style.display='flex';
@@ -869,8 +869,8 @@ function revealLootItems(entries, el){
       var row=document.createElement('div');
       row.style.cssText='display:flex;align-items:center;gap:10px;background:rgba(20,10,2,.8);border:1px solid #2a1808;border-radius:4px;padding:5px 10px;opacity:0;transition:opacity .25s;';
       row.innerHTML='<span style="font-size:16px;">'+icon+'</span>'
-        +'<span style="font-family:Cinzel,serif;font-size:9px;color:#8a6030;flex:1;text-align:left;">'+text+'</span>'
-        +'<span style="font-family:Cinzel,serif;font-size:10px;color:#d4a843;">'+qty+'</span>';
+        +'<span style="font-size:9px;color:#8a6030;flex:1;text-align:left;">'+text+'</span>'
+        +'<span style="font-size:10px;color:#d4a843;">'+qty+'</span>';
       el.appendChild(row);
       requestAnimationFrame(function(){ row.style.opacity='1'; });
     }, delay);

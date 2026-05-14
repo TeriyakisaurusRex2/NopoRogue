@@ -61,8 +61,14 @@ document.addEventListener('mouseover',function(e){
 document.addEventListener('mousemove',function(e){
   var tip=document.getElementById('kw-tooltip');
   if(tip&&tip.classList.contains('show')){
-    tip.style.left=Math.min(e.clientX+12,window.innerWidth-200)+'px';
-    tip.style.top=Math.min(e.clientY+12,window.innerHeight-80)+'px';
+    // Round 67o: invert the #game-root scale so the tooltip lands at
+    // the cursor in screen space — clientX/Y are real-viewport coords
+    // but tip lives inside the scaled wrapper.
+    var c = (typeof clientToGameCoords === 'function') ? clientToGameCoords(e.clientX, e.clientY) : { x:e.clientX, y:e.clientY };
+    var dW = (typeof GAME_DESIGN_W === 'number') ? GAME_DESIGN_W : window.innerWidth;
+    var dH = (typeof GAME_DESIGN_H === 'number') ? GAME_DESIGN_H : window.innerHeight;
+    tip.style.left=Math.min(c.x+12,dW-200)+'px';
+    tip.style.top=Math.min(c.y+12,dH-80)+'px';
   }
 });
 document.addEventListener('mouseout',function(e){

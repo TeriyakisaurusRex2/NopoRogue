@@ -66,14 +66,24 @@ function rollAreaLoot(areaDef){
     });
   }
 
-  // Legacy loot support (keys / chests) — kept for backwards compat
-  var loot = areaDef.loot;
-  if(loot){
-    if(loot.always){ addLootItem(loot.always, 1); gained.push(loot.always); }
-    if(loot.bonus && loot.bonusChance > 0 && Math.random() < loot.bonusChance){
-      addLootItem(loot.bonus, 1); gained.push(loot.bonus);
-    }
-  }
+  // Round 67p: area-completion key rewards retired. The `loot.always`
+  // field on each AREA_DEF (typically a biome key — key_sewers,
+  // key_pale_road, key_bog, key_temple) used to grant one per clear.
+  // We no longer award keys on area completion. Materials + gold from
+  // the materialGroup branch above remain the meaningful drop.
+  //
+  // The block stays referenced (commented) so the system is easy to
+  // re-enable: uncomment + add `always:'<some_loot_id>'` to AREA_DEFS.
+  // Existing keys in the player's Vault inventory stay viewable; only
+  // new drops are blocked.
+  //
+  // var loot = areaDef.loot;
+  // if(loot){
+  //   if(loot.always){ addLootItem(loot.always, 1); gained.push(loot.always); }
+  //   if(loot.bonus && loot.bonusChance > 0 && Math.random() < loot.bonusChance){
+  //     addLootItem(loot.bonus, 1); gained.push(loot.bonus);
+  //   }
+  // }
 
   if(gained.length) savePersist();
   return gained;
@@ -868,7 +878,7 @@ function _shardWellPickForSlot(slotIdx){
   // Round 59: formula hint ("STR builds well XP · AGI speeds generation
   // · WIS raises cap") removed. Mechanics live in the Shard Well
   // tutorial; the picker is for choosing a champion, not for re-teaching.
-  var html = '<div style="font-family:Cinzel,serif;font-size:12px;color:#d4a843;letter-spacing:3px;margin-bottom:14px;">ASSIGN TO SLOT '+(slotIdx+1)+'</div>'
+  var html = '<div style="font-size:12px;color:#d4a843;letter-spacing:3px;margin-bottom:14px;">ASSIGN TO SLOT '+(slotIdx+1)+'</div>'
     + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;">';
 
   available.forEach(function(id){
@@ -876,8 +886,8 @@ function _shardWellPickForSlot(slotIdx){
     var isCurrent = id === currentInSlot;
     html += '<div class="exp-pick-option '+getAscensionClass(id)+(isCurrent?' selected':'')+'" style="position:relative;padding:12px 8px;" onclick="document.getElementById(\'exp-popup\').remove();_shardWellAssign('+slotIdx+',\''+id+'\');">'
       + (isCurrent?'<div style="position:absolute;top:4px;right:6px;font-size:11px;color:#9adc7e;">✓</div>':'')
-      + '<div style="margin-bottom:6px;">'+creatureImgHTML(id,ch.icon,'44px')+'</div>'
-      + '<div style="font-family:Cinzel,serif;font-size:10px;color:#c0a060;">'+ch.name+'</div>'
+      + '<div style="margin-bottom:6px;">'+creatureImgHTML(id,ch.icon,'32px')+'</div>'
+      + '<div style="font-size:10px;color:#c0a060;">'+ch.name+'</div>'
       + '<div style="font-size:7px;color:#5a4020;">Lv.'+cp.level+' '+getAscensionChipHTML(id)+'</div>'
       + '<div style="font-size:7px;color:#4a3020;margin-top:3px;">'
       +   '<span style="color:#e88060;">STR</span>:'+Math.round(cp.stats.str)+' '
@@ -895,10 +905,10 @@ function _shardWellPickForSlot(slotIdx){
   html += '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">';
   if(currentInSlot){
     html += '<button onclick="document.getElementById(\'exp-popup\').remove();_shardWellRelease('+slotIdx+');" '
-      + 'style="font-family:Cinzel,serif;font-size:9px;padding:7px 14px;border-radius:3px;border:1px solid #5a2020;background:transparent;color:#a04040;cursor:pointer;letter-spacing:1px;">CLEAR SLOT</button>';
+      + 'style="font-size:9px;padding:7px 14px;border-radius:3px;border:1px solid #5a2020;background:transparent;color:#a04040;cursor:pointer;letter-spacing:1px;">CLEAR SLOT</button>';
   }
   html += '<button onclick="document.getElementById(\'exp-popup\').remove();" '
-    + 'style="font-family:Cinzel,serif;font-size:9px;padding:7px 14px;border-radius:3px;border:1px solid #5a3a18;background:transparent;color:#a08858;cursor:pointer;letter-spacing:1px;">CANCEL</button>';
+    + 'style="font-size:9px;padding:7px 14px;border-radius:3px;border:1px solid #5a3a18;background:transparent;color:#a08858;cursor:pointer;letter-spacing:1px;">CANCEL</button>';
   html += '</div>';
 
   box.innerHTML = html;
@@ -1485,7 +1495,7 @@ function _renderAchievementsTab(){
   if(typeof ACHIEVEMENTS === 'undefined' || !ACHIEVEMENTS.length){
     return '<div style="padding:40px 20px;text-align:center;">'
       +'<div style="font-size:24px;margin-bottom:12px;opacity:.4;">🏆</div>'
-      +'<div style="font-family:Cinzel,serif;font-size:11px;color:#5e4c2e;letter-spacing:2px;">NO ACHIEVEMENTS YET</div>'
+      +'<div style="font-size:11px;color:#5e4c2e;letter-spacing:2px;">NO ACHIEVEMENTS YET</div>'
       +'</div>';
   }
 
@@ -1629,6 +1639,25 @@ function _questActionHtml(quest){
     var prefix = (n > 1) ? ('Defeat ' + n + ' times in the Arena: ') : 'Defeat in the Arena: ';
     return prefix + bestiaryCreatureLinkHTML(quest.fight.id);
   }
+  // Round 67p: story-quest action types.
+  if(t === 'reach_level'){
+    return 'Reach level ' + (quest.targetLevel || 2);
+  }
+  if(t === 'edit_deck'){
+    return 'Save a change in the deck builder';
+  }
+  if(t === 'craft_relic'){
+    var rid = quest.targetRelicId;
+    var rdef = (typeof RELICS !== 'undefined' && rid) ? RELICS[rid] : null;
+    var rname = rdef ? (rdef.icon + ' ' + rdef.name) : (rid || 'relic');
+    return 'Craft ' + _csqEsc(rname) + ' at the Forge';
+  }
+  if(t === 'equip_relic'){
+    var rid2 = quest.targetRelicId;
+    var rdef2 = (typeof RELICS !== 'undefined' && rid2) ? RELICS[rid2] : null;
+    var rname2 = rdef2 ? (rdef2.icon + ' ' + rdef2.name) : (rid2 || 'relic');
+    return 'Equip ' + _csqEsc(rname2) + ' at the Sanctum';
+  }
   // Fallback: use the description as-is (escaped). Bracketed [Keywords]
   // are passed through renderKeywords so card-style keyword styling still
   // works for hand-authored quest copy.
@@ -1733,6 +1762,32 @@ function _renderQuestsTab(){
     quests.active = quests.active ? [quests.active] : [];
   }
   if(!quests.active) quests.active = [];
+  // Round 67o: heal duplicate-ID quests left behind by the pre-fix
+  // _generateBounties bug. Re-stamp any offered quest whose id collides
+  // with an earlier one in the list, while preserving the id of any
+  // currently-active quest (so progress doesn't desync). Idempotent —
+  // a save that's already clean does no work here.
+  if(Array.isArray(quests.offered) && quests.offered.length > 1){
+    var seenIds = {};
+    var activeIdSet = {};
+    (quests.active||[]).forEach(function(a){ activeIdSet[a.id] = true; });
+    var changed = false;
+    quests.offered.forEach(function(q, i){
+      if(!q || !q.id) return;
+      if(seenIds[q.id]){
+        // Collision. If this offered entry IS the active one, leave its
+        // id and re-stamp the earlier dupe via a second pass below. In
+        // practice _generateBounties only adds NEW offers (not active
+        // ones) so the simpler path is: re-stamp this dupe.
+        if(!activeIdSet[q.id]){
+          q.id = 'quest_' + Date.now() + '_' + i + '_' + Math.random().toString(36).slice(2,8);
+          changed = true;
+        }
+      }
+      seenIds[q.id] = true;
+    });
+    if(changed && typeof savePersist === 'function') savePersist();
+  }
 
   var target = getQuestOfferedCount();
   if(!quests.offered || quests.offered.length === 0){
@@ -1749,8 +1804,8 @@ function _renderQuestsTab(){
   var rh = Math.floor(refreshEta/3600); var rm = Math.floor((refreshEta%3600)/60);
 
   var html = '<div style="display:flex;justify-content:space-between;align-items:center;padding:0 4px 8px;">'
-    +'<span style="font-size:8px;color:#5a4020;font-family:Cinzel,serif;">TRACKING: '+quests.active.length+' / '+maxActive+'</span>'
-    +'<span style="font-size:7px;color:#4a3010;font-family:Cinzel,serif;">NEW QUESTS: '+(rh>0?rh+'h ':'')+rm+'m</span>'
+    +'<span style="font-size:8px;color:#5a4020;">TRACKING: '+quests.active.length+' / '+maxActive+'</span>'
+    +'<span style="font-size:7px;color:#4a3010;">NEW QUESTS: '+(rh>0?rh+'h ':'')+rm+'m</span>'
     +'</div>';
 
   html += '<div class="hall-quest-grid">';
@@ -1771,6 +1826,11 @@ function _renderQuestsTab(){
     html += '<div class="hall-quest-title">' + q.title + '</div>';
     html += '<div class="hall-quest-issuer">issued by ' + (q.issuer || 'Leona') + '</div>';
     html += '<div class="hall-quest-desc">' + q.desc + '</div>';
+    // Round 67o: explicit OBJECTIVE line so players see the actionable
+    // ask without parsing flavour text. Renders the same verb/noun
+    // phrasing used in the active-quests rail (Defeat N Goblin, Clear
+    // The Sewers, Apply Burn N times, etc).
+    html += '<div class="hall-quest-objective">Objective: ' + _questActionHtml(q) + '</div>';
 
     html += '<div class="hall-quest-difficulty">';
     for(var d = 0; d < 5; d++) html += '<div class="hall-quest-dot' + (d < q.difficulty ? '' : ' empty') + '"></div>';
@@ -1807,7 +1867,7 @@ function _renderQuestsTab(){
     html += '<div class="hall-quest-card vacant">'
       +'<div style="text-align:center;padding:20px 10px;">'
       +'<div style="font-size:20px;opacity:.2;margin-bottom:8px;">📋</div>'
-      +'<div style="font-family:Cinzel,serif;font-size:8px;color:#3a2810;letter-spacing:1px;">VACANT</div>'
+      +'<div style="font-size:8px;color:#3a2810;letter-spacing:1px;">VACANT</div>'
       +'<div style="font-size:7px;color:#2a1808;margin-top:4px;">New quest arrives at refresh</div>'
       +'</div></div>';
   }
@@ -1847,7 +1907,7 @@ function _renderExpeditionsTab(){
   if(!expeditionsUnlocked){
     return '<div style="padding:40px 20px;text-align:center;">'
       +'<div style="font-size:24px;margin-bottom:12px;opacity:.4;">🏕️</div>'
-      +'<div style="font-family:Cinzel,serif;font-size:11px;color:#5e4c2e;letter-spacing:2px;">EXPEDITIONS LOCKED</div>'
+      +'<div style="font-size:11px;color:#5e4c2e;letter-spacing:2px;">EXPEDITIONS LOCKED</div>'
       +'<div style="font-size:9px;color:#3a2810;margin-top:8px;">Reach Hall Level 2 to unlock expeditions.</div>'
       +'</div>';
   }
@@ -2087,7 +2147,7 @@ function _expL1ChampChip(champId, withRemove){
   var ch = CREATURES[champId]; if(!ch) return '';
   var cp = getChampPersist(champId);
   return '<div class="exp-champ-chip">'
-    + creatureImgHTML(champId, ch.icon, '22px')
+    + creatureImgHTML(champId, ch.icon, '16px')
     + '<span class="exp-champ-chip-name">'+ch.name+'</span>'
     + '<span class="exp-champ-chip-stat">AGI '+Math.round(cp.stats.agi)+'</span>'
     + (withRemove ? '<span class="exp-champ-chip-x" onclick="event.stopPropagation();_expToggleChamp(\''+champId+'\');" title="Remove">×</span>' : '')
@@ -2124,7 +2184,7 @@ function _expL1ChampActiveBlock(champId, statOverride){
     ? statOverride
     : 'AGI '+Math.round(cp.stats.agi)+' · LV.'+cp.level;
   return '<div class="exp-champ-active">'
-    + creatureImgHTML(champId, ch.icon, '36px')
+    + creatureImgHTML(champId, ch.icon, '32px')
     + '<div class="exp-champ-active-info">'
       + '<div class="exp-champ-active-name">'+ch.name+'</div>'
       + '<div class="exp-champ-active-stat">'+statLine+'</div>'
@@ -2239,7 +2299,15 @@ function _generateBounties(count){
   var shuffled = templates.slice().sort(function(){ return Math.random() - 0.5; });
   for(var i = 0; i < count && i < shuffled.length; i++){
     var t = shuffled[i];
-    bounties.push({id:'quest_' + Date.now() + '_' + i, title:t.title, desc:t.desc, type:t.type, areaId:t.areaId, enemyId:t.enemyId, target:t.target, difficulty:t.difficulty, rewards:t.rewards, issuer:'Leona'});
+    // Round 67o: include a random suffix so consecutive calls within the
+    // same millisecond don't collide. The quest-refresh path calls
+    // _generateBounties(1) repeatedly to top up `offered`, and the inner
+    // `i` is always 0 when count=1 → all topped-up quests previously
+    // shared the same id `quest_<sameMs>_0`. That made activeIds.indexOf
+    // match every offered card once one was accepted, so the whole grid
+    // visually read as ACTIVE. The random suffix breaks the tie.
+    var uid = 'quest_' + Date.now() + '_' + i + '_' + Math.random().toString(36).slice(2,8);
+    bounties.push({id:uid, title:t.title, desc:t.desc, type:t.type, areaId:t.areaId, enemyId:t.enemyId, target:t.target, difficulty:t.difficulty, rewards:t.rewards, issuer:'Leona'});
   }
   return bounties;
 }
@@ -2288,6 +2356,19 @@ function checkQuestProgress(eventType, ctx){
     else if(eventType === 'arena_win' && q.type === 'arena_fight'){
       if(!q.fight || !q.fight.id || q.fight.id === ctx.enemyId) advance = true;
     }
+    // Round 67p: story quest event types.
+    // level_up — ctx.level is the new level; advance if it meets the bar.
+    else if(eventType === 'level_up' && q.type === 'reach_level'){
+      var bar = q.targetLevel || 2;
+      if((ctx.level || 0) >= bar) advance = true;
+    }
+    else if(eventType === 'deck_edit' && q.type === 'edit_deck') advance = true;
+    else if(eventType === 'craft_relic' && q.type === 'craft_relic'){
+      if(!q.targetRelicId || q.targetRelicId === ctx.relicId) advance = true;
+    }
+    else if(eventType === 'equip_relic' && q.type === 'equip_relic'){
+      if(!q.targetRelicId || q.targetRelicId === ctx.relicId) advance = true;
+    }
 
     if(advance){
       active.progress = (active.progress||0) + 1;
@@ -2326,7 +2407,7 @@ function abandonQuest(questId){
   overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;';
   var box = document.createElement('div');
   box.style.cssText = 'background:#1a0f06;border:1px solid #5a3418;border-radius:10px;padding:24px 28px;max-width:340px;text-align:center;box-shadow:0 0 40px rgba(0,0,0,.8);';
-  box.innerHTML = '<div style="font-family:Cinzel,serif;font-size:12px;color:#d4a843;margin-bottom:12px;">ABANDON QUEST?</div>'
+  box.innerHTML = '<div style="font-size:12px;color:#d4a843;margin-bottom:12px;">ABANDON QUEST?</div>'
     +'<div style="font-size:9px;color:#8a6840;line-height:1.6;margin-bottom:16px;">Progress will be lost. The slot stays empty until the next quest refresh.</div>'
     +'<div style="display:flex;gap:10px;justify-content:center;"></div>';
 
@@ -2334,7 +2415,7 @@ function abandonQuest(questId){
 
   var yesBtn = document.createElement('button');
   yesBtn.textContent = 'ABANDON';
-  yesBtn.style.cssText = 'font-family:Cinzel,serif;font-size:9px;padding:8px 20px;border-radius:6px;cursor:pointer;border:1px solid #5a3020;background:rgba(80,30,10,.5);color:#c06030;letter-spacing:1px;';
+  yesBtn.style.cssText = 'font-size:9px;padding:8px 20px;border-radius:6px;cursor:pointer;border:1px solid #5a3020;background:rgba(80,30,10,.5);color:#c06030;letter-spacing:1px;';
   yesBtn.addEventListener('click', function(){
     overlay.remove();
     playSfx('abandon');
@@ -2349,7 +2430,7 @@ function abandonQuest(questId){
 
   var noBtn = document.createElement('button');
   noBtn.textContent = 'CANCEL';
-  noBtn.style.cssText = 'font-family:Cinzel,serif;font-size:9px;padding:8px 20px;border-radius:6px;cursor:pointer;border:1px solid #3a2818;background:rgba(30,20,5,.5);color:#8a6840;letter-spacing:1px;';
+  noBtn.style.cssText = 'font-size:9px;padding:8px 20px;border-radius:6px;cursor:pointer;border:1px solid #3a2818;background:rgba(30,20,5,.5);color:#8a6840;letter-spacing:1px;';
   noBtn.addEventListener('click', function(){ overlay.remove(); });
 
   btnRow.appendChild(yesBtn);
@@ -2383,6 +2464,17 @@ function claimQuest(questId){
   quests.offered = quests.offered.filter(function(o){ return o.id !== questId; });
   quests.active = quests.active.filter(function(a){ return a.id !== questId; });
   quests.completed.push(questId);
+  // Round 67p: story quests can chain. Fire any onClaim side-effect
+  // (e.g. building unlocks) before activating the next link so the
+  // toast order makes sense to the player.
+  if(q.isStory){
+    if(typeof q.onClaim === 'function'){
+      try { q.onClaim(); } catch(e){ /* swallow — onClaim is content-driven */ }
+    }
+    if(q.next && typeof STORY_QUESTS !== 'undefined' && STORY_QUESTS[q.next] && typeof _activateStoryQuest === 'function'){
+      _activateStoryQuest(STORY_QUESTS[q.next]);
+    }
+  }
   savePersist();
   showTownToast('Quest complete! Rewards claimed.');
   _renderHallContent();
@@ -2457,7 +2549,7 @@ function showLockedBuildingUI(id){
       +'<div style="margin:8px 0 4px;">'
         +'<div style="display:flex;justify-content:space-between;margin-bottom:3px;">'
           +'<span style="font-size:8px;color:#6a5020;">Enemies encountered</span>'
-          +'<span style="font-family:Cinzel,serif;font-size:9px;color:'+(seenMet?'#d4a843':'#7a6030')+';">'+seen+' / '+cost.seenCount+'</span>'
+          +'<span style="font-size:9px;color:'+(seenMet?'#d4a843':'#7a6030')+';">'+seen+' / '+cost.seenCount+'</span>'
         +'</div>'
         +'<div style="height:4px;background:rgba(0,0,0,.5);border-radius:2px;overflow:hidden;">'
           +'<div style="height:100%;width:'+pct+'%;background:'+(seenMet?'#c09030':'linear-gradient(90deg,#3a2010,#8a5020)')+';border-radius:2px;"></div>'
@@ -2488,7 +2580,7 @@ function showLockedBuildingUI(id){
 
   lockMsg.innerHTML='<div style="text-align:center;padding:20px 10px;">'
     +'<div style="font-size:28px;margin-bottom:10px;">🔒</div>'
-    +'<div style="font-family:Cinzel,serif;font-size:11px;color:#6a5020;margin-bottom:12px;letter-spacing:1px;">LOCKED</div>'
+    +'<div style="font-size:11px;color:#6a5020;margin-bottom:12px;letter-spacing:1px;">LOCKED</div>'
     +btnHtml
     +'</div>';
 }
@@ -2843,8 +2935,8 @@ function buildBestiaryCreatures(){
     if(area && area.color) vigBg = 'radial-gradient(ellipse at center bottom, '+area.color+'33 0%, rgba(10,5,1,.8) 100%)';
 
     var spriteHtml = isSeen
-      ? creatureImgHTML(id, e.icon, '52px')
-      : '<span style="font-size:24px;color:#2a1808;font-family:Cinzel,serif;font-weight:700;">?</span>';
+      ? creatureImgHTML(id, e.icon, '32px')
+      : '<span style="font-size:24px;color:#2a1808;font-weight:700;">?</span>';
 
     // Badges
     var badgeHtml = '';
@@ -2934,7 +3026,7 @@ function renderBestiaryDetail(id){
 
   if(!isSeen){
     panel.innerHTML='<div style="padding:40px 20px;text-align:center;">'
-      +'<div style="margin:0 auto 16px;">'+creatureImgHTML(id, e.icon, '120px', 'bcd-silhouette')+'</div>'
+      +'<div style="margin:0 auto 16px;">'+creatureImgHTML(id, e.icon, '192px', 'bcd-silhouette')+'</div>'
       +'<div class="bcd-name" style="color:#3a2810;">???</div>'
       +'<div class="bcd-section-label" style="text-align:center;margin-top:20px;">UNCATALOGUED</div>'
       +'<div style="font-size:9px;color:#4a3010;font-style:italic;padding:8px 20px;">Encounter this creature in combat to begin cataloguing.</div>'
@@ -2955,7 +3047,7 @@ function renderBestiaryDetail(id){
 
   html+='<div class="bcd-display-case">'
     +'<div class="bcd-case-corners">'
-    +creatureImgHTML(id, e.icon, '160px')
+    +creatureImgHTML(id, e.icon, '192px')
     +'</div>'
     +'</div>';
 
@@ -3250,7 +3342,7 @@ function _renderLocCreatures(areaId){
     var kills = PERSIST.achievements[id+'_kill']||0;
     if(seen && c){
       html += '<div class="loc-cr-row" onclick="openCreatureFromLocation(\''+id+'\')">'
-        +'<div class="loc-cr-row-sprite">'+creatureImgHTML(id,c.icon,'40px')+'</div>'
+        +'<div class="loc-cr-row-sprite">'+creatureImgHTML(id,c.icon,'32px')+'</div>'
         +'<div class="loc-cr-row-info">'
           +'<div class="loc-cr-row-name">'+c.name+'</div>'
           +'<div class="loc-cr-row-meta">'+(kills?kills+' slain':'')+'</div>'
@@ -3259,7 +3351,7 @@ function _renderLocCreatures(areaId){
         +'</div>';
     } else {
       html += '<div class="loc-cr-row loc-cr-row-unknown">'
-        +'<div class="loc-cr-row-sprite" style="display:flex;align-items:center;justify-content:center;color:#2a1808;font-family:Cinzel,serif;font-size:20px;">?</div>'
+        +'<div class="loc-cr-row-sprite" style="display:flex;align-items:center;justify-content:center;color:#2a1808;font-size:20px;">?</div>'
         +'<div class="loc-cr-row-info">'
           +'<div class="loc-cr-row-name">???</div>'
           +'<div class="loc-cr-row-meta">uncatalogued</div>'
@@ -3503,7 +3595,7 @@ function refreshSanctumPanel(){
 
     var html = '<div style="padding:8px 10px;border-bottom:1px solid #2a1808;">'
       +'<input type="text" id="sanctum-roster-search" placeholder="Search champions..." '
-      +'style="width:100%;box-sizing:border-box;background:#0e0802;border:1px solid #2a1808;color:#c0a060;padding:5px 8px;font-size:9px;font-family:Cinzel,serif;border-radius:4px;" '
+      +'style="width:100%;box-sizing:border-box;background:#0e0802;border:1px solid #2a1808;color:#c0a060;padding:5px 8px;font-size:9px;border-radius:4px;" '
       +'oninput="_filterSanctumRoster(this.value)">'
       +'</div>'
       +'<div id="sanctum-roster-list">';
@@ -3519,7 +3611,7 @@ function refreshSanctumPanel(){
       var canAsc = canAscend(id);
 
       html += '<div class="snc-roster-row'+(sel?' selected':'')+'" data-champid="'+id+'" data-champname="'+ch.name.toLowerCase()+'" onclick="_sanctumChamp=\''+id+'\';refreshSanctumPanel();">'
-        +'<div class="snc-roster-portrait '+ascCls+'" style="position:relative;border-radius:6px;">'+creatureImgHTML(id, ch.icon, '40px')+'</div>'
+        +'<div class="snc-roster-portrait '+ascCls+'" style="position:relative;border-radius:6px;">'+creatureImgHTML(id, ch.icon, '32px')+'</div>'
         +'<div class="snc-roster-info">'
           +'<div class="snc-roster-name">'+ch.name+'</div>'
           +'<div class="snc-roster-sub">Lv.'+cp.level+' '+ascChip+'</div>'
@@ -3568,12 +3660,12 @@ function buildSanctumRelicsPane(){
   if(totalSlots === 0){
     html += '<div style="padding:40px 20px;text-align:center;background:#1a1208;border:1px dashed #2a1808;border-radius:6px;">'
       +'<div style="font-size:28px;margin-bottom:8px;opacity:.4;">🔒</div>'
-      +'<div style="font-family:Cinzel,serif;font-size:12px;letter-spacing:3px;color:#5a4020;">NO RELIC SLOTS</div>'
+      +'<div style="font-size:12px;letter-spacing:3px;color:#5a4020;">NO RELIC SLOTS</div>'
       +'<div style="font-size:9px;color:#4a3010;font-style:italic;margin-top:6px;">Ascend this champion to unlock the first relic slot.</div>'
       +'</div>';
   } else {
     // Equipped slots
-    html += '<div style="font-family:Cinzel,serif;font-size:10px;letter-spacing:2px;color:#d4a843;margin-bottom:8px;">EQUIPPED · '+equipped.length+' / '+totalSlots+'</div>'
+    html += '<div style="font-size:10px;letter-spacing:2px;color:#d4a843;margin-bottom:8px;">EQUIPPED · '+equipped.length+' / '+totalSlots+'</div>'
       +'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin-bottom:16px;">';
     var hasBackpack = !!(PERSIST.town && PERSIST.town.hasBackpack);
     for(var i=0;i<totalSlots;i++){
@@ -3591,8 +3683,8 @@ function buildSanctumRelicsPane(){
         html += '<div class="sr-equipped-tile" style="padding:10px 36px 10px 10px;background:#2a1808;border:1px solid #5a3a1a;border-radius:6px;display:grid;grid-template-columns:56px 1fr;gap:10px;align-items:center;position:relative;">'
           +'<div style="width:56px;height:56px;display:flex;align-items:center;justify-content:center;background:rgba(212,168,67,.08);border:1px solid #5a3a1a;border-radius:4px;">'+relicImgHTML(relicId,'48px')+'</div>'
           +'<div style="min-width:0;">'
-          +'<div style="font-size:7px;color:#5a4020;font-family:Cinzel,serif;letter-spacing:1px;">SLOT '+(i+1)+'</div>'
-          +'<div style="font-family:Cinzel,serif;font-size:10px;color:#c0a060;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+r.name+'</div>'
+          +'<div style="font-size:7px;color:#5a4020;letter-spacing:1px;">SLOT '+(i+1)+'</div>'
+          +'<div style="font-size:10px;color:#c0a060;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+r.name+'</div>'
           +'</div>'
           +'<button class="sr-remove-corner" onclick="srClickSlot('+i+')" '
           +'title="'+(hasBackpack?'UNEQUIP · return to inventory':'DESTROY · no refund')+'" '
@@ -3602,7 +3694,7 @@ function buildSanctumRelicsPane(){
       } else {
         html += '<div style="padding:14px;background:#0e0802;border:1px dashed #3a2818;border-radius:6px;text-align:center;">'
           +'<div style="font-size:14px;color:#3a2818;">+</div>'
-          +'<div style="font-size:8px;color:#3a2818;font-family:Cinzel,serif;letter-spacing:1px;">SLOT '+(i+1)+'</div>'
+          +'<div style="font-size:8px;color:#3a2818;letter-spacing:1px;">SLOT '+(i+1)+'</div>'
           +'<div style="font-size:7px;color:#2a1808;font-style:italic;">empty</div>'
           +'</div>';
       }
@@ -3611,7 +3703,7 @@ function buildSanctumRelicsPane(){
     for(var j=totalSlots;j<7;j++){
       html += '<div style="padding:14px;background:repeating-linear-gradient(45deg,rgba(30,20,10,.3) 0 8px,rgba(0,0,0,.3) 8px 16px);border:1px solid #1e1006;border-radius:6px;text-align:center;opacity:.4;">'
         +'<div style="font-size:12px;">🔒</div>'
-        +'<div style="font-size:7px;color:#3a2818;font-family:Cinzel,serif;">SLOT '+(j+1)+'</div>'
+        +'<div style="font-size:7px;color:#3a2818;">SLOT '+(j+1)+'</div>'
         +'<div style="font-size:6px;color:#2a1808;">ascend to unlock</div>'
         +'</div>';
     }
@@ -3619,7 +3711,7 @@ function buildSanctumRelicsPane(){
 
     // Inventory
     var ownedIds = Object.keys(relicInv).filter(function(id){ return relicInv[id] > 0 && RELICS[id]; });
-    html += '<div style="font-family:Cinzel,serif;font-size:10px;letter-spacing:2px;color:#d4a843;margin-bottom:8px;padding-top:12px;border-top:1px solid #2a1808;">INVENTORY · '+ownedIds.length+' unequipped</div>';
+    html += '<div style="font-size:10px;letter-spacing:2px;color:#d4a843;margin-bottom:8px;padding-top:12px;border-top:1px solid #2a1808;">INVENTORY · '+ownedIds.length+' unequipped</div>';
     if(!ownedIds.length){
       html += '<div style="font-size:9px;color:#3a2010;font-style:italic;">No relics in inventory. Craft them at the Forge.</div>';
     } else {
@@ -3629,7 +3721,7 @@ function buildSanctumRelicsPane(){
         html += '<div style="padding:10px 12px;background:#1a1208;border:1px solid #2a1808;border-left:3px solid #5a3a1a;border-radius:4px;margin-bottom:6px;display:grid;grid-template-columns:56px 1fr auto;gap:10px;align-items:center;">'
           +'<div style="width:56px;height:56px;display:flex;align-items:center;justify-content:center;background:rgba(212,168,67,.06);border:1px solid #3a2818;border-radius:4px;">'+relicImgHTML(relicId,'48px')+'</div>'
           +'<div>'
-          +'<div style="font-family:Cinzel,serif;font-size:11px;color:#c0a060;">'+r.name+'</div>'
+          +'<div style="font-size:11px;color:#c0a060;">'+r.name+'</div>'
           +'<div style="font-size:8px;color:#5a4020;margin-top:2px;">'+r.desc+'</div>'
           +'</div>'
           +(canEquip?'<button class="market-buy-btn" style="padding:6px 14px;font-size:9px;" onclick="srEquipRelic(\''+champId+'\',\''+relicId+'\')">EQUIP</button>':'')
@@ -3639,11 +3731,11 @@ function buildSanctumRelicsPane(){
 
     if(hasBackpack){
       html += '<div style="margin-top:12px;padding:8px 12px;background:rgba(127,192,106,.06);border-left:3px solid #7fc06a;font-size:9px;color:#7a9060;font-style:italic;border-radius:4px;">'
-        +'<strong style="color:#7fc06a;font-style:normal;letter-spacing:1px;font-family:Cinzel,serif;">🎒 BACKPACK ACTIVE ·</strong> Unequipping returns the relic to your inventory.'
+        +'<strong style="color:#7fc06a;font-style:normal;letter-spacing:1px;">🎒 BACKPACK ACTIVE ·</strong> Unequipping returns the relic to your inventory.'
         +'</div>';
     } else {
       html += '<div style="margin-top:12px;padding:8px 12px;background:rgba(208,88,88,.06);border-left:3px solid #d05858;font-size:9px;color:#8a6040;font-style:italic;border-radius:4px;">'
-        +'<strong style="color:#d05858;font-style:normal;letter-spacing:1px;font-family:Cinzel,serif;">WARNING ·</strong> Removing a relic from a slot DESTROYS it. Buy the Adventurer\'s Backpack at the Market to unequip safely.'
+        +'<strong style="color:#d05858;font-style:normal;letter-spacing:1px;">WARNING ·</strong> Removing a relic from a slot DESTROYS it. Buy the Adventurer\'s Backpack at the Market to unequip safely.'
         +'</div>';
     }
   }
@@ -3716,17 +3808,17 @@ function buildSanctumOverviewPane(){
 
   // Portrait with tier treatment
   html+='<div class="'+ascCls+'" style="position:relative;width:180px;height:180px;border:2px solid #3a2818;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:6px;">'
-    +creatureImgHTML(champId, ch.icon, '140px', 'flip-x')
+    +creatureImgHTML(champId, ch.icon, '128px', 'flip-x')
     +(ascLevel>0?'<div style="position:absolute;bottom:6px;left:6px;">'+ascChip+'</div>':'')
     +'</div>';
 
   // Name + stats + level
   html+='<div style="display:flex;flex-direction:column;">'
-    +'<div style="font-family:Cinzel,serif;font-size:22px;color:#d4a843;letter-spacing:1px;margin-bottom:12px;">'+ch.name+'</div>';
+    +'<div style="font-size:22px;color:#d4a843;letter-spacing:1px;margin-bottom:12px;">'+ch.name+'</div>';
 
   // Level + XP bar
   html+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">'
-    +'<span style="font-family:Cinzel,serif;font-size:12px;color:#c09030;padding:3px 8px;border:1px solid #5a3a1a;background:rgba(212,168,67,.06);">LV '+cp.level+'</span>'
+    +'<span style="font-size:12px;color:#c09030;padding:3px 8px;border:1px solid #5a3a1a;background:rgba(212,168,67,.06);">LV '+cp.level+'</span>'
     +'<div style="flex:1;height:6px;background:rgba(0,0,0,.4);border:1px solid #2a1808;position:relative;"><div style="position:absolute;inset:0;width:'+xpPct+'%;background:linear-gradient(90deg,#c09030,#d4a843);"></div></div>'
     +'<span style="font-size:9px;color:#5a4020;">'+cp.xp+'/'+cp.xpNext+'</span>'
     +'</div>';
@@ -3735,8 +3827,8 @@ function buildSanctumOverviewPane(){
   html+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">';
   [{l:'STR',v:cp.stats.str,g:ch.growth.str,c:'#e88060'},{l:'AGI',v:cp.stats.agi,g:ch.growth.agi,c:'#9adc7e'},{l:'WIS',v:cp.stats.wis,g:ch.growth.wis,c:'#9ad8e8'}].forEach(function(s){
     html+='<div style="padding:8px 10px;background:#1a1208;border:1px solid #2a1808;border-left:3px solid '+s.c+';">'
-      +'<div style="font-family:Cinzel,serif;font-size:9px;letter-spacing:2px;color:'+s.c+';">'+s.l+'</div>'
-      +'<div style="font-family:Cinzel,serif;font-size:20px;color:#e8d7a8;line-height:1;margin-top:2px;">'+s.v+'</div>'
+      +'<div style="font-size:9px;letter-spacing:2px;color:'+s.c+';">'+s.l+'</div>'
+      +'<div style="font-size:20px;color:#e8d7a8;line-height:1;margin-top:2px;">'+s.v+'</div>'
       +'<div style="font-size:8px;color:#5a4020;margin-top:2px;">+'+s.g+'/lv</div>'
       +'</div>';
   });
@@ -3754,10 +3846,10 @@ function buildSanctumOverviewPane(){
   html+='<div style="padding:16px 18px;background:linear-gradient(180deg,#1a1208,#0e0802);border:2px solid '+(masteryFull?'#d4a843':'#2a1808')+';border-radius:6px;'+(masteryFull?'animation:snc-mastery-pulse 2.4s ease-in-out infinite;':'')+'margin-bottom:16px;">';
 
   html+='<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;">'
-    +'<span style="font-family:Cinzel,serif;font-size:12px;letter-spacing:3px;color:'+(masteryFull?'#d4a843':'#c0a060')+';">MASTERY</span>';
+    +'<span style="font-size:12px;letter-spacing:3px;color:'+(masteryFull?'#d4a843':'#c0a060')+';">MASTERY</span>';
   if(nextTier){
     var tierColor = ASCENSION_TIERS[ascLevel] ? {'ruby':'#c04040','emerald':'#50b060','sapphire':'#5080d0','turquoise':'#50b0a8','amethyst':'#a060d0','topaz':'#c0a040','black_opal':'#8888c0'}[nextTier.tier] || '#c0a060' : '#c0a060';
-    html+='<span style="font-size:10px;color:#5a4020;font-family:Cinzel,serif;">NEXT: <span style="color:'+tierColor+';">'+nextTier.tier.toUpperCase().replace('_',' ')+'</span></span>';
+    html+='<span style="font-size:10px;color:#5a4020;">NEXT: <span style="color:'+tierColor+';">'+nextTier.tier.toUpperCase().replace('_',' ')+'</span></span>';
   }
   html+='</div>';
 
@@ -3765,11 +3857,11 @@ function buildSanctumOverviewPane(){
   html+='<div style="height:8px;background:rgba(0,0,0,.4);border:1px solid #2a1808;position:relative;margin-bottom:4px;">'
     +'<div style="position:absolute;inset:0;width:'+masteryPct+'%;background:'+(masteryFull?'linear-gradient(90deg,#f0a53a,#d4a843,#f0a53a)':'linear-gradient(90deg,#c09030,#d4a843)')+';'+(masteryFull?'box-shadow:0 0 8px rgba(240,165,58,.5);':'')+'"></div>'
     +'</div>'
-    +'<div style="display:flex;justify-content:space-between;font-size:9px;color:#5a4020;font-family:Cinzel,serif;">'
+    +'<div style="display:flex;justify-content:space-between;font-size:9px;color:#5a4020;">'
     +'<span>'+masteryXp+(nextTier?' / '+masteryReq:'')+'</span>'
     +'<span>'+masteryPct+'%</span>'
     +'</div>'
-    +'<div style="font-size:8px;color:#5a4020;font-family:\'Crimson Text\',serif;font-style:italic;margin-top:6px;line-height:1.5;">'
+    +'<div style="font-size:8px;color:#5a4020;margin-top:6px;line-height:1.5;">'
       +'Earned from combat, expedition completion, forge work, and achievement claims.'
     +'</div>';
 
@@ -3779,7 +3871,7 @@ function buildSanctumOverviewPane(){
     html+='<div style="padding:8px 12px;background:'+(hasGem?'rgba(127,192,106,.06)':'rgba(208,88,88,.06)')+';border-left:3px solid '+(hasGem?'#7fc06a':'#d05858')+';display:flex;align-items:center;gap:8px;">'
       +'<span style="font-size:18px;color:'+tierColor+';">◆</span>'
       +'<div>'
-      +'<div style="font-family:Cinzel,serif;font-size:10px;color:#c0a060;">'+nextTier.gem.replace('_',' ')+' Gem</div>'
+      +'<div style="font-size:10px;color:#c0a060;">'+nextTier.gem.replace('_',' ')+' Gem</div>'
       +'<div style="font-size:8px;color:'+(hasGem?'#7fc06a':'#d05858')+';margin-top:1px;">'+(hasGem?'✓ IN VAULT':'✗ NOT OWNED')+'</div>'
       +'</div></div>';
     // Ascend button
@@ -3787,14 +3879,14 @@ function buildSanctumOverviewPane(){
       +(canAsc?'onclick="doAscensionCeremony(\''+champId+'\')"':'disabled')+'>✦ ASCEND</button>';
     html+='</div>';
   } else {
-    html+='<div style="margin-top:14px;text-align:center;font-family:Cinzel,serif;font-size:11px;letter-spacing:3px;color:#d4a843;">MAXIMUM ASCENSION</div>';
+    html+='<div style="margin-top:14px;text-align:center;font-size:11px;letter-spacing:3px;color:#d4a843;">MAXIMUM ASCENSION</div>';
   }
   html+='</div>';
 
   // Innate
   if(ch.innate || ch.innateName){
     html+='<div style="padding:10px 14px;background:rgba(80,40,0,.1);border:1px solid #2a1808;border-radius:6px;margin-bottom:12px;">'
-      +'<div style="font-family:Cinzel,serif;font-size:9px;color:#c09030;margin-bottom:4px;">✦ '+(ch.innateName||ch.innate.name)+'</div>'
+      +'<div style="font-size:9px;color:#c09030;margin-bottom:4px;">✦ '+(ch.innateName||ch.innate.name)+'</div>'
       +'<div style="font-size:8px;color:#6a5030;line-height:1.6;">'+renderKeywords(ch.innateDesc||ch.innate.desc||'')+'</div>'
       +'</div>';
   }
@@ -3843,13 +3935,13 @@ function doAscensionCeremony(champId){
     +'</div>';
 
   // Name (hidden initially)
-  center.innerHTML += '<div id="asc-name" style="font-family:Cinzel,serif;font-size:28px;color:#e8d7a8;text-shadow:0 2px 0 #000;opacity:0;transition:opacity 600ms;">'+ch.name+'</div>';
+  center.innerHTML += '<div id="asc-name" style="font-size:28px;color:#e8d7a8;text-shadow:0 2px 0 #000;opacity:0;transition:opacity 600ms;">'+ch.name+'</div>';
 
   // Tier badges (hidden)
   center.innerHTML += '<div id="asc-tiers" style="display:flex;align-items:center;gap:16px;opacity:0;">'
-    +'<span style="font-family:Cinzel,serif;font-size:12px;letter-spacing:3px;padding:4px 12px;color:'+fromColor+';border:1px solid '+fromColor+'66;background:'+fromColor+'11;opacity:.5;">'+fromLabel+'</span>'
+    +'<span style="font-size:12px;letter-spacing:3px;padding:4px 12px;color:'+fromColor+';border:1px solid '+fromColor+'66;background:'+fromColor+'11;opacity:.5;">'+fromLabel+'</span>'
     +'<span style="font-size:16px;color:#d4a843;text-shadow:0 0 6px rgba(212,168,67,.4);">→</span>'
-    +'<span id="asc-to-tier" style="font-family:Cinzel,serif;font-size:16px;letter-spacing:5px;padding:6px 16px;color:'+toColor+';border:2px solid '+toColor+';background:'+toColor+'22;text-shadow:0 0 10px '+toColor+'88;animation:asc-tier-emerge 700ms cubic-bezier(.2,.8,.3,1) forwards;">'+toLabel+'</span>'
+    +'<span id="asc-to-tier" style="font-size:16px;letter-spacing:5px;padding:6px 16px;color:'+toColor+';border:2px solid '+toColor+';background:'+toColor+'22;text-shadow:0 0 10px '+toColor+'88;animation:asc-tier-emerge 700ms cubic-bezier(.2,.8,.3,1) forwards;">'+toLabel+'</span>'
     +'</div>';
 
   // Stat changes (hidden)
@@ -3863,12 +3955,12 @@ function doAscensionCeremony(champId){
   center.innerHTML += '<div id="asc-relic-callout" style="padding:12px 20px;background:rgba(10,5,2,.9);border:2px solid '+toColor+';display:flex;align-items:center;gap:12px;opacity:0;box-shadow:0 0 20px '+toColor+'55;">'
     +'<span style="font-size:22px;color:'+toColor+';text-shadow:0 0 10px '+toColor+'88;">◇</span>'
     +'<div>'
-    +'<div style="font-family:Cinzel,serif;font-size:10px;letter-spacing:3px;color:'+toColor+';">RELIC SLOT UNLOCKED</div>'
+    +'<div style="font-size:10px;letter-spacing:3px;color:'+toColor+';">RELIC SLOT UNLOCKED</div>'
     +'<div style="font-size:10px;color:#c8b888;margin-top:2px;">Slot '+(fromLevel+1)+' now available. Equip a relic in the Sanctum.</div>'
     +'</div></div>';
 
   // Continue button (hidden)
-  center.innerHTML += '<button id="asc-continue" style="display:none;padding:12px 36px;font-family:Cinzel,serif;font-size:13px;letter-spacing:4px;font-weight:700;color:#d4a843;background:linear-gradient(180deg,#3a2818,#1a1208);border:2px solid #d4a843;cursor:pointer;text-shadow:0 0 6px rgba(212,168,67,.4);box-shadow:0 0 14px rgba(212,168,67,.3);">CONTINUE</button>';
+  center.innerHTML += '<button id="asc-continue" style="display:none;padding:12px 36px;font-size:13px;letter-spacing:4px;font-weight:700;color:#d4a843;background:linear-gradient(180deg,#3a2818,#1a1208);border:2px solid #d4a843;cursor:pointer;text-shadow:0 0 6px rgba(212,168,67,.4);box-shadow:0 0 14px rgba(212,168,67,.3);">CONTINUE</button>';
 
   overlay.appendChild(center);
   document.body.appendChild(overlay);
@@ -3901,7 +3993,7 @@ function doAscensionCeremony(champId){
     if(area){
       // Remove particles + gem
       area.innerHTML = '<div class="asc-'+toTier.tier+'" style="position:relative;width:280px;height:280px;border:3px solid '+toColor+';display:flex;align-items:center;justify-content:center;overflow:hidden;animation:asc-portrait-rise 800ms cubic-bezier(.2,.8,.3,1) forwards;box-shadow:0 0 40px '+toColor+'88,0 0 80px '+toColor+'44,inset 0 0 30px '+toColor+'22;">'
-        +creatureImgHTML(champId, ch.icon, '200px', 'flip-x')
+        +creatureImgHTML(champId, ch.icon, '192px', 'flip-x')
         +'</div>';
       // Add rotating glow
       var glow = document.createElement('div');
@@ -3942,12 +4034,12 @@ function doAscensionCeremony(champId){
 function _ascStatHTML(label, before, after, color, delay){
   var diff = after - before;
   return '<div style="padding:10px 12px;background:rgba(10,5,2,.85);border:1px solid '+color+'44;border-left:3px solid '+color+';animation:asc-stat-fly 500ms cubic-bezier(.2,.8,.3,1) '+delay+'ms backwards;">'
-    +'<div style="font-family:Cinzel,serif;font-size:10px;letter-spacing:2px;color:'+color+';text-shadow:0 0 4px '+color+'44;">'+label+'</div>'
+    +'<div style="font-size:10px;letter-spacing:2px;color:'+color+';text-shadow:0 0 4px '+color+'44;">'+label+'</div>'
     +'<div style="display:flex;align-items:baseline;gap:6px;margin-top:2px;">'
-    +'<span style="font-family:Cinzel,serif;font-size:14px;color:#6a5030;text-decoration:line-through;">'+before+'</span>'
+    +'<span style="font-size:14px;color:#6a5030;text-decoration:line-through;">'+before+'</span>'
     +'<span style="font-size:11px;color:#6a5030;">→</span>'
-    +'<span style="font-family:Cinzel,serif;font-size:22px;font-weight:700;color:'+color+';text-shadow:0 0 6px '+color+'44;">'+after+'</span>'
-    +'<span style="font-family:Cinzel,serif;font-size:11px;color:#7fc06a;margin-left:auto;">+'+diff+'</span>'
+    +'<span style="font-size:22px;font-weight:700;color:'+color+';text-shadow:0 0 6px '+color+'44;">'+after+'</span>'
+    +'<span style="font-size:11px;color:#7fc06a;margin-left:auto;">+'+diff+'</span>'
     +'</div></div>';
 }
 
@@ -3966,7 +4058,7 @@ function buildSanctumDeckPane(){
   var statColors={str:'#e88060',agi:'#9adc7e',wis:'#9ad8e8'};
 
   var html='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">'
-    +'<span style="font-family:Cinzel,serif;font-size:10px;letter-spacing:2px;color:#d4a843;">STARTING DECK · '+deck.length+' CARDS</span>'
+    +'<span style="font-size:10px;letter-spacing:2px;color:#d4a843;">STARTING DECK · '+deck.length+' CARDS</span>'
     +'</div>';
 
   // Compact list
@@ -3977,9 +4069,9 @@ function buildSanctumDeckPane(){
     var statColor=statColors[cd.stat]||'#c0a060';
     html+='<div style="display:flex;align-items:center;gap:10px;padding:7px 10px;border-bottom:1px solid #1e1006;">'
       +'<span style="font-size:16px;width:24px;text-align:center;">'+(cd.icon||'◇')+'</span>'
-      +'<span style="font-family:Cinzel,serif;font-size:10px;color:#c0a060;flex:1;">'+cd.name+'</span>'
-      +'<span style="font-size:9px;color:#5a4020;font-family:Cinzel,serif;">×'+copies+'</span>'
-      +'<span style="font-size:7px;color:'+statColor+';font-family:Cinzel,serif;letter-spacing:1px;width:28px;text-align:right;">'+(cd.stat||'').toUpperCase()+'</span>'
+      +'<span style="font-size:10px;color:#c0a060;flex:1;">'+cd.name+'</span>'
+      +'<span style="font-size:9px;color:#5a4020;">×'+copies+'</span>'
+      +'<span style="font-size:7px;color:'+statColor+';letter-spacing:1px;width:28px;text-align:right;">'+(cd.stat||'').toUpperCase()+'</span>'
       +'</div>';
   });
   html+='</div>';
@@ -4025,7 +4117,7 @@ function toggleCardEditRow(champId, cardId, isBase, cell, frags, champCards, dec
     +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">'
       +'<span style="font-size:20px;">'+(cd.icon||'?')+'</span>'
       +'<div>'
-        +'<div style="font-family:Cinzel,serif;font-size:10px;color:#d4a843;">'+cd.name+'</div>'
+        +'<div style="font-size:10px;color:#d4a843;">'+cd.name+'</div>'
         +'<div style="font-size:7px;color:#8a6040;line-height:1.4;">'+cd.effect+'</div>'
       +'</div>'
     +'</div>'
@@ -4091,7 +4183,7 @@ function buildSanctumUpgradesPane(){
       row.innerHTML='<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #1a0e00;">'
         +'<span style="font-size:16px;">'+(cd.icon||'?')+'</span>'
         +'<div style="flex:1;min-width:0;">'
-          +'<div style="font-size:9px;color:#d4a843;font-family:Cinzel,serif;">'+cd.name+'</div>'
+          +'<div style="font-size:9px;color:#d4a843;">'+cd.name+'</div>'
           +'<div style="display:flex;align-items:center;gap:4px;margin-top:2px;">'
             +'<span style="font-size:7px;color:'+tierCol[curTier]+';border:1px solid '+tierCol[curTier]+';padding:1px 4px;border-radius:2px;">'+curTier.toUpperCase()+'</span>'
             +'<span style="font-size:8px;color:#444;">→</span>'
@@ -4109,7 +4201,7 @@ function buildSanctumUpgradesPane(){
     } else {
       row.innerHTML='<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #1a0e00;">'
         +'<span style="font-size:16px;">'+(cd.icon||'?')+'</span>'
-        +'<span style="font-size:9px;color:#d4a843;font-family:Cinzel,serif;flex:1;">'+cd.name+'</span>'
+        +'<span style="font-size:9px;color:#d4a843;flex:1;">'+cd.name+'</span>'
         +'<span style="font-size:7px;color:'+tierCol[curTier]+';border:1px solid '+tierCol[curTier]+';padding:1px 4px;border-radius:2px;">'+curTier.toUpperCase()+'</span>'
         +'<span style="font-size:7px;color:#3a6020;margin-left:4px;">MAX</span>'
         +'</div>';
@@ -4153,7 +4245,7 @@ function buildSanctumTrainingPane(){
     row.innerHTML='<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #1a0e00;">'
       +'<span style="font-size:20px;">'+(alreadySet?'✅':'🏆')+'</span>'
       +'<div style="flex:1;">'
-        +'<div style="font-size:9px;color:#d4a843;font-family:Cinzel,serif;">Level Floor '+floor+'</div>'
+        +'<div style="font-size:9px;color:#d4a843;">Level Floor '+floor+'</div>'
         +'<div style="font-size:7px;color:#7a6030;margin-top:1px;">Runs start at Lv.'+floor+' minimum</div>'
         +'<div style="font-size:7px;margin-top:3px;display:flex;gap:8px;">'
           +'<span style="color:'+(hasGold||alreadySet?'#c09030':'#7a2020')+';">'+cost.gold+'g</span>'
@@ -4161,7 +4253,7 @@ function buildSanctumTrainingPane(){
         +'</div>'
       +'</div>'
       +(alreadySet
-        ?'<span style="font-size:8px;color:#27ae60;font-family:Cinzel,serif;">UNLOCKED</span>'
+        ?'<span style="font-size:8px;color:#27ae60;">UNLOCKED</span>'
         :canAfford
           ?'<button class="sanctum-btn sanctum-btn-upgrade" onclick="sanctumBuyLevelFloor(\''+champId+'\','+floor+')">UNLOCK</button>'
           :'<button class="sanctum-btn" disabled style="opacity:.4;">UNLOCK</button>')
@@ -4665,7 +4757,7 @@ function renderMarketRare(lvl){
   var permItems = getAvailablePermanentItems();
   if(permItems.length){
     var permHeader = document.createElement('div');
-    permHeader.style.cssText = 'padding:6px 10px;font-family:Cinzel,serif;font-size:8px;letter-spacing:2px;color:#c89adc;border-bottom:1px solid #2a1808;';
+    permHeader.style.cssText = 'padding:6px 10px;font-size:8px;letter-spacing:2px;color:#c89adc;border-bottom:1px solid #2a1808;';
     permHeader.textContent = 'PERMANENT UPGRADES';
     list.appendChild(permHeader);
 
@@ -4695,7 +4787,7 @@ function renderMarketRare(lvl){
   // Rotating rares header
   if((b.rare||[]).length){
     var rareHeader = document.createElement('div');
-    rareHeader.style.cssText = 'padding:6px 10px;font-family:Cinzel,serif;font-size:8px;letter-spacing:2px;color:#d4a843;border-bottom:1px solid #2a1808;margin-top:8px;';
+    rareHeader.style.cssText = 'padding:6px 10px;font-size:8px;letter-spacing:2px;color:#d4a843;border-bottom:1px solid #2a1808;margin-top:8px;';
     rareHeader.textContent = 'ROTATING STOCK';
     list.appendChild(rareHeader);
   }
@@ -5129,8 +5221,13 @@ function _forgeTimeFmt(ms){
 
 function _forgeDefaultRecipeId(){
   // Pick the first recipe by tier order (base → ruby → emerald → sapphire).
+  // Round 67p: only consider UNLOCKED recipes — locked recipes don't
+  // surface in the forge list at all, so the default selection should
+  // also skip them.
   if(typeof RELIC_RECIPES === 'undefined') return null;
-  var ids = Object.keys(RELIC_RECIPES);
+  var ids = Object.keys(RELIC_RECIPES).filter(function(id){
+    return (typeof isRecipeUnlocked !== 'function') || isRecipeUnlocked(id);
+  });
   var tierOrder = {base:1, ruby:2, emerald:3, sapphire:4};
   ids.sort(function(a,b){
     var ra=RELIC_RECIPES[a], rb=RELIC_RECIPES[b];
@@ -5222,7 +5319,7 @@ function _forgeRenderQueue(){
       var champName = CREATURES[job.champId].name;
       champHtml =
         '<div class="forge-slot-champ assigned" title="'+champName+' is helping (−'+bonusPct+'% time). Click to release." onclick="releaseChampFromForge('+i+')">'
-        + '<div class="forge-slot-champ-portrait">'+creatureImgHTML(job.champId, CREATURES[job.champId].icon, '28px')+'</div>'
+        + '<div class="forge-slot-champ-portrait">'+creatureImgHTML(job.champId, CREATURES[job.champId].icon, '32px')+'</div>'
         + '<div class="forge-slot-champ-info">'
           + '<div class="forge-slot-champ-name">'+champName+'</div>'
           + '<div class="forge-slot-champ-bonus">−'+bonusPct+'%</div>'
@@ -5271,10 +5368,15 @@ function _forgeRenderRecipeList(){
   if(typeof RELIC_RECIPES === 'undefined'){ listEl.innerHTML=''; return; }
 
   // Group by tier
+  // Round 67p: filter out recipes that haven't been unlocked yet via
+  // story quests. PERSIST.unlockedRelicRecipes is the source of truth;
+  // isRecipeUnlocked() guards the check. New saves start with only
+  // safety_net visible; future quest completions add entries.
   var groups = ['base','ruby','emerald','sapphire'];
   var byTier = {};
   groups.forEach(function(t){ byTier[t] = []; });
   Object.keys(RELIC_RECIPES).forEach(function(id){
+    if(typeof isRecipeUnlocked === 'function' && !isRecipeUnlocked(id)) return;
     var r = RELIC_RECIPES[id];
     var tier = (r && r.tier) || 'base';
     if(!byTier[tier]) byTier[tier] = [];
@@ -5816,6 +5918,10 @@ function collectForgeCraft(slotIdx){
     ? ' (+'+xpGained+' Forge XP · +'+masteryGain+' mastery to '+CREATURES[assignedChampId].name+')'
     : ' (+'+xpGained+' Forge XP)';
   addLog('✦ Forge complete: '+(relic?relic.name:job.relicId)+' added to inventory.'+masteryNote,'sys');
+  // Round 67p: advance story "craft this relic" quests.
+  if(typeof checkQuestProgress === 'function'){
+    checkQuestProgress('craft_relic', { relicId: job.relicId });
+  }
   savePersist();
   refreshForgePanel();
 }
@@ -6035,13 +6141,13 @@ function showSpoilsOverlay(champId){
     rewardsRow.innerHTML=
       '<div style="background:rgba(0,0,0,.4);border:1px solid #4a3010;border-radius:8px;padding:12px 18px;min-width:90px;">'
         +'<div style="font-size:28px;margin-bottom:4px;">🃏</div>'
-        +'<div style="font-family:Cinzel,serif;font-size:16px;color:#d4a843;">+'+fragReward+'</div>'
+        +'<div style="font-size:16px;color:#d4a843;">+'+fragReward+'</div>'
         +'<div style="font-size:8px;color:#7a6030;margin-top:2px;">Card Fragments</div>'
       +'</div>'
       +(shardReward>0?
         '<div style="background:rgba(0,0,0,.4);border:1px solid #4a3010;border-radius:8px;padding:12px 18px;min-width:90px;">'
           +'<div style="font-size:28px;margin-bottom:4px;">💎</div>'
-          +'<div style="font-family:Cinzel,serif;font-size:16px;color:#d4a843;">+'+shardReward+'</div>'
+          +'<div style="font-size:16px;color:#d4a843;">+'+shardReward+'</div>'
           +'<div style="font-size:8px;color:#7a6030;margin-top:2px;">Gem Shards</div>'
         +'</div>':'');
   }
@@ -6058,7 +6164,7 @@ function showSpoilsOverlay(champId){
     cardInnerEl.innerHTML=
       '<span style="font-size:28px;">'+(cd?cd.icon:'🃏')+'</span>'
       +'<div style="text-align:left;">'
-        +'<div style="font-family:Cinzel,serif;font-size:10px;color:#d4a843;">'+(cd?cd.name:picked)+'</div>'
+        +'<div style="font-size:10px;color:#d4a843;">'+(cd?cd.name:picked)+'</div>'
         +'<div style="font-size:8px;color:#7a6030;margin-top:2px;">'+(cd?cd.effect:'')+'</div>'
         +(alreadyOwned?'<div style="font-size:7px;color:#4a6030;margin-top:3px;">+1 copy (you have '+(alreadyOwned+1)+')</div>':'<div style="font-size:7px;color:#60a040;margin-top:3px;">✨ New card unlocked!</div>')
       +'</div>';
@@ -6158,10 +6264,10 @@ var RARITY_SPOTLIGHT = {ruby:0, emerald:0, sapphire:1, turquoise:1, amethyst:2, 
     '.es-face{transform:rotateY(180deg);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:12px 8px;gap:5px;border:2px solid #333;}'+
     '.es-pool-card{background:linear-gradient(180deg,#1a1208,#120802);border:1px solid #3a2010;border-radius:4px;padding:8px;display:flex;flex-direction:column;gap:4px;transition:border-color .15s,opacity .15s;}'+
     '.es-pool-card:hover{border-color:#c09030;}'+
-    '.es-summon-btn{padding:12px 22px;background:transparent;border:2px solid #6030c0;color:#c0a0ff;font-family:\'Cinzel\',serif;font-size:12px;letter-spacing:2.5px;cursor:pointer;border-radius:4px;text-shadow:0 0 6px rgba(160,96,224,.4);transition:all .12s ease;display:flex;flex-direction:column;align-items:center;gap:2px;min-width:160px;}'+
+    '.es-summon-btn{padding:12px 22px;background:transparent;border:2px solid #6030c0;color:#c0a0ff;font-size:12px;letter-spacing:2.5px;cursor:pointer;border-radius:4px;text-shadow:0 0 6px rgba(160,96,224,.4);transition:all .12s ease;display:flex;flex-direction:column;align-items:center;gap:2px;min-width:160px;}'+
     '.es-summon-btn:hover:not(:disabled){background:linear-gradient(180deg,rgba(96,48,192,.3),rgba(48,16,96,.4));}'+
     '.es-summon-btn:disabled{opacity:.4;cursor:not-allowed;}'+
-    '.es-summon-btn-sub{font-size:9px;letter-spacing:1.2px;color:#9070c0;font-style:italic;font-family:\'Crimson Text\',serif;font-weight:normal;}';
+    '.es-summon-btn-sub{font-size:9px;letter-spacing:1.2px;color:#9070c0;font-weight:normal;}';
   document.head.appendChild(s);
 })();
 
@@ -6214,8 +6320,8 @@ function _renderSummonsPanel(){
     var names = (rp.ids||[]).map(function(cid){ return (CREATURES[cid] && CREATURES[cid].name) || cid; }).join(', ');
     refundBanner = ''
       + '<div style="margin:10px 22px 0;padding:10px 14px;background:linear-gradient(180deg,#1a1208,#0e0802);border:1px solid #5a3a18;border-left:3px solid #d4a843;border-radius:3px;">'
-      +   '<div style="font-family:Cinzel,serif;font-size:10px;letter-spacing:2px;color:#d4a843;margin-bottom:4px;">A SOUL RETURNED</div>'
-      +   '<div style="font-family:\'Crimson Text\',serif;font-size:12px;color:#c0a060;line-height:1.4;">'
+      +   '<div style="font-size:10px;letter-spacing:2px;color:#d4a843;margin-bottom:4px;">A SOUL RETURNED</div>'
+      +   '<div style="font-size:12px;color:#c0a060;line-height:1.4;">'
       +     'The binding on ' + names + ' could not hold. ' + rp.shards + ' soul shards were returned to your reserve.'
       +   '</div>'
       + '</div>';
@@ -6238,8 +6344,8 @@ function _renderSummonsPanel(){
     + '<div style="display:flex;align-items:center;gap:14px;padding:12px 22px;background:linear-gradient(180deg,#1a0f25,#0e0820);border-bottom:1px solid #2a1808;">'
     +   (typeof soulShardImgHTML === 'function' ? soulShardImgHTML('40px') : '<span style="font-size:32px;">🔮</span>')
     +   '<div style="flex:1;min-width:0;">'
-    +     '<div style="font-family:Cinzel,serif;font-size:9px;letter-spacing:2px;color:#7040a0;">SOUL SHARDS</div>'
-    +     '<div style="font-family:Cinzel,serif;font-size:18px;color:#c0a0ff;font-weight:700;letter-spacing:1px;" id="summons-shards-count">' + souls + '</div>'
+    +     '<div style="font-size:9px;letter-spacing:2px;color:#7040a0;">SOUL SHARDS</div>'
+    +     '<div style="font-size:18px;color:#c0a0ff;font-weight:700;letter-spacing:1px;" id="summons-shards-count">' + souls + '</div>'
     +   '</div>'
     + '</div>'
     + refundBanner
@@ -6269,12 +6375,12 @@ function _renderSummonsPanel(){
     +   '<div id="es-pinpoint" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:4px;height:4px;border-radius:50%;background:#fff;pointer-events:none;opacity:0;box-shadow:0 0 8px #fff,0 0 30px #c080ff,0 0 80px #8040ff;"></div>'
     +   '<div id="es-shockwave" style="position:absolute;top:50%;left:50%;width:200px;height:200px;border-radius:50%;border:3px solid #fff;pointer-events:none;opacity:0;display:none;"></div>'
     +   '<div id="es-stage" style="position:relative;min-height:200px;display:flex;align-items:center;justify-content:center;">'
-    +     '<div style="color:#5a4a70;font-family:Cinzel,serif;font-size:11px;letter-spacing:3px;">AWAITING THE SUMMONS</div>'
+    +     '<div style="color:#5a4a70;font-size:11px;letter-spacing:3px;">AWAITING THE SUMMONS</div>'
     +   '</div>'
     + '</div>'
     // Pool grid section
     + '<div style="padding:14px 22px;">'
-    +   '<div style="font-family:Cinzel,serif;font-size:11px;letter-spacing:2.5px;color:#d4a843;margin-bottom:10px;" id="es-pool-label">SUMMONABLE SOULS</div>'
+    +   '<div style="font-size:11px;letter-spacing:2.5px;color:#d4a843;margin-bottom:10px;" id="es-pool-label">SUMMONABLE SOULS</div>'
     +   '<div id="es-pool-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px;"></div>'
     + '</div>';
 
@@ -6323,11 +6429,11 @@ function _buildPoolGrid(pool){
         +'<div style="min-width:0;flex:1;">'
           // Round 62d: gem-name text label removed; the 3px gem-colour
           // border-left on the card already carries the rarity signal.
-          +'<div style="font-family:Cinzel,serif;font-size:11px;color:#e8d7a8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.5px;">'+cr.name+'</div>'
+          +'<div style="font-size:11px;color:#e8d7a8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.5px;">'+cr.name+'</div>'
         +'</div>'
-        +(owned?'<span style="flex-shrink:0;color:#9adc7e;font-size:10px;font-family:Cinzel,serif;">✓'+(dupes?'+'+dupes:'')+'</span>':'')
+        +(owned?'<span style="flex-shrink:0;color:#9adc7e;font-size:10px;">✓'+(dupes?'+'+dupes:'')+'</span>':'')
       +'</div>'
-      +'<div style="font-family:Cinzel,serif;font-size:9px;color:#7a6030;letter-spacing:.6px;">'
+      +'<div style="font-size:9px;color:#7a6030;letter-spacing:.6px;">'
         +'<span style="color:#e88060;">'+cr.baseStats.str+'</span>·'
         +'<span style="color:#9adc7e;">'+cr.baseStats.agi+'</span>·'
         +'<span style="color:#9ad8e8;">'+cr.baseStats.wis+'</span>'
@@ -6512,7 +6618,7 @@ function doEternalPull(count){
   var cost = (count === 10) ? SUMMONS_COST_10 : SUMMONS_COST_1 * count;
   if((PERSIST.soulShards||0)<cost){
     var st=document.getElementById('es-stage');
-    if(st) st.innerHTML='<div style="color:#f06060;font-family:Cinzel,serif;font-size:11px;letter-spacing:2px;">NOT ENOUGH SHARDS · NEED '+cost+'</div>';
+    if(st) st.innerHTML='<div style="color:#f06060;font-size:11px;letter-spacing:2px;">NOT ENOUGH SHARDS · NEED '+cost+'</div>';
     return;
   }
 
@@ -6573,7 +6679,7 @@ function doEternalPull(count){
   // Round 60: dropped es-bg-pulse animation (removed from CSS in the
   // same round). Plain "BINDING SOULS..." status text — the canvas
   // vortex behind it provides motion already.
-  if(st){ st.style.display='flex'; st.style.alignItems='center'; st.style.justifyContent='center'; st.innerHTML='<div style="color:#9070c0;font-family:Cinzel,serif;font-size:11px;letter-spacing:3px;">BINDING SOULS...</div>'; }
+  if(st){ st.style.display='flex'; st.style.alignItems='center'; st.style.justifyContent='center'; st.innerHTML='<div style="color:#9070c0;font-size:11px;letter-spacing:3px;">BINDING SOULS...</div>'; }
 
   // Vortex stream inward (2.5s)
   _startVortex(2500);
@@ -6659,9 +6765,9 @@ function _dealCards(){
         +'</div>'
         +'<div class="es-face" style="transform:rotateY(0deg);background:'+RARITY_BG[r.rarity]+';border-color:'+rc+';box-shadow:0 0 24px '+rc+'50,inset 0 0 20px '+rc+'12;">'
           +'<div style="display:flex;align-items:center;justify-content:center;flex:1;">'+creatureImgHTML(r.c.id, r.c.icon, spriteSize, 'flip-x')+'</div>'
-          +'<div style="color:#e8d0a0;font-family:Cinzel,serif;font-size:12px;letter-spacing:.5px;text-align:center;line-height:1.2;">'+r.c.name+'</div>'
+          +'<div style="color:#e8d0a0;font-size:12px;letter-spacing:.5px;text-align:center;line-height:1.2;">'+r.c.name+'</div>'
           +'<div style="height:3px;background:'+rc+';width:36px;border-radius:1.5px;margin:5px auto 0;opacity:.9;"></div>'
-          +'<div style="margin-top:5px;padding:3px 8px;border-radius:10px;background:'+(r.isNew?'#0d200d':'#1e0b00')+';color:'+(r.isNew?'#60e060':'#a06040')+';font-size:9px;letter-spacing:1px;font-family:Cinzel,serif;">'+(r.isNew?'✦ NEW':'DUPLICATE')+'</div>'
+          +'<div style="margin-top:5px;padding:3px 8px;border-radius:10px;background:'+(r.isNew?'#0d200d':'#1e0b00')+';color:'+(r.isNew?'#60e060':'#a06040')+';font-size:9px;letter-spacing:1px;">'+(r.isNew?'✦ NEW':'DUPLICATE')+'</div>'
         +'</div>'
       +'</div>';
 

@@ -19,10 +19,16 @@ var AREA_DEFS=[
    lore:'The Sanctum of Light stood for centuries. Then something came from below. The paladins fought. They lost. Now iron sentinels still patrol empty halls, raiders pick through the wreckage, and infernal beasts roam where prayers once echoed.\n\nThe temple is not dead. It is occupied.',
    enemyPool:['iron_sentinel','raider','infernal_beast'], bg:'#120608', loot:{always:'key_temple', bonus:null, bonusChance:0}},
 
-  {id:'dojo',        name:'The Dojo',                  icon:'🥋',materialGroup:'dojo', levelRange:[1,99], theme:'debug arena — fight the Dojo Tiger', singleEnemy:true,
-   lore:'A timeless training ground. The Dojo Tiger fights however you configure it. Swap its innate and deck in dojo_tiger.js to test any ability.',
-   enemyPool:['dojo_tiger'],
-   bg:'#0a0a10', loot:{always:null, bonus:null, bonusChance:0}},
+  // Round 67o: Dojo disabled for ship — debug-only area, surfaces in
+  // the area-select grid alongside real content which J doesn't want
+  // for now. The dojo_tiger creature and dojo_tiger.js stay loaded
+  // (other code references them via _innateTriggers etc); only the
+  // AREA_DEFS entry is removed so generateAreas can't pick it. To
+  // re-enable for dev testing, uncomment this block.
+  // {id:'dojo',        name:'The Dojo',                  icon:'🥋',materialGroup:'dojo', levelRange:[1,99], theme:'debug arena — fight the Dojo Tiger', singleEnemy:true,
+  //  lore:'A timeless training ground. The Dojo Tiger fights however you configure it. Swap its innate and deck in dojo_tiger.js to test any ability.',
+  //  enemyPool:['dojo_tiger'],
+  //  bg:'#0a0a10', loot:{always:null, bonus:null, bonusChance:0}},
 
   // ── DISABLED AREAS — creatures not yet redesigned ──
   // Uncomment as creature rosters are completed.

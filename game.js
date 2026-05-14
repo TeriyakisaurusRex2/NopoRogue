@@ -135,7 +135,10 @@ function iconWithAlertHTML(src, fallback, size, hasAlert){
 // Round 37: blanket unlock for all town buildings while we redesign
 // the unlock pacing. Applied in loadPersist; idempotent. To re-gate,
 // flip to false and the building defaults take over again.
-var DEV_UNLOCK_ALL_BUILDINGS = true;
+// Round 67p: re-gated. The starter story quest chain now drives the
+// unlock pacing (Forge + Sanctum on story_reach_lv3, etc.). Flip back
+// to true for dev sessions where you want every building open.
+var DEV_UNLOCK_ALL_BUILDINGS = false;
 
 // Round 60: console-callable cheat to add Soul Shards for summons
 // testing. Replaces the hardcoded "+500 Shards" button that used to
@@ -360,12 +363,14 @@ function toggleMute(kind){
 }
 
 // Paint the speaker / muted-speaker icons based on current slider state.
+// Round 67o: swapped emoji for PNG icons (assets/icons/{un}mute_{kind}.png).
 function refreshMuteButtons(){
   ['music','sfx'].forEach(function(kind){
     var btn = document.getElementById('s-'+kind+'-mute');
     if(!btn) return;
     var muted = !SETTINGS[kind] || SETTINGS[kind] === 0;
-    btn.textContent = muted ? '🔇' : '🔊';
+    var src = 'assets/icons/' + (muted ? 'mute_' : 'unmute_') + kind + '.png';
+    btn.innerHTML = '<img src="'+src+'" alt="" style="width:24px;height:24px;display:block;">';
     btn.classList.toggle('muted', muted);
   });
 }
@@ -516,9 +521,9 @@ function loadSettings(){
     if(s.logd){     document.getElementById('s-logd').value=s.logd;       SETTINGS.logd=s.logd; }
     if(s.confirm!=null){ document.getElementById('s-confirm').checked=s.confirm;   SETTINGS.confirm=s.confirm; }
     if(s.tutorial!=null){ document.getElementById('s-tutorial').checked=s.tutorial; SETTINGS.tutorial=s.tutorial; }
-    // Always enforce Press Start font and normal text size
-    setFontTheme('press');
-    setTextSize(9);
+    // Round 67p: removed setFontTheme('press') + setTextSize(9). The
+    // pixel font is now the body default in CSS — no class-level
+    // override needed.
   }catch(e){}
 }
 
@@ -596,7 +601,7 @@ var PERSIST={
                   pendingShards:0        // shards in the well awaiting CLAIM
                  },
       sanctum:   {unlocked:false,slottedCard:null},
-      market:{unlocked:true,slottedCard:null, stock:[], refreshProgress:0,
+      market:{unlocked:false,slottedCard:null, stock:[], refreshProgress:0,
               deals:[], dealsProgress:0, rare:null, rareProgress:0},
       adventurers_hall:{unlocked:true, expeditionSlots:[
         {champId:null,areaId:null,type:null,startTime:null,totalMs:null,restUntil:null},
@@ -633,6 +638,17 @@ var PERSIST={
   champDupes:{},    // { champId: N } legacy — keeping for compat
   seenTutorials:{}, // { tutorialId: true } — tracks dismissed tutorials
   areaRuns:{},
+  // Round 67p: mid-combat resume slot. Set by _saveActiveRun() each
+  // time a fight is about to begin (top of showBeginBattleModal).
+  // Cleared on area clear or defeat. When non-null, the login card's
+  // CONTINUE button text flips to "JUMP BACK INTO BATTLE" and the
+  // player resumes mid-area instead of going to champion select.
+  activeRun: null,
+  // Round 67p: which Forge recipes are unlocked. Default has only
+  // safety_net — the first relic the starter quest line awards.
+  // Story-quest completion adds more entries; the Forge UI filters
+  // recipes through isRecipeUnlocked() before rendering.
+  unlockedRelicRecipes: { safety_net: true },
 };
 
 // Round 63: snapshot the original PERSIST shape so createNewSave can
@@ -865,8 +881,42 @@ function getShardWellPointCost(currentRank){
 // ── Relic slot management ──────────────────────────────────────────────────
 
 // How many relic slots this champion has (1 per ascension tier, 0 at base)
+// Round 67p: relic slot scaling reworked.
+//   ascension 0 (unascended)  → 1 slot, BASE-tier relics only.
+//   ascension 1 (Ruby)        → 1 slot, all tiers permitted.
+//   ascension N (N ≥ 2)       → N slots, all tiers.
+// Previously ascension 0 gave zero slots, so champions only got relic
+// access at Ruby+. Opening up a single base-tier slot lets the early-
+// game Safety Net relic (and future starter-tier picks) gate behind
+// the new story-quest chain rather than the heavier ascension grind.
 function getRelicSlotCount(champId){
-  return getAscensionLevel(champId);
+  var asc = getAscensionLevel(champId) || 0;
+  if(asc <= 1) return 1;
+  return asc;
+}
+
+// Tier eligibility per ascension level. Returns true if a champion at
+// the given ascension can equip a relic of the given tier.
+function canEquipRelicTier(champId, tier){
+  var asc = getAscensionLevel(champId) || 0;
+  if(asc >= 1) return true;          // ascended champs get every tier
+  return tier === 'base';            // unascended: base tier only
+}
+
+// Round 67p: forge recipe unlock check. Recipes start locked except
+// for what PERSIST.unlockedRelicRecipes whitelists (default just
+// safety_net — see PERSIST defaults). Story quests add entries here
+// as the player progresses. Idempotent: setting an already-unlocked
+// recipe is a no-op.
+function isRecipeUnlocked(relicId){
+  if(!PERSIST || !PERSIST.unlockedRelicRecipes) return false;
+  return !!PERSIST.unlockedRelicRecipes[relicId];
+}
+function unlockRecipe(relicId){
+  if(!PERSIST) return;
+  if(!PERSIST.unlockedRelicRecipes) PERSIST.unlockedRelicRecipes = {};
+  PERSIST.unlockedRelicRecipes[relicId] = true;
+  if(typeof savePersist === 'function') savePersist();
 }
 
 // Equipped relic IDs for a champion (ordered list, length = equipped count)
@@ -883,14 +933,24 @@ function equipRelic(champId, relicId){
   if(!cp) return 'Champion not found.';
   if(!cp.relics) cp.relics = [];
   var slots = getRelicSlotCount(champId);
-  if(slots === 0) return 'No relic slots — ascend this champion first.';
+  if(slots === 0) return 'No relic slots available.';
   if(cp.relics.length >= slots) return 'All slots full.';
+  // Round 67p: tier eligibility check. Unascended champions can only
+  // equip base-tier relics — Ruby+ champions can equip anything.
+  var def = (typeof RELICS !== 'undefined') ? RELICS[relicId] : null;
+  if(def && def.tier && typeof canEquipRelicTier === 'function' && !canEquipRelicTier(champId, def.tier)){
+    return 'This champion needs to ascend to equip ' + (def.tier.charAt(0).toUpperCase()+def.tier.slice(1)) + '-tier relics.';
+  }
   var inv = PERSIST.town.relics || {};
   if(!inv[relicId] || inv[relicId] <= 0) return 'Relic not in inventory.';
   inv[relicId]--;
   if(inv[relicId] <= 0) delete inv[relicId];
   cp.relics.push(relicId);
   savePersist();
+  // Round 67p: advance story "equip this relic" quests.
+  if(typeof checkQuestProgress === 'function'){
+    checkQuestProgress('equip_relic', { champId: champId, relicId: relicId });
+  }
   return null;
 }
 
@@ -1391,7 +1451,8 @@ function _buildPreloadList(){
   // first playMusic('menu') after the loading screen hit a fresh
   // network fetch (compounding with the autoplay block).
   list.push({ kind:'audio', src:'assets/audio/music/theme_menu.mp3'     });
-  list.push({ kind:'audio', src:'assets/audio/music/theme_town.mp3'     });
+  list.push({ kind:'audio', src:'assets/audio/music/theme_town_1.mp3'   });
+  list.push({ kind:'audio', src:'assets/audio/music/theme_town_2.mp3'   });
   list.push({ kind:'audio', src:'assets/audio/music/theme_battle_1.mp3' });
   list.push({ kind:'audio', src:'assets/audio/music/theme_battle_2.mp3' });
   // Backgrounds for the login screen (texture) + early gameplay.
@@ -1502,14 +1563,17 @@ function showLoginScreen(){
 function refreshLoginMuteIcons(){
   var music = document.getElementById('login-music-mute');
   var sfx   = document.getElementById('login-sfx-mute');
+  // Round 67o: PNG icons in place of emoji glyphs.
   if(music){
     var mMuted = !SETTINGS.music || SETTINGS.music === 0;
-    music.textContent = mMuted ? '𝄽' : '♪';     // music rest vs note
+    var msrc = 'assets/icons/' + (mMuted ? 'mute_music' : 'unmute_music') + '.png';
+    music.innerHTML = '<img src="'+msrc+'" alt="" style="width:24px;height:24px;display:block;">';
     music.classList.toggle('muted', mMuted);
   }
   if(sfx){
     var sMuted = !SETTINGS.sfx || SETTINGS.sfx === 0;
-    sfx.textContent = sMuted ? '🔇' : '🔊';
+    var ssrc = 'assets/icons/' + (sMuted ? 'mute_sfx' : 'unmute_sfx') + '.png';
+    sfx.innerHTML = '<img src="'+ssrc+'" alt="" style="width:24px;height:24px;display:block;">';
     sfx.classList.toggle('muted', sMuted);
   }
 }
@@ -1620,15 +1684,44 @@ function _renderSaveCard(saveId){
     champLine = 'No champion yet';
   }
 
+  // Round 67o: gold at 24 (1× of 24-native, crisp), shards at 48 (1×
+  // of the high-res 48-native soul_shard.png, full pixel detail). The
+  // two icons render at different physical sizes deliberately — shards
+  // are the rarer summoning currency and earn the larger footprint.
   var stats = ''
     + '<div class="login-card-stat"><span class="login-card-stat-label">CHAMPS</span> ' + champCount + '</div>'
-    + '<div class="login-card-stat"><span class="login-card-stat-label">GOLD</span> ' + (typeof goldImgHTML==='function' ? goldImgHTML('16px') : '✦') + ' ' + gold + '</div>'
-    + '<div class="login-card-stat"><span class="login-card-stat-label">SHARDS</span> ' + (typeof soulShardImgHTML==='function' ? soulShardImgHTML('16px') : '🔮') + ' ' + shards + '</div>';
+    + '<div class="login-card-stat"><span class="login-card-stat-label">GOLD</span> ' + (typeof goldImgHTML==='function' ? goldImgHTML('24px') : '✦') + ' ' + gold + '</div>'
+    + '<div class="login-card-stat"><span class="login-card-stat-label">SHARDS</span> ' + (typeof soulShardImgHTML==='function' ? soulShardImgHTML('48px') : '🔮') + ' ' + shards + '</div>';
 
   // Round 66: suppress "while you were away" on a save that has never
   // played — there's nothing meaningful to report, and idle-time
   // accumulation on a fresh save would be misleading.
   var awayHtml = hasPlayed ? _renderWhileAwayBlock() : '';
+
+  // Round 67p: if there's an in-progress run, the button flips to
+  // RESUME copy that signals the player will land back in combat
+  // (instead of champion-select). enterGameFromLogin checks the
+  // same flag and routes through _resumeActiveRun.
+  var hasResume = !!(data && data.activeRun && data.activeRun.champId);
+  var btnLabel  = hasResume ? 'JUMP BACK INTO BATTLE'
+                : hasPlayed ? 'CONTINUE ►'
+                : 'BEGIN ►';
+  // Round 67p: surface the run's specific waypoint on the card so the
+  // player knows exactly what fight they're returning to. Reads from
+  // the explicit battleNumber/totalBattles/areaName fields saved by
+  // _saveActiveRun — no need to rebuild the area to know.
+  var resumeHtml = '';
+  if(hasResume){
+    var ar = data.activeRun;
+    var bn = ar.battleNumber || ((ar.enemyIdx|0) + 1);
+    var bt = ar.totalBattles || (ar.enemyIds ? ar.enemyIds.length : '?');
+    var an = ar.areaName || ar.areaDefId || 'an unknown place';
+    resumeHtml = ''
+      + '<div class="login-card-resume">'
+      +   '<div class="login-card-resume-label">UNFINISHED RUN</div>'
+      +   '<div class="login-card-resume-line">Battle <strong>' + bn + ' of ' + bt + '</strong> · ' + an + '</div>'
+      + '</div>';
+  }
 
   return ''
     + '<div class="login-card-body">'
@@ -1637,11 +1730,12 @@ function _renderSaveCard(saveId){
     +     '<div class="login-card-name">' + (meta.name || 'Save') + '</div>'
     +     '<div class="login-card-sub">' + champLine + '</div>'
     +     '<div class="login-card-stats">' + stats + '</div>'
+    +     resumeHtml
     +     awayHtml
     +   '</div>'
     + '</div>'
     + '<div class="login-card-actions">'
-    +   '<button class="login-continue" onclick="enterGameFromLogin()">' + (hasPlayed ? 'CONTINUE ►' : 'BEGIN ►') + '</button>'
+    +   '<button class="login-continue" onclick="enterGameFromLogin()">' + btnLabel + '</button>'
     + '</div>';
 }
 
@@ -1813,10 +1907,10 @@ function _loginShowExportFallback(encoded){
   ov.onclick = function(e){ if(e.target===ov) ov.remove(); };
   ov.innerHTML = ''
     + '<div style="background:#140c02;border:1px solid #5a3a18;border-radius:8px;padding:18px 22px;width:min(520px,92vw);">'
-    +   '<div style="font-family:Cinzel,serif;font-size:11px;letter-spacing:2px;color:#d4a843;margin-bottom:8px;">EXPORT — COPY MANUALLY</div>'
+    +   '<div style="font-size:11px;letter-spacing:2px;color:#d4a843;margin-bottom:8px;">EXPORT — COPY MANUALLY</div>'
     +   '<div style="font-size:10px;color:#7a6030;margin-bottom:10px;font-style:italic;">Clipboard access was unavailable. Select all and copy.</div>'
     +   '<textarea readonly style="width:100%;height:120px;background:#0e0802;border:1px solid #3a2010;border-radius:4px;color:#c0a060;font-size:9px;padding:8px;font-family:monospace;resize:none;">'+encoded+'</textarea>'
-    +   '<div style="text-align:right;margin-top:10px;"><button onclick="document.getElementById(\'login-export-fallback\').remove()" style="font-family:Cinzel,serif;font-size:9px;padding:6px 16px;border-radius:4px;border:1px solid #5a3a18;background:#1a1208;color:#c0a060;cursor:pointer;letter-spacing:1px;">CLOSE</button></div>'
+    +   '<div style="text-align:right;margin-top:10px;"><button onclick="document.getElementById(\'login-export-fallback\').remove()" style="font-size:9px;padding:6px 16px;border-radius:4px;border:1px solid #5a3a18;background:#1a1208;color:#c0a060;cursor:pointer;letter-spacing:1px;">CLOSE</button></div>'
     + '</div>';
   document.body.appendChild(ov);
   // Auto-select the textarea contents
@@ -1834,7 +1928,7 @@ function _loginShowToast(msg, color){
   t.textContent = msg;
   t.style.cssText = 'position:absolute;top:36px;left:50%;transform:translateX(-50%);z-index:6;'
     + 'background:rgba(20,12,2,.95);border:1px solid #5a3a18;border-radius:5px;'
-    + 'padding:8px 16px;font-family:Cinzel,serif;font-size:10px;letter-spacing:1.5px;'
+    + 'padding:8px 16px;font-size:10px;letter-spacing:1.5px;'
     + 'color:'+(color || '#d4a843')+';transition:opacity .4s ease;';
   var loginScreen = document.getElementById('login-screen');
   if(loginScreen) loginScreen.appendChild(t);
@@ -1963,6 +2057,16 @@ function enterGameFromLogin(){
   }
 
   showNav(true);
+  // Round 67p: populate the save name in the nav top-left now that
+  // we're transitioning from login into the game proper.
+  if(typeof refreshNavSaveName === 'function') refreshNavSaveName();
+  // Round 67p: if the save has an in-progress run, jump straight back
+  // into combat instead of routing to champion-select. _resumeActiveRun
+  // returns true on success; on failure (corrupted save, missing area
+  // def, etc) it wipes the run and we fall through to the normal flow.
+  if(typeof _hasActiveRun === 'function' && _hasActiveRun() && typeof _resumeActiveRun === 'function'){
+    if(_resumeActiveRun()) return;
+  }
   showScreen('select-screen');
   if(typeof buildSelectScreen === 'function') buildSelectScreen();
   if(typeof updateNavBar === 'function') updateNavBar('adventure');
@@ -2178,11 +2282,32 @@ function loadPersist(){
       // Migrate champion ascension fields
       if(p.seenTutorials) PERSIST.seenTutorials=Object.assign({},p.seenTutorials);
       if(p.areaRuns) PERSIST.areaRuns=p.areaRuns;
-      // Force informational buildings always unlocked
+      // Round 67p: mid-combat run checkpoint. Without this load step
+      // the in-memory PERSIST.activeRun stays null on boot, so the
+      // login card's "JUMP BACK INTO BATTLE" button paints (because
+      // _renderSaveCard reads from peekSave(...), which IS the raw
+      // disk blob with activeRun intact), but enterGameFromLogin's
+      // _hasActiveRun() check reads PERSIST and sees null → falls
+      // through to champion-select. That's the "doesn't take you
+      // back" bug. Loading here keeps both code paths in sync.
+      if(p.activeRun && typeof p.activeRun === 'object'){
+        PERSIST.activeRun = p.activeRun;
+      }
+      // Round 67p: forge recipe unlock whitelist. New saves get the
+      // default { safety_net: true }. Older saves (pre-this round)
+      // don't have the field — fall through to the default so they
+      // still see the starter recipe.
+      if(p.unlockedRelicRecipes && typeof p.unlockedRelicRecipes === 'object'){
+        PERSIST.unlockedRelicRecipes = p.unlockedRelicRecipes;
+      }
+      // Round 67p: Vault / Hall / Bestiary are the three baseline
+      // buildings the player always has access to from save load. Forge,
+      // Sanctum, Market and the rest gate behind the story-quest chain
+      // (see STORY_QUESTS in tutorial.js) — we no longer force-unlock
+      // Market here.
       PERSIST.town.buildings.vault.unlocked = true;
       PERSIST.town.buildings.adventurers_hall.unlocked = true;
       PERSIST.town.buildings.bestiary.unlocked = true;
-      PERSIST.town.buildings.market.unlocked = true;
 
       // ─── DEV: UNLOCK ALL BUILDINGS (Round 37) ────────────────────
       // Temporary blanket unlock until we redesign building-unlock
@@ -2954,7 +3079,7 @@ function rebuildChampGrid(){
   // is unstarred. A short prompt explaining how to star a champion is
   // friendlier than an empty grid.
   if(_csFavoritesOnly && !list.length){
-    grid.innerHTML = '<div style="grid-column:1/-1;padding:48px 16px;text-align:center;color:#7a6030;font-family:\'Crimson Text\',serif;font-size:12px;line-height:1.6;">'
+    grid.innerHTML = '<div style="grid-column:1/-1;padding:48px 16px;text-align:center;color:#7a6030;font-size:12px;line-height:1.6;">'
       + '<div style="font-size:34px;opacity:.5;margin-bottom:10px;">☆</div>'
       + 'No favorites yet. Tap the star on any champion card to pin them to the top.'
       + '</div>';
@@ -3027,15 +3152,19 @@ function rebuildChampGrid(){
       d.innerHTML =
           favStar
         + '<div class="champ-card-status">'+statusInner+'</div>'
-        + '<div class="champ-icon">'+creatureImgHTML(id, ch.icon, '150px', 'flip-x')+'</div>'
+        + '<div class="champ-icon">'+creatureImgHTML(id, ch.icon, '128px', 'flip-x')+'</div>'
         + '<div class="champ-name">'+ch.name+'</div>'
         + '<div class="champ-card-asc">'+(ascChip||'')+'</div>'
         + '<div class="champ-card-relics">'+relicChip+'</div>'
+        // Round 67o: innate now on its own line (was being clipped by
+        // ellipsis when crammed beside the level badge — e.g. "Cursed
+        // Retribu…"). Level + stats stay compact; innate gets full
+        // width and wraps cleanly when long.
         + '<div class="champ-card-footer">'
         +   '<div class="champ-card-foot-row">'
         +     '<span class="champ-level-badge">Lv.'+cp.level+'</span>'
-        +     '<span class="champ-card-innate">✦ '+(ch.innateName||'')+'</span>'
         +   '</div>'
+        +   '<div class="champ-card-innate">✦ '+(ch.innateName||'')+'</div>'
         +   '<div class="champ-stats-row">'
         +     '<div><div class="champ-stat-v str">'+s.str+'</div><div class="champ-stat-l">STR</div></div>'
         +     '<div><div class="champ-stat-v agi">'+s.agi+'</div><div class="champ-stat-l">AGI</div></div>'
@@ -3098,7 +3227,7 @@ function buildCsChampRail(id, idPrefix, railId){
 
   // Portrait + name + ascension chip
   var portraitEl = $('portrait');
-  if(portraitEl) portraitEl.innerHTML = creatureImgHTML(id, ch.icon, '120px', 'flip-x');
+  if(portraitEl) portraitEl.innerHTML = creatureImgHTML(id, ch.icon, '192px', 'flip-x');
   $('name').textContent = ch.name;
   var ascEl = $('asc');
   ascEl.innerHTML = (typeof getAscensionChipHTML === 'function') ? getAscensionChipHTML(id) : '';
@@ -3292,8 +3421,44 @@ function updateNavBar(activeTab){
       tt.title='';
     }
   }
+  // Round 67p: keep the adventure tab label in sync with the actual
+  // adventure screen the player is on (CHAMPION / AREA / BATTLE).
+  refreshAdventureTabLabel();
   refreshNavCurrencies();
   updateAchBadge();
+}
+
+// Round 67p: the adventure tab now acts as both a navigation target
+// AND a breadcrumb showing where the player is within the adventure
+// flow. Reads the currently-active .screen plus gs state to derive a
+// label. Called from updateNavBar (which itself fires on screen
+// changes via navTo / showScreen / etc).
+function refreshAdventureTabLabel(){
+  var el = document.getElementById('nav-adventure-label');
+  if(!el) return;
+  var screen = (typeof _kbActiveScreen === 'function') ? _kbActiveScreen() : null;
+  var label = 'ADVENTURE';
+  if(screen === 'game-screen'){
+    var area = (gs && gs.area && gs.area.def && gs.area.def.name) ? gs.area.def.name : '';
+    label = area ? ('BATTLE · ' + area) : 'BATTLE';
+  } else if(screen === 'area-screen'){
+    label = 'AREA';
+  } else if(screen === 'select-screen'){
+    label = 'CHAMPION';
+  } else if(screen === 'deck-edit-screen'){
+    label = 'DECK';
+  }
+  el.textContent = label;
+}
+
+// Round 67p: paint the active save name in the nav (top-left). Falls
+// back to empty (rule below hides the element) when no save active.
+function refreshNavSaveName(){
+  var el = document.getElementById('nav-savename');
+  if(!el) return;
+  var id = (typeof getActiveSaveId === 'function') ? getActiveSaveId() : null;
+  var meta = (id && typeof getSaveMeta === 'function') ? getSaveMeta(id) : null;
+  el.textContent = (meta && meta.name) ? meta.name : '';
 }
 
 // Round 62f: paint the gold + shard counters in the nav bar. Split
@@ -3318,7 +3483,20 @@ function navToTown(){
 
 function navTo(tab){
   if(tab==='adventure'){
-    if(gs&&gs.running){ addLog('Finish the battle first.','sys'); return; }
+    // Round 67o: BLOCK whenever gs is set — covers both gs.running
+    // (mid-combat) and the begin-battle-modal phase where gs has been
+    // built but startBattle hasn't yet flipped running=true. Without
+    // this guard the player could click Adventure from inside the
+    // VIEW-DECK popup and swap champions mid-battle-setup, breaking
+    // combat. gs is null between runs, so post-victory nav still works.
+    if(gs){
+      addLog('Finish the battle first.','sys');
+      // Close any deck popup so the nav-click feels acknowledged, even
+      // though we're not navigating away.
+      var pp = document.getElementById('pile-popup');
+      if(pp) pp.classList.remove('show');
+      return;
+    }
     showScreen('select-screen');
     // Round 62: re-render so newly-summoned champions appear without
     // a full page refresh. Previously the grid was painted once on
@@ -3383,6 +3561,156 @@ function goToSelect(){
   showScreen('select-screen');
 }
 
+// ═══════════════════════════════════════════════════════
+// MID-COMBAT RESUME  (Round 67p)
+// ═══════════════════════════════════════════════════════
+// A run checkpoint is persisted to PERSIST.activeRun every time a new
+// enemy fight is about to begin (top of showBeginBattleModal). If the
+// player closes the tab / loses connection / quits mid-area, the save
+// remembers which enemy was next + the mid-run accumulators
+// (pendingXp, goldEarned, playerHp carryover from the previous fight).
+//
+// On boot, _renderSaveCard sees PERSIST.activeRun and flips the
+// CONTINUE button text to "JUMP BACK INTO BATTLE". enterGameFromLogin
+// detects activeRun and routes to _resumeActiveRun instead of the
+// normal champion-select landing.
+//
+// Cleared on:
+//   • area-clear path (finishAreaAndContinue)
+//   • defeat (doDefeat)
+//   • tutorial flows (never saved in the first place — _saveActiveRun
+//     no-ops when gs._tutorial is true)
+function _saveActiveRun(){
+  if(!gs || gs._tutorial) return;
+  if(!gs.area || !gs.area.def) return;
+  if(!PERSIST) return;
+  // Round 67p (rev 2): persist the exact enemy lineup ids. buildArea
+  // shuffles the area's enemyPool randomly each call, so rebuilding
+  // on resume would produce a different sequence — player would
+  // come back to "the same enemy slot" but a different creature.
+  // Saving the resolved ids and rebuilding from them on resume keeps
+  // the exact roster intact.
+  var enemyIds = [];
+  if(Array.isArray(gs.enemies)){
+    for(var i = 0; i < gs.enemies.length; i++){
+      if(gs.enemies[i] && gs.enemies[i].id) enemyIds.push(gs.enemies[i].id);
+    }
+  }
+  PERSIST.activeRun = {
+    champId:      gs.champId,
+    areaDefId:    gs.area.def.id,
+    areaName:     (gs.area.def.name || ''),
+    areaLevel:    gs.area.level,
+    enemyIdx:     gs.enemyIdx|0,
+    enemyIds:     enemyIds,
+    // Round 67p (rev 3): explicit battle counter alongside enemyIdx.
+    // enemyIdx alone is enough to resume, but storing the 1-indexed
+    // counter + total lets the login card display "Battle X of Y in
+    // <Area>" without recomputing the area on the login screen.
+    battleNumber: (gs.enemyIdx|0) + 1,
+    totalBattles: enemyIds.length,
+    pendingXp:    gs._pendingXp || 0,
+    goldEarned:   gs.goldEarned || 0,
+    playerHp:     gs.playerHp,
+    savedAt:      Date.now(),
+  };
+  if(typeof savePersist === 'function') savePersist();
+}
+function _clearActiveRun(){
+  if(!PERSIST || !PERSIST.activeRun) return;
+  PERSIST.activeRun = null;
+  if(typeof savePersist === 'function') savePersist();
+}
+function _hasActiveRun(){
+  return !!(PERSIST && PERSIST.activeRun && PERSIST.activeRun.champId);
+}
+
+// Resume a saved run. Rebuilds gs from scratch via startRun (which
+// always starts at enemyIdx=0), then advances enemyIdx to the saved
+// slot using nextEnemy() — that handles all the per-enemy resets
+// (mana, deck reshuffle, statuses) the same way a normal between-
+// fight transition would. Finally overlays the saved mid-run
+// accumulators and drops the player straight into combat.
+//
+// Returns true if resume succeeded, false otherwise (corrupted save,
+// missing area def, etc — in which case activeRun is wiped and the
+// caller falls through to the normal champion-select landing).
+function _resumeActiveRun(){
+  if(!_hasActiveRun()) return false;
+  var run = PERSIST.activeRun;
+  if(typeof AREA_DEFS === 'undefined'){ _clearActiveRun(); return false; }
+  var def = AREA_DEFS.find(function(d){ return d.id === run.areaDefId; });
+  if(!def || !CREATURES || !CREATURES[run.champId]){ _clearActiveRun(); return false; }
+  var area = buildArea(def, run.areaLevel || 1);
+  if(!area || !area.enemies || !area.enemies.length){ _clearActiveRun(); return false; }
+
+  // Round 67p (rev 2): override buildArea's randomized roster with
+  // the exact saved enemy ids, scaled to the saved area level the
+  // same way buildArea does for non-boss areas. Boss areas already
+  // have a deterministic pool so this branch is a no-op for them
+  // (the resolved ids match what buildArea would have produced).
+  if(Array.isArray(run.enemyIds) && run.enemyIds.length && typeof CREATURES === 'object'){
+    var lvl = run.areaLevel || 1;
+    var rebuilt = [];
+    for(var ei = 0; ei < run.enemyIds.length; ei++){
+      var creature = CREATURES[run.enemyIds[ei]];
+      if(!creature) continue;
+      var str = Math.round(creature.baseStats.str + (lvl - 1) * (creature.growth.str || 0));
+      var agi = Math.round(creature.baseStats.agi + (lvl - 1) * (creature.growth.agi || 0));
+      var wis = Math.round(creature.baseStats.wis + (lvl - 1) * (creature.growth.wis || 0));
+      rebuilt.push({
+        id: creature.id, name: creature.name, icon: creature.icon,
+        str: str, agi: agi, wis: wis,
+        baseHp: str * 5,
+        dmgMult: 1 + lvl * 0.2,
+        atkInterval: calcDrawInterval(agi),
+        xp: Math.round(8 + lvl * 10),
+        innate: creature.innate,
+        deck: creature.deck,
+        openingMove: creature.openingMove,
+      });
+    }
+    if(rebuilt.length) area.enemies = rebuilt;
+  }
+
+  selectedChampId = run.champId;
+  selectedArea    = area;
+
+  // Spin up combat. startRun ends with showBeginBattleModal() which
+  // pops the begin-battle modal for enemy[0]; we'll dismiss it after
+  // advancing to the target enemy.
+  startRun(run.champId, area);
+  if(!gs){ _clearActiveRun(); return false; }
+
+  // Advance to the saved enemy slot. Each nextEnemy(false) re-pops
+  // the modal but that's a harmless repaint — the final dismissal
+  // below cleans it up.
+  var targetIdx = Math.max(0, Math.min(run.enemyIdx|0, gs.enemies.length - 1));
+  while(gs.enemyIdx < targetIdx){
+    nextEnemy(false);
+    if(!gs){ _clearActiveRun(); return false; }
+  }
+
+  // Overlay saved mid-run accumulators.
+  if(run.pendingXp){ gs._pendingXp  = run.pendingXp;  }
+  gs.goldEarned = run.goldEarned || 0;
+  if(typeof run.playerHp === 'number' && run.playerHp > 0){
+    gs.playerHp = Math.min(gs.playerMaxHp, run.playerHp);
+  }
+
+  // Dismiss any open begin-battle-modal — player wanted JUMP BACK,
+  // not a "ready?" prompt.
+  var bbm = document.getElementById('begin-battle-modal');
+  if(bbm) bbm.style.display = 'none';
+
+  if(typeof updateAll   === 'function') updateAll();
+  if(typeof renderHand  === 'function') renderHand();
+  if(typeof renderPiles === 'function') renderPiles();
+
+  if(typeof startBattle === 'function') startBattle();
+  return true;
+}
+
 function buildHub(){
   // Legacy — now just updates nav
 }
@@ -3421,19 +3749,30 @@ function buildAreaScreen(){
     var stars=Math.min(5,Math.ceil(area.level/3)),starStr='';
     for(var i=0;i<5;i++) starStr+='<span style="color:'+(i<stars?'#d4a843':'#2a1808')+';">★</span>';
     var xpMult=calcXpMult(champLevel,area.level);
-    var xpLabel=grind?'<div style="font-size:7px;color:#806030;font-family:Cinzel,serif;text-align:center;margin-bottom:2px;">'+Math.round(xpMult*100)+'% XP</div>':'';
-    var bossLabel=isBoss?'<div style="font-size:8px;color:#a03030;font-family:Cinzel,serif;text-align:center;margin-bottom:3px;letter-spacing:1px;">⚠ BOSS ENCOUNTER</div>':'';
+    // Round 67p: warning row (boss / danger / xp%) is now ALWAYS
+    // rendered inside .area-warning, with a reserved min-height so
+    // cards without any warning still occupy the same vertical space
+    // — siblings in the grid align cleanly instead of having FIGHTS
+    // rows at different y positions depending on which warnings the
+    // card happens to surface.
+    var warnings = '';
+    if(isBoss){
+      warnings += '<div style="font-size:12px;color:#a03030;letter-spacing:1px;text-align:center;">⚠ BOSS ENCOUNTER</div>';
+    } else if(danger){
+      warnings += '<div class="area-danger-lbl">⚠ ABOVE YOUR LEVEL</div>';
+    }
+    if(grind){
+      warnings += '<div style="font-size:10px;color:#806030;text-align:center;">'+Math.round(xpMult*100)+'% XP</div>';
+    }
     // Round 67: dropped the CREATURES row (the eIcons preview). Bestiary
     // icons mid-card were noisy and not load-bearing for the decision
     // — players who want to know what's in the area can hit the (i)
     // button. FIGHTS line stays.
-    card.innerHTML=(isBoss?'<div style="position:absolute;top:6px;right:6px;font-size:16px;">💀</div>':'')
-      +'<div class="area-icon">'+areaImgHTML(area.def.id, area.def.icon, '36px')+'</div>'
+    card.innerHTML=(isBoss?'<div style="position:absolute;top:8px;right:8px;font-size:22px;">💀</div>':'')
+      +'<div class="area-icon">'+areaImgHTML(area.def.id, area.def.icon, '96px')+'</div>'
       +'<div class="area-name">'+area.def.name+'</div>'
       +'<div class="area-lvl">LEVEL '+area.level+'</div>'
-      +bossLabel
-      +(danger&&!isBoss?'<div class="area-danger-lbl">⚠ ABOVE YOUR LEVEL</div>':'')
-      +xpLabel
+      +'<div class="area-warning">'+warnings+'</div>'
       +'<div class="area-stars">'+starStr+'</div>'
       +'<div class="area-theme">'+area.def.theme+'</div>'
       +'<div class="area-row"><span class="area-rl">FIGHTS</span><span class="area-rv">'+area.enemies.length+(isBoss?' (boss)':'')+'</span></div>'
@@ -3455,7 +3794,7 @@ function openChampPanel(){
   if(!ch) return;
   playUiClickSfx();
   // Portrait
-  setCreatureImg(document.getElementById('csp-portrait'), selectedChampId, ch.icon, '56px');
+  setCreatureImg(document.getElementById('csp-portrait'), selectedChampId, ch.icon, '32px');
   document.getElementById('csp-name').textContent=ch.name;
   // role display removed
   document.getElementById('csp-level').textContent=cp.level;
@@ -3627,7 +3966,7 @@ function startRun(champId,area){
   gs._snapshot = _captureRunSnapshot(champId);
   paused=false;
   var ch=CREATURES[champId];
-  setCreatureImg(document.getElementById('top-portrait'), champId, ch.icon, '40px');
+  setCreatureImg(document.getElementById('top-portrait'), champId, ch.icon, '32px');
   document.getElementById('top-name').textContent=ch.name;
   document.getElementById('p-name').textContent=ch.name;
   setCreatureImg(document.getElementById('p-icon'), champId, ch.icon, '320px');
@@ -3645,7 +3984,7 @@ function startRun(champId,area){
   var innateManaTrack=document.getElementById('innate-mana-track');
   var ib=document.getElementById('innate-btn'); // hidden proxy
   ib.disabled=true;
-  if(innateArt) setCreatureImg(innateArt, champId, ch.icon||'⚡', '58px');
+  if(innateArt) setCreatureImg(innateArt, champId, ch.icon||'⚡', '32px');
   if(innateName) innateName.textContent=ch.innateName||'Innate';
   if(innateDesc) innateDesc.textContent=ch.innateDesc||'';
   if(innateCard){
@@ -3828,6 +4167,15 @@ function setEnemyUI(idx){
 // ═══════════════════════════════════════════════════════
 function startBattle(){
   if(!gs) return;
+  // Round 67p: persist a run checkpoint at the start of EVERY fight.
+  // This was previously hooked into showBeginBattleModal — but the
+  // between-fights flow uses autoChain=true on nextEnemy which skips
+  // the modal entirely, so the checkpoint stopped getting refreshed
+  // after the first fight. Hooking startBattle covers both code
+  // paths (initial modal → beginBattleFromModal → startBattle, and
+  // post-victory toast → autoChain setTimeout → startBattle).
+  // Skipped during tutorial (gs._tutorial guard inside _saveActiveRun).
+  if(typeof _saveActiveRun === 'function') _saveActiveRun();
   document.getElementById('btn-start').style.display='none';
   document.getElementById('btn-pause').style.display='inline-block';
   gs.running=true; paused=false;
@@ -4544,10 +4892,19 @@ function playCard(idx){
 // STATUS EFFECTS
 // ═══════════════════════════════════════════════════════
 function applyStatus(target,cls,label,val,stat,dur,desc){
+  // Round 67o: guard against invalid duration. If dur is NaN /
+  // undefined / 0, the status sits in statusEffects forever because
+  // decrementing NaN never satisfies the remaining<=0 expiry check.
+  // Symptom: "Weaken with no timer (infinite)" J reported. Default
+  // to 4s + console warn so we can trace the caller.
+  if(!dur || !isFinite(dur) || dur <= 0){
+    console.warn('[applyStatus] invalid dur=', dur, 'for', target, label, '— defaulting to 4000ms');
+    dur = 4000;
+  }
   if(target==='enemy'&&cls==='debuff'&&gs&&gs._relicDebuffDurBonus&&(stat==='dmg'||stat==='death_mark'))
     dur+=gs._relicDebuffDurBonus;
   var list=gs.statusEffects[target];
-  for(var i=0;i<list.length;i++){ if(list[i].label===label){ list[i].remaining=dur; return; } }
+  for(var i=0;i<list.length;i++){ if(list[i].label===label){ list[i].remaining=dur; list[i].maxRemaining=dur; return; } }
   list.push({label:label,cls:cls,val:val,stat:stat,remaining:dur,maxRemaining:dur,desc:desc||label});
   addTag(target,cls,label,val,stat,desc);
   // Round 67b / 67k: tutorial hook — let the step machine react to
@@ -4793,10 +5150,16 @@ function showTipDirect(name,sub,desc,time,e){
 }
 function moveTip(e){
   var tip=document.getElementById('tip');
-  var x=e.clientX+12,y=e.clientY-10;
-  var tw=tip.offsetWidth||190,th=tip.offsetHeight||60;
-  if(x+tw>window.innerWidth-8) x=e.clientX-tw-12;
-  if(y+th>window.innerHeight-8) y=e.clientY-th-10;
+  // Round 67o: convert viewport coords into the scaled #game-root's
+  // local coords so the tooltip lands at the cursor regardless of the
+  // current scale / letterbox offset.
+  var c = (typeof clientToGameCoords === 'function') ? clientToGameCoords(e.clientX, e.clientY) : { x:e.clientX, y:e.clientY };
+  var dW = (typeof GAME_DESIGN_W === 'number') ? GAME_DESIGN_W : window.innerWidth;
+  var dH = (typeof GAME_DESIGN_H === 'number') ? GAME_DESIGN_H : window.innerHeight;
+  var x=c.x+12, y=c.y-10;
+  var tw=tip.offsetWidth||190, th=tip.offsetHeight||60;
+  if(x+tw>dW-8) x=c.x-tw-12;
+  if(y+th>dH-8) y=c.y-th-10;
   tip.style.left=x+'px'; tip.style.top=y+'px';
 }
 function hideTip(){ document.getElementById('tip').classList.remove('show'); }
@@ -4900,20 +5263,31 @@ function endWaxOasisFight(){
   else if(dmg>=50)  waxGold=5;
   if(waxGold>0) _addCombatGold(gs, waxGold);
 
-  // XP (same as any fight) with shrine bonus
+  // XP (same as any fight) with shrine bonus.
+  // Round 67p: defer-XP rule applies here too — the Wax Oasis
+  // contributes to the area's accumulated XP, applied at isLast.
   var rawXp=Math.round(8+gs.area.level*10);
   var xpMult=calcXpMult(gs.level,gs.area.level);
   if(gs._shrineXpBonus) xpMult*=gs._shrineXpBonus;
   var xp=Math.max(1,Math.round(rawXp*xpMult));
-  gs.xp+=xp;
+  gs._pendingXp = (gs._pendingXp || 0) + xp;
   trackKill('waxoasis');
-  checkLevelUp();
   gs._lastFightWon = true;  // wax oasis = passive shrine, treated as a "win"
   saveChampionState();
 
   var isLast=(gs.enemyIdx+1>=gs.enemies.length);
   var tierLabel=waxGold>0?'Tier reward: +'+waxGold+'g':'No reward (deal 50+ dmg next time)';
-  addLog('✦ Wax Oasis fades. '+dmg+' dmg dealt. '+tierLabel+' · +'+xp+' XP.','sys');
+  addLog('✦ Wax Oasis fades. '+dmg+' dmg dealt. '+tierLabel+'.','sys');
+  // Round 67p: if the Oasis was the final encounter, apply the
+  // accumulated XP now (same defer rule as doVictory).
+  if(isLast && gs._pendingXp > 0){
+    gs.xp += gs._pendingXp;
+    var totalXp = gs._pendingXp;
+    gs._pendingXp = 0;
+    addLog('+'+totalXp+' XP (area cleared).','sys');
+    checkLevelUp();
+    saveChampionState();
+  }
 
   // Show the standard reward overlay with a special subtitle
   var allRow=document.getElementById('reward-all-row');
@@ -4930,16 +5304,35 @@ function doVictory(){
   var xpMult=calcXpMult(gs.level,gs.area.level);
   if(gs._shrineXpBonus) xpMult*=gs._shrineXpBonus;
   var xp=Math.max(1,Math.round(rawXp*xpMult));
-  gs.xp+=xp;
+  // Round 67p: XP is now accumulated for the entire area and applied
+  // ONLY at area-clear (isLast). No more mid-area level-ups — the
+  // moment of leveling sits cleanly at the end of the run where the
+  // Run Summary animates it. Per-kill log line drops the "+X XP"
+  // detail since it's not actually credited yet; total + breakdown
+  // surfaces in the Run Summary.
+  gs._pendingXp = (gs._pendingXp || 0) + xp;
   trackKill(e.id);
-  var xpMsg=xpMult<1?' ('+Math.round(xpMult*100)+'% XP)':'';
-  addLog('✦ Victory! +'+xp+' XP'+xpMsg+'.','sys');
-  checkLevelUp();
+  addLog('✦ Victory!','sys');
   gs._lastFightWon = true;  // grantCombatMasteryXp reads this at run-end
   saveChampionState();
   var isLast=(gs.enemyIdx+1>=gs.enemies.length);
   if(isLast){
-    // Area clear — gold reward based on area level
+    // Area clear — apply the accumulated XP now plus a clear bonus.
+    // The bonus guarantees a first-area clear (4 enemies × 18 XP = 72)
+    // still pushes a level-1 champion across the 80-XP threshold to
+    // level 2. Scales modestly with area level so later clears stay
+    // meaningful too.
+    var clearBonus = 15 + gs.area.level * 5;
+    gs._pendingXp = (gs._pendingXp || 0) + clearBonus;
+    if(gs._pendingXp > 0){
+      gs.xp += gs._pendingXp;
+      var totalXp = gs._pendingXp;
+      gs._pendingXp = 0;
+      addLog('+'+totalXp+' XP (area cleared, includes +'+clearBonus+' clear bonus).','sys');
+      checkLevelUp();
+      saveChampionState();
+    }
+    // Gold reward based on area level
     var areaGold=Math.floor(15+gs.area.level*8+Math.random()*gs.area.level*4);
     var awardedAreaGold = _addCombatGold(gs, areaGold);
     addLog('+'+awardedAreaGold+' gold (area clear).','sys');
@@ -4960,7 +5353,7 @@ function doVictory(){
     if(toastEl){
       if(nextEl) nextEl.textContent=nextE?nextE.name:'';
       if(nextIconEl) {
-        if(nextE) nextIconEl.innerHTML=creatureImgHTML(nextE.id, nextE.icon, '48px');
+        if(nextE) nextIconEl.innerHTML=creatureImgHTML(nextE.id, nextE.icon, '32px');
         else nextIconEl.textContent='⚔️';
       }
       if(nextHpEl) nextHpEl.textContent=nextE?nextE.baseHp+' HP':'';
@@ -5064,6 +5457,9 @@ function stopRewardCountdown(){
 }
 
 function finishAreaAndContinue(){
+  // Round 67p: area cleared — the run is finished, drop the resume
+  // checkpoint so the next session lands at champion-select normally.
+  if(typeof _clearActiveRun === 'function') _clearActiveRun();
   stopRewardCountdown();
   document.getElementById('victory-overlay').classList.remove('show');
   var rb=document.getElementById('reward-box');
@@ -5699,6 +6095,9 @@ function openReplacePopup(newCardId){
 }
 
 function doDefeat(){
+  // Round 67p: a defeated run can't be resumed — wipe the checkpoint
+  // before applying the fall consequences below.
+  if(typeof _clearActiveRun === 'function') _clearActiveRun();
   // Round 48: Arena fights have NO loss penalties (J's call). Branch
   // off before any of the level-reset / gold-loss / mark-dead logic.
   if(gs && gs.area && gs.area.isArena){
@@ -5713,29 +6112,50 @@ function doDefeat(){
   // beat before falling still count. _lastFightWon is false on defeat so
   // the +15 clear bonus correctly doesn't fire.
   if(typeof grantCombatMasteryXp === 'function') grantCombatMasteryXp();
-  cp.level=1; cp.xp=0; cp.xpNext=80;
-  cp.stats={str:ch.baseStats.str,agi:ch.baseStats.agi,wis:ch.baseStats.wis};
-  cp.alive=false;
+  // Round 67p: Safety Net relic check. If this champion has it
+  // equipped AND the player can afford 100g (post defeat-penalty),
+  // burn the 100g and SKIP the level-reset path — only XP resets to
+  // 0, levels + stats stay. Auto-activates; no prompt.
+  var safetyNet = false;
+  if(cp && Array.isArray(cp.relics) && cp.relics.indexOf('safety_net') !== -1 && PERSIST.gold >= 100){
+    safetyNet = true;
+    PERSIST.gold -= 100;
+  }
+  if(safetyNet){
+    // Reset XP only — level + stats persist. cp.alive stays true so
+    // the champion isn't "fallen" in the sanctum/select grid.
+    cp.xp = 0;
+    cp.alive = true;
+  } else {
+    cp.level=1; cp.xp=0; cp.xpNext=80;
+    cp.stats={str:ch.baseStats.str,agi:ch.baseStats.agi,wis:ch.baseStats.wis};
+    cp.alive=false;
+  }
   cp.lastArea=gs.area.def.name;
   // Shrine counters
   PERSIST.shrineCounters.deaths=(PERSIST.shrineCounters.deaths||0)+1;
   // Still grant partial building XP for incomplete runs
   if(gs.area&&gs.area.level) grantAreaClearBuildingXp(Math.floor(gs.area.level/2)||1);
   savePersist();
-  document.getElementById('defeat-sub').textContent='Lost '+lost+' gold. '+ch.name+' falls. Level reset to 1.';
+  var msg;
+  if(safetyNet){
+    msg = '🪢 Safety Net activated. Lost '+lost+' gold (fall) + 100g (relic). XP reset, levels preserved.';
+  } else {
+    msg = 'Lost '+lost+' gold. '+ch.name+' falls. Level reset to 1.';
+  }
+  document.getElementById('defeat-sub').textContent=msg;
   document.getElementById('defeat-overlay').classList.add('show');
   document.getElementById('defeat-overlay').style.display='block';
-  addLog('✦ Defeated. Lost '+lost+' gold. Champion falls.','sys');
+  addLog('✦ Defeated. '+msg,'sys');
 }
 
-function retryBattle(){
-  var d=document.getElementById('defeat-overlay');
-  d.classList.remove('show'); d.style.display='none';
-  var cp=getChampPersist(gs.champId);
-  cp.alive=true; savePersist();
-  startRun(gs.champId,gs.area);
-  document.getElementById('log-area').innerHTML='';
-}
+// Round 67p: retryBattle() removed. A defeated run is final — the
+// player goes back to champion select via CONTINUE on the defeat
+// overlay (same flow as victory). Champion's `alive` flag stays
+// false after doDefeat sets it, so the fallen champion still needs
+// to be brought back via the normal revival path (gold cost at the
+// Sanctum, etc.). The tutorial keeps its own retry — _tutorialRetry
+// in tutorial.js — unaffected by this removal.
 
 function nextEnemy(autoChain){
   gs.enemyIdx++;
@@ -6094,6 +6514,11 @@ function checkLevelUp(){
     addLog('✦ LEVEL '+gs.level+'! '+gains.join(' · '),'sys');
     showLevelUpToast(gs.level, gains);
     saveChampionState();
+    // Round 67p: notify the quest system so story quests like
+    // "reach level 2" can advance and chain.
+    if(typeof checkQuestProgress === 'function'){
+      checkQuestProgress('level_up', { champId: gs.champId, level: gs.level });
+    }
   }
   checkAchievementsAuto();
   updateTopBar();
@@ -6206,7 +6631,7 @@ function openPilePopup(which){
   var display=cards.slice().sort(function(){return Math.random()-.5;});
   var grid=document.getElementById('popup-grid'); grid.innerHTML='';
   display.forEach(function(id){ var w=document.createElement('div'); w.innerHTML=buildCardHTML(id,false); grid.appendChild(w); });
-  if(!cards.length) grid.innerHTML='<div style="color:#7a6030;font-family:Cinzel,serif;font-size:9px;text-align:center;padding:20px;grid-column:1/-1;">Empty</div>';
+  if(!cards.length) grid.innerHTML='<div style="color:#7a6030;font-size:9px;text-align:center;padding:20px;grid-column:1/-1;">Empty</div>';
   document.getElementById('pile-popup').classList.add('show');
 }
 function closePilePopup(e){ if(!e||e.target===document.getElementById('pile-popup')) document.getElementById('pile-popup').classList.remove('show'); }
@@ -6440,73 +6865,217 @@ function updateHandText(){
   }
 }
 
+// Round 67o (rev 2): two-prong fix for the hover-jitter bug J reported.
+//
+// Prong 1 — absolute positioning. The previous flex layout
+// (justify-content:center) reflowed the WHOLE row every time a card
+// was added: the centered group shifted left to make room for the new
+// rightmost card, which physically pushed every existing card. The
+// cursor stayed in screen-space, so the hovered card slid out from
+// under it, mouseleave fired, and the hover was lost. Now cards are
+// position:absolute with translateX(xOffset) per fan slot — adding a
+// card doesn't push existing cards because they're not in the layout
+// flow. Each card is positioned independently.
+//
+// Prong 2 — defer new cards while hovering. Even with absolute
+// positioning, the fan FORMULA (xOffset based on total) gives the new
+// card the same xOffset as the previously-rightmost (e.g. card-2 of
+// 3 was at +120; card-3 of 4 lands at +120 too while card-2 moves to
+// +40). If the player is hovering and we keep their card frozen at
+// +120, the new card would land directly on top. To avoid that
+// overlap we DON'T insert the new card into view until the player
+// mouseleaves — at which point everything renders cleanly.
+//
+// Animation keyframes were also fixed (style.css): cardFadeIn used to
+// override transform with translateY(0)/scale(1) and fill-mode:forwards,
+// which left the new card flat instead of at its fan drop. Now both
+// keyframes are opacity-only; transform is purely renderHand's domain.
+var _nextHandUid = 1;
+var _hoveredHandUid = null;
+var _handHasDeferred = false; // true if any new-card insertion was held back during a hover
+
 function renderHand(){
   lastHandStr=gs.hand.map(function(h){return h.id+(h.ghost?'g':'');}).join(',');
   var container=document.getElementById('hand-cards');
-  container.innerHTML='';
+  if(!container) return;
   var total=gs.hand.length;
   var actor = gs.actors && gs.actors.player;
-  gs.hand.forEach(function(item,i){
-    var cd=CARDS[item.id];
-    var isGhost=item.ghost||!!(item.id&&item.id.startsWith('ghost_'));
-    var d=document.createElement('div');
-    var statCls=cd&&cd.statId?'card-stat-'+cd.statId:'card-stat-none';
-    var isSel=SETTINGS.confirm&&pendingConfirmIdx===i;
-    var isNew=item._newDraw||false; if(isNew) delete item._newDraw;
-    var isConjured=item._conjured||false;
+
+  // Lazy-assign a stable uid to every hand item so DOM elements can be
+  // diff'd across renders without forcing every push site to set one.
+  gs.hand.forEach(function(item){ if(!item._uid) item._uid = 'h'+(++_nextHandUid); });
+
+  // Index existing DOM children by their uid attribute.
+  var existing = {};
+  Array.prototype.forEach.call(container.children, function(el){
+    var uid = el.getAttribute('data-uid');
+    if(uid) existing[uid] = el;
+  });
+
+  // If the currently-hovered uid no longer corresponds to a card in
+  // hand, drop it (the card was played / discarded mid-hover).
+  if(_hoveredHandUid){
+    var stillHave = gs.hand.some(function(h){ return h._uid === _hoveredHandUid; });
+    if(!stillHave) _hoveredHandUid = null;
+  }
+  var isHovering = !!_hoveredHandUid;
+  _handHasDeferred = false;
+
+  gs.hand.forEach(function(item, i){
+    var cd = CARDS[item.id];
+    var isGhost = item.ghost||!!(item.id&&item.id.startsWith('ghost_'));
+    var statCls = cd&&cd.statId?'card-stat-'+cd.statId:'card-stat-none';
+    var isSel = SETTINGS.confirm&&pendingConfirmIdx===i;
+    var isNew = item._newDraw||false;
+    var isConjured = item._conjured||false;
     var notArrived = item._arriveAt && Date.now() < item._arriveAt;
     var justArrived = item._justArrived||false; if(justArrived) delete item._justArrived;
-    d.className='card '+statCls+(isGhost?' ghost':'')+(isNew?' new-card':'')+(isSel?' selected-card':'')+(isConjured?' conjured-card':'')+(notArrived?' card-arriving':'')+(justArrived?' card-fadein':'');
-    d.setAttribute('data-idx',i);
 
-    // Fan transform — rotate and drop from centre, scaled for 158x220 cards
-    var mid=(total-1)/2;
-    var t=total>1?(i-mid)/mid:0;
-    var rot=t*12;        // slightly tighter arc for bigger cards
-    var drop=Math.abs(t)*16;
-    d.style.cssText='transform:rotate('+rot+'deg) translateY('+drop+'px);transform-origin:bottom center;z-index:'+i+';position:relative;'+(i>0?'margin-left:-38px;':'');
+    // Round 67p (rev 2): hand-fan math switched from "t-normalised
+    // xOffset" to "per-card spacing". OLD formula `xOffset = t * S`
+    // capped the fan span at ±S regardless of count — so adding cards
+    // squeezed them between the same extremes (at 7 cards each was
+    // only ~58px apart, overlapping ~142px out of a 200px card).
+    //
+    // NEW formula sets a per-adjacent-card distance and lets the fan
+    // grow wider as cards are added. A dynamic cap clamps the spacing
+    // so the fan never exceeds the available hand-cards width — that
+    // protects against future max-hand relics (8, 10, 15 cards) too.
+    //
+    // Rotation + drop stay normalised on t so the arc curvature looks
+    // the same regardless of count (just stretches out wider).
+    var mid    = (total-1)/2;
+    var t      = total>1 ? (i-mid)/mid : 0;
+    var TARGET_SPACING = 175;      // ideal distance between adjacent card centers
+    var MAX_FAN_WIDTH  = 1456;     // usable width inside .hand-cards at design size
+    var CARD_W         = 200;      // matches .card width — keep in sync
+    var spacing = TARGET_SPACING;
+    if(total > 1){
+      var maxSpacing = (MAX_FAN_WIDTH - CARD_W) / (total - 1);
+      if(maxSpacing < spacing) spacing = maxSpacing;
+    }
+    var xOffset = (i - mid) * spacing;
+    var rot     = t * 12;
+    var drop    = Math.abs(t) * 16;
 
-    var mechanic = _resolveCardEffectHTML(item.id, item, actor);
-    var cEffect = cd ? (cd.effect||'') : '';
-    var fzStyle = cardEffectFontSize(cEffect);
-    var manaCost=cd&&cd.manaCost!=null?cd.manaCost:0;
-    var rTags=getCardTags(cd||{});
-    var rTagsHTML=buildTagsHTML(rTags);
-    var rIdentity=getCardIdentityLabel(cd||null);
-    d.innerHTML=(isGhost?'<div class="ghost-badge"></div>':'')
-      +'<div class="card-title">'+(cd?cd.name:item.id)+'</div>'
-      +'<div class="card-identity">'+rIdentity+'</div>'
-      +'<div class="card-art">'
-      +cardArtHTML(item.id, cd?cd.icon:'?', manaCost, cd&&cd.champ?cd.champ:null)
-      +'</div>'
-      +'<div class="card-effect" style="'+fzStyle+'">'+mechanic+'</div>'
-      +'<div class="card-type-bar">'+rTagsHTML+'</div>';
+    var d = existing[item._uid];
+    var isReused = !!d;
+    var isHovered = (item._uid === _hoveredHandUid);
+    // New card during a hover → defer it. We still build the DOM (so
+    // the next render can flush it instantly) but keep it invisible
+    // and out of the cursor's hit-test.
+    var deferThisOne = isHovering && !isReused && !isHovered;
 
-    // Hover — lift and straighten via JS (overrides static fan transform)
-    d.addEventListener('mouseenter',function(){
-      d.style.transform='rotate('+(rot*0.25)+'deg) translateY('+(drop-55)+'px)';
-      d.style.zIndex='50';
-    });
-    d.addEventListener('mouseleave',function(){
-      d.style.transform='rotate('+rot+'deg) translateY('+drop+'px)';
-      d.style.zIndex=i;
-    });
+    if(!d){
+      // Build new DOM element for this hand item.
+      d = document.createElement('div');
+      d.setAttribute('data-uid', item._uid);
 
-    // Click directly on card div (not delegated, avoids pointer-events issue)
-    d.addEventListener('click',function(e){
-      e.stopPropagation();
-      var idx=parseInt(d.getAttribute('data-idx'),10);
-      if(isNaN(idx)) return;
-      if(SETTINGS.confirm){
-        if(pendingConfirmIdx===idx){ pendingConfirmIdx=-1; playCard(idx); }
-        else{ pendingConfirmIdx=idx; playSelectSfx(); renderHand(); }
-      } else {
-        playCard(idx);
-      }
-    });
+      var mechanic = _resolveCardEffectHTML(item.id, item, actor);
+      var cEffect = cd ? (cd.effect||'') : '';
+      var fzStyle = cardEffectFontSize(cEffect);
+      var manaCost = cd&&cd.manaCost!=null?cd.manaCost:0;
+      var rTags = getCardTags(cd||{});
+      var rTagsHTML = buildTagsHTML(rTags);
+      var rIdentity = getCardIdentityLabel(cd||null);
+      d.innerHTML=(isGhost?'<div class="ghost-badge"></div>':'')
+        +'<div class="card-title">'+(cd?cd.name:item.id)+'</div>'
+        +'<div class="card-identity">'+rIdentity+'</div>'
+        +'<div class="card-art">'
+        +cardArtHTML(item.id, cd?cd.icon:'?', manaCost, cd&&cd.champ?cd.champ:null)
+        +'</div>'
+        +'<div class="card-effect" style="'+fzStyle+'">'+mechanic+'</div>'
+        +'<div class="card-type-bar">'+rTagsHTML+'</div>';
 
-    container.appendChild(d);
+      // Hover handlers read data-rot / data-drop / data-x at hover
+      // time so the LATEST fan slot is used even though listeners are
+      // wired only once per DOM element (renderHand refreshes the
+      // attrs on every render call).
+      d.addEventListener('mouseenter',function(){
+        _hoveredHandUid = d.getAttribute('data-uid');
+        var r = parseFloat(d.getAttribute('data-rot'))||0;
+        var dr = parseFloat(d.getAttribute('data-drop'))||0;
+        var x = parseFloat(d.getAttribute('data-x'))||0;
+        d.style.transform = 'translateX(-50%) translateX('+x+'px) translateY('+(dr-55)+'px) rotate('+(r*0.25)+'deg)';
+        d.style.zIndex = '50';
+      });
+      d.addEventListener('mouseleave',function(){
+        if(_hoveredHandUid === d.getAttribute('data-uid')) _hoveredHandUid = null;
+        var r = parseFloat(d.getAttribute('data-rot'))||0;
+        var dr = parseFloat(d.getAttribute('data-drop'))||0;
+        var x = parseFloat(d.getAttribute('data-x'))||0;
+        var idx = parseInt(d.getAttribute('data-idx'),10);
+        d.style.transform = 'translateX(-50%) translateX('+x+'px) translateY('+dr+'px) rotate('+r+'deg)';
+        d.style.zIndex = isNaN(idx) ? 0 : idx;
+        // If new cards were held back during the hover, flush them now
+        // that the player has released their read.
+        if(_handHasDeferred){
+          _handHasDeferred = false;
+          if(typeof renderHand === 'function') renderHand();
+        }
+      });
+
+      d.addEventListener('click',function(e){
+        e.stopPropagation();
+        var idx = parseInt(d.getAttribute('data-idx'),10);
+        if(isNaN(idx)) return;
+        if(SETTINGS.confirm){
+          if(pendingConfirmIdx===idx){ pendingConfirmIdx=-1; playCard(idx); }
+          else{ pendingConfirmIdx=idx; playSelectSfx(); renderHand(); }
+        } else {
+          playCard(idx);
+        }
+      });
+    }
+
+    // Update className + position attrs on every render so the
+    // mouseenter/leave handlers always read the latest fan slot.
+    d.className='card '+statCls
+      +(isGhost?' ghost':'')
+      +(isNew?' new-card':'')
+      +(isSel?' selected-card':'')
+      +(isConjured?' conjured-card':'')
+      +(notArrived||deferThisOne?' card-arriving':'')
+      +(justArrived?' card-fadein':'');
+    d.setAttribute('data-idx', i);
+    d.setAttribute('data-rot', rot);
+    d.setAttribute('data-drop', drop);
+    d.setAttribute('data-x', xOffset);
+
+    if(deferThisOne){
+      // Hold the new card invisible at its fan slot. Next renderHand
+      // (fired by mouseleave on the hovered card) will drop the
+      // .card-arriving class and the card fades in normally.
+      d.style.transform = 'translateX(-50%) translateX('+xOffset+'px) translateY('+drop+'px) rotate('+rot+'deg)';
+      d.style.zIndex = i;
+      _handHasDeferred = true;
+    } else if(isHovered){
+      // Hovered card: do not touch transform — preserve the lifted
+      // position the mouseenter handler set. data-* attrs were updated
+      // above so mouseleave will move it to the new fan slot.
+    } else {
+      d.style.transform = 'translateX(-50%) translateX('+xOffset+'px) translateY('+drop+'px) rotate('+rot+'deg)';
+      d.style.zIndex = i;
+    }
+
+    if(isNew) delete item._newDraw;
+
+    var atSlot = container.children[i];
+    if(atSlot !== d){
+      container.insertBefore(d, atSlot || null);
+    }
+    delete existing[item._uid];
   });
+
+  // Prune DOMs whose uid is no longer in the hand.
+  Object.keys(existing).forEach(function(uid){
+    var el = existing[uid];
+    if(el && el.parentNode){
+      if(_hoveredHandUid === uid) _hoveredHandUid = null;
+      el.parentNode.removeChild(el);
+    }
+  });
+
   document.getElementById('hand-cnt').textContent=gs.hand.length;
 }
 
@@ -6643,13 +7212,13 @@ function showBeginBattleModal(){
   if(!e){ startBattle(); return; }
   var modal=document.getElementById('begin-battle-modal');
   if(!modal){ startBattle(); return; }
-  setCreatureImg(document.getElementById('bbm-enemy-icon'), e.id, e.icon||'👺', '200px');
+  setCreatureImg(document.getElementById('bbm-enemy-icon'), e.id, e.icon||'👺', '192px');
   document.getElementById('bbm-enemy-name').textContent=e.name||'Enemy';
   document.getElementById('bbm-enemy-desc').textContent='HP: '+e.baseHp+' · Area: '+((gs.area&&gs.area.def&&gs.area.def.name)||'');
   var statsHtml='';
   ['str','agi','wis'].forEach(function(s){
     var cols={str:'#e07070',agi:'#70e0a0',wis:'#70a0e0'};
-    statsHtml+='<div style="text-align:center;"><div style="font-family:Cinzel,serif;font-size:16px;color:'+cols[s]+';">'+e[s]+'</div><div style="font-size:7px;color:#5a4020;">'+s.toUpperCase()+'</div></div>';
+    statsHtml+='<div style="text-align:center;"><div style="font-size:22px;color:'+cols[s]+';font-weight:600;line-height:1;">'+e[s]+'</div><div style="font-size:10px;color:#5a4020;letter-spacing:1px;margin-top:4px;">'+s.toUpperCase()+'</div></div>';
   });
   document.getElementById('bbm-enemy-stats').innerHTML=statsHtml;
   var innateBlock=document.getElementById('bbm-innate-block');
@@ -6670,7 +7239,13 @@ function beginBattleFromModal(){
 }
 
 
-function showScreen(id){ document.querySelectorAll('.screen').forEach(function(s){s.classList.remove('active');}); document.getElementById(id).classList.add('active'); }
+function showScreen(id){
+  document.querySelectorAll('.screen').forEach(function(s){s.classList.remove('active');});
+  document.getElementById(id).classList.add('active');
+  // Round 67p: refresh the dynamic adventure tab label so it tracks
+  // the new screen (e.g. AREA → BATTLE · The Sewers).
+  if(typeof refreshAdventureTabLabel === 'function') refreshAdventureTabLabel();
+}
 function hideOverlays(){
   ['victory-overlay'].forEach(function(id){document.getElementById(id).classList.remove('show');});
   var d=document.getElementById('defeat-overlay');
@@ -6704,20 +7279,9 @@ function addLog(msg,cls){
 // (Loot, Buildings, NPC Dialogue, Bestiary, Tutorials, Typewriter)
 // ═══════════════════════════════════════════════════════
 
-// ═══════════════════════════════════════════════════════
-// FONT & TEXT SIZE TUNER
-// ═══════════════════════════════════════════════════════
-// Font always Press Start 2P, text size always default
-
-// Font always Press Start 2P, text size always default
-function _updateSizeBtns(){}
-function setFontTheme(theme){
-  document.body.classList.add('font-press');
-}
-function setTextSize(px){
-  // Locked to default — sets the CSS variable baseline only
-  document.documentElement.style.setProperty('--ts', '1');
-}
+// Round 67p: setFontTheme / setTextSize / _updateSizeBtns removed.
+// Press Start 2P is the body default in CSS; --ts defaults to 1 on
+// :root. No JS toggling needed at runtime.
 
 function togglePause(){
   if(!gs||!gs.running) return;
@@ -6838,17 +7402,17 @@ document.addEventListener('keydown',function(e){
       overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;';
       var box = document.createElement('div');
       box.style.cssText = 'background:#1a0f06;border:1px solid #5a3418;border-radius:10px;padding:24px 28px;max-width:340px;text-align:center;box-shadow:0 0 40px rgba(0,0,0,.8);';
-      box.innerHTML = '<div style="font-family:Cinzel,serif;font-size:12px;color:#d4a843;margin-bottom:12px;">SAVE & EXIT?</div>'
+      box.innerHTML = '<div style="font-size:12px;color:#d4a843;margin-bottom:12px;">SAVE & EXIT?</div>'
         +'<div style="font-size:9px;color:#8a6840;line-height:1.6;margin-bottom:16px;">Save changes to deck and return?</div>'
         +'<div style="display:flex;gap:10px;justify-content:center;"></div>';
       var btnRow = box.querySelector('div:last-child');
       var yesBtn = document.createElement('button');
       yesBtn.textContent = 'SAVE & EXIT';
-      yesBtn.style.cssText = 'font-family:Cinzel,serif;font-size:9px;padding:8px 20px;border-radius:6px;cursor:pointer;border:1px solid #4a6020;background:rgba(10,25,8,.8);color:#70b050;letter-spacing:1px;';
+      yesBtn.style.cssText = 'font-size:9px;padding:8px 20px;border-radius:6px;cursor:pointer;border:1px solid #4a6020;background:rgba(10,25,8,.8);color:#70b050;letter-spacing:1px;';
       yesBtn.addEventListener('click', function(){ overlay.remove(); deDeckDone(); });
       var noBtn = document.createElement('button');
       noBtn.textContent = 'CANCEL';
-      noBtn.style.cssText = 'font-family:Cinzel,serif;font-size:9px;padding:8px 20px;border-radius:6px;cursor:pointer;border:1px solid #3a2818;background:rgba(30,20,5,.5);color:#8a6840;letter-spacing:1px;';
+      noBtn.style.cssText = 'font-size:9px;padding:8px 20px;border-radius:6px;cursor:pointer;border:1px solid #3a2818;background:rgba(30,20,5,.5);color:#8a6840;letter-spacing:1px;';
       noBtn.addEventListener('click', function(){ overlay.remove(); });
       btnRow.appendChild(yesBtn);
       btnRow.appendChild(noBtn);

@@ -38,7 +38,7 @@ function openDeckEditor(champId){
   var ch = getCreaturePlayable(champId);
   var cp = getChampPersist(champId);
 
-  setCreatureImg(document.getElementById('de-portrait'), champId, ch.icon, '36px');
+  setCreatureImg(document.getElementById('de-portrait'), champId, ch.icon, '32px');
   document.getElementById('de-champ-name').textContent = ch.name;
   document.getElementById('de-champ-sub').textContent = 'Lv.' + cp.level + ' ' + getAscensionTierName(champId);
   document.getElementById('de-stat-row').innerHTML =
@@ -582,6 +582,12 @@ function _deSave(){
   var mods = getSanctumMods(_deChampId);
   mods.deckOverride = _deDeck.slice();
   savePersist();
+  // Round 67p: any deck-builder edit advances the story "edit your deck"
+  // quest. Target=1 so the first save completes it; subsequent saves are
+  // no-ops in checkQuestProgress (progress already >= target).
+  if(typeof checkQuestProgress === 'function'){
+    checkQuestProgress('deck_edit', { champId: _deChampId });
+  }
 }
 
 function _deRenderFooter(){

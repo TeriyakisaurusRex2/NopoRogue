@@ -100,6 +100,14 @@ function dealDamage(target, dmg, options) {
   options = options || {};
   if (!target || !gs || !gs.running) return 0;
 
+  // Round 67o: guard against NaN/Infinity damage. Propagating NaN
+  // into target.hp via `hp - NaN` turns HP into NaN forever (J's
+  // bug report). Coerce + warn so we can trace the caller.
+  if(typeof dmg !== 'number' || !isFinite(dmg)){
+    console.warn('[dealDamage] non-finite dmg=', dmg, 'on', target && target.side, '— coercing to 0');
+    dmg = 0;
+  }
+
   var origDmg = dmg;
   var source = getOpponent(target);
 

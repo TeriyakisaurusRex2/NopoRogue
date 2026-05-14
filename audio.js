@@ -145,14 +145,15 @@ function updateSfxVolume(pct){
 // work via the alias map below — callers haven't been updated yet.
 var MUSIC_SETS = {
   menu:   { tracks:['theme_menu'],                       label:'Adventurer\'s Rest' },
-  town:   { tracks:['theme_town'],                       label:'The Town at Dusk'   },
+  town:   { tracks:['theme_town_1','theme_town_2'],      label:'The Town at Dusk'   },
   battle: { tracks:['theme_battle_1','theme_battle_2'],  label:'Battle'             },
 };
 // Per-track display names. Falls back to set.label if a track isn't
 // listed here individually.
 var MUSIC_TRACK_NAMES = {
   theme_menu:     'Adventurer\'s Rest',
-  theme_town:     'The Town at Dusk',
+  theme_town_1:   'The Town at Dusk I',
+  theme_town_2:   'The Town at Dusk II',
   theme_battle_1: 'Battle Theme I',
   theme_battle_2: 'Battle Theme II',
 };

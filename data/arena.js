@@ -519,8 +519,8 @@ function _arenaPickChampForSlot(slotIdx){
   });
 
   var canAfford = (PERSIST.gold || 0) >= ARENA_GAMBLE_ENTRY_FEE;
-  var html = '<div style="font-family:Cinzel,serif;font-size:12px;color:#d4a843;letter-spacing:3px;margin-bottom:6px;">ASSIGN CHAMPION (SLOT ' + (slotIdx+1) + ')</div>'
-    + '<div style="font-family:Cinzel,serif;font-size:9px;color:#7a6030;letter-spacing:1px;margin-bottom:14px;">'
+  var html = '<div style="font-size:12px;color:#d4a843;letter-spacing:3px;margin-bottom:6px;">ASSIGN CHAMPION (SLOT ' + (slotIdx+1) + ')</div>'
+    + '<div style="font-size:9px;color:#7a6030;letter-spacing:1px;margin-bottom:14px;">'
     +   ARENA_GAMBLE_ENTRY_FEE + 'g entry'
     +   (canAfford ? '' : '<span style="color:#c04040;"> · NOT ENOUGH GOLD</span>')
     + '</div>'
@@ -532,7 +532,7 @@ function _arenaPickChampForSlot(slotIdx){
     var click = disabled ? '' : ('document.getElementById(\'exp-popup\').remove();_arenaAssign(' + slotIdx + ',\'' + id + '\');');
     html += '<div class="exp-pick-option '+(typeof getAscensionClass==='function'?getAscensionClass(id):'')+'" style="position:relative;padding:12px 8px;' + (disabled?'opacity:.5;cursor:not-allowed;':'cursor:pointer;') + '" ' + (disabled?'':'onclick="'+click+'"') + '>'
       + '<div style="margin-bottom:6px;">'+(typeof creatureImgHTML==='function'?creatureImgHTML(id,ch.icon,'44px'):'')+'</div>'
-      + '<div style="font-family:Cinzel,serif;font-size:10px;color:#c0a060;">'+ch.name+'</div>'
+      + '<div style="font-size:10px;color:#c0a060;">'+ch.name+'</div>'
       + '<div style="font-size:7px;color:#5a4020;">Lv.'+cp.level+' '+(typeof getAscensionChipHTML==='function'?getAscensionChipHTML(id):'')+'</div>'
       + '<div style="font-size:7px;color:#4a3020;margin-top:3px;">'
       +   '<span style="color:#e88060;">STR</span>:'+Math.round(cp.stats.str)+' '
@@ -550,10 +550,10 @@ function _arenaPickChampForSlot(slotIdx){
   html += '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">';
   if(currentInSlot){
     html += '<button onclick="document.getElementById(\'exp-popup\').remove();_arenaConfirmPull('+slotIdx+');" '
-      + 'style="font-family:Cinzel,serif;font-size:9px;padding:7px 14px;border-radius:3px;border:1px solid #5a2020;background:transparent;color:#a04040;cursor:pointer;letter-spacing:1px;">PULL CURRENT</button>';
+      + 'style="font-size:9px;padding:7px 14px;border-radius:3px;border:1px solid #5a2020;background:transparent;color:#a04040;cursor:pointer;letter-spacing:1px;">PULL CURRENT</button>';
   }
   html += '<button onclick="document.getElementById(\'exp-popup\').remove();" '
-    + 'style="font-family:Cinzel,serif;font-size:9px;padding:7px 14px;border-radius:3px;border:1px solid #5a3a18;background:transparent;color:#a08858;cursor:pointer;letter-spacing:1px;">CANCEL</button>';
+    + 'style="font-size:9px;padding:7px 14px;border-radius:3px;border:1px solid #5a3a18;background:transparent;color:#a08858;cursor:pointer;letter-spacing:1px;">CANCEL</button>';
   html += '</div>';
 
   box.innerHTML = html;
@@ -1000,8 +1000,8 @@ function _arenaPreviewCardHTML(payload, opts){
   function statTile(key, val){
     var c = statColors[key];
     return '<div style="padding:6px 10px;background:#1a1208;border:1px solid #2a1808;border-left:3px solid '+c+';flex:1;">'
-         +   '<div style="font-family:Cinzel,serif;font-size:9px;letter-spacing:2px;color:'+c+';">'+key.toUpperCase()+'</div>'
-         +   '<div style="font-family:Cinzel,serif;font-size:18px;color:#e8d7a8;line-height:1;margin-top:2px;">'+val+'</div>'
+         +   '<div style="font-size:9px;letter-spacing:2px;color:'+c+';">'+key.toUpperCase()+'</div>'
+         +   '<div style="font-size:18px;color:#e8d7a8;line-height:1;margin-top:2px;">'+val+'</div>'
          + '</div>';
   }
   var statsRow = '<div style="display:flex;gap:6px;">'
@@ -1014,13 +1014,13 @@ function _arenaPreviewCardHTML(payload, opts){
   // in JS — easier to flatten than fight the parser).
   var relicsRow = '';
   if(relCount > 0){
-    relicsRow = '<div style="font-family:Cinzel,serif;font-size:9px;color:#7a6030;letter-spacing:.8px;">'
+    relicsRow = '<div style="font-size:9px;color:#7a6030;letter-spacing:.8px;">'
               + '<span style="color:#c0a060;">' + relCount + '</span> relic' + (relCount===1 ? '' : 's')
               + '</div>';
   }
   var rewardRow = '';
   if(opts.rewardHtml){
-    rewardRow = '<div style="font-family:\'Crimson Text\',serif;font-size:11px;color:#c0a060;font-style:italic;margin-top:2px;">'
+    rewardRow = '<div style="font-size:11px;color:#c0a060;margin-top:2px;">'
               + opts.rewardHtml
               + '</div>';
   }
@@ -1036,8 +1036,8 @@ function _arenaPreviewCardHTML(payload, opts){
     // Info column
     +     '<div style="min-width:0;display:flex;flex-direction:column;gap:8px;">'
     +       '<div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;">'
-    +         '<span style="font-family:Cinzel,serif;font-size:16px;color:#d4a843;letter-spacing:1px;">' + displayName + '</span>'
-    +         '<span style="font-family:Cinzel,serif;font-size:10px;color:#c0a060;letter-spacing:1.2px;">LV ' + lv + '</span>'
+    +         '<span style="font-size:16px;color:#d4a843;letter-spacing:1px;">' + displayName + '</span>'
+    +         '<span style="font-size:10px;color:#c0a060;letter-spacing:1.2px;">LV ' + lv + '</span>'
     +         _arnTierChipHTML(tierKey)
     +       '</div>'
     +       statsRow
