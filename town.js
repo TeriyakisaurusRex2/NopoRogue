@@ -136,10 +136,11 @@ var BUILDINGS = {
   // Row 2 — Use these (strategic decisions)
   sanctum: {
     id:'sanctum', name:'The Sanctum', icon:'⚗️', sprite:'sanctum_keeper', buildingIcon:'sanctum',
-    // Round 42: Theo moved to the Arena. The Sanctum is now run by the
-    // Keeper — a cryptic armoured cleric, grandiose / poetic / mildly
+    // Round 42: Theo moved to the Arena. The Sanctum is now run by
+    // Kaine — a cryptic armoured cleric, grandiose / poetic / mildly
     // sycophantic toward the player's power. Grima-Wormtongue energy.
-    npc:{name:'Keeper', title:'Sanctum Keeper', greeting:'You return, ascended one. I felt your approach.', pitch:0.95},
+    // Round 67p: named (was 'Keeper').
+    npc:{name:'Kaine', title:'Sanctum Keeper', greeting:'You return, my lord. I felt your approach upon the stones.', pitch:0.95},
     desc:'Champion management. Ascend, equip relics, view decks.',
     unlocked:false,
   },
@@ -1692,6 +1693,13 @@ function _questRewardChipsHTML(quest){
   return '<div class="qrwd-strip">'+parts.join(' ')+'</div>';
 }
 
+// Round 67p: tracks quest ids that should render with the chain-in
+// animation on their next paint. Set by claimQuestFromRail when a
+// chained story quest activates as a result of a claim. Entries are
+// removed after the animation duration (~600ms) so re-renders past
+// that point don't replay the animation.
+var _csQuestChainIns = {};
+
 // Render the active-quests rail on the champion-select screen. Reads
 // PERSIST.town.quests.active and pulls each entry's def out of .offered
 // so we can show title/issuer/target. Rebuilt by rebuildChampGrid each
@@ -1732,8 +1740,20 @@ function buildCsQuestRail(railIdOpt){
     // infrastructure. Random bounties from _generateBounties have neither.
     var storyCls = (def.isStory || def.chain) ? ' cs-q-row-story' : '';
     var titlePrefix = storyCls ? '<span class="cs-q-star">★</span> ' : '';
+    // Round 67p: inline CLAIM button on complete quests so the early-
+    // game story chain can be claimed without entering town (Hall is
+    // still reachable, but the side rail is the smoother path for
+    // brand-new players easing in via the questline).
+    var claimBtn = complete
+      ? '<button class="cs-q-claim" data-qid="'+_csqEsc(def.id)+'" onclick="claimQuestFromRail(this.dataset.qid)">CLAIM REWARDS</button>'
+      : '';
+    // Round 67p: chain-in flag — true for rows that were activated as
+    // the .next link of a just-claimed story quest. Applies the
+    // scale+fade-in animation. Flag is cleared shortly after by the
+    // setTimeout in claimQuestFromRail.
+    var chainInCls = _csQuestChainIns[a.id] ? ' cs-q-chain-in' : '';
     rows +=
-        '<div class="cs-q-row'+storyCls+'">'
+        '<div class="cs-q-row'+storyCls+(complete?' cs-q-row-complete':'')+chainInCls+'" data-qid="'+_csqEsc(a.id)+'">'
       +   '<div class="cs-q-row-head">'
       +     '<span class="cs-q-name">'+titlePrefix+_csqEsc(def.title || a.id)+'</span>'
       +     '<span class="cs-q-frac'+(complete?' complete':'')+'">'+prog+' / '+target+'</span>'
@@ -1741,6 +1761,7 @@ function buildCsQuestRail(railIdOpt){
       +   '<div class="cs-q-action">'+_questActionHtml(def)+'</div>'
       +   '<div class="cs-q-bar"><div class="cs-q-bar-fill'+(complete?' complete':'')+'" style="width:'+pct+'%;"></div></div>'
       +   _questRewardChipsHTML(def)
+      +   claimBtn
       + '</div>';
   });
 
@@ -2480,6 +2501,65 @@ function claimQuest(questId){
   _renderHallContent();
 }
 
+// Round 67p: rail-side claim. Animates the bar drain → row collapse →
+// repaint with any chain-spawned next quest fading in. Routes through
+// claimQuest (so .next chain + onClaim fire), but defers it until
+// after the collapse animation so the visual matches the state change.
+//
+// Phases (timings tuned to feel snappy but readable):
+//   0ms   — drain the progress bar to 0% (existing CSS transition).
+//   320ms — collapse the row (max-height + opacity + padding to 0).
+//   760ms — actually run claimQuest, diff active-quest ids to mark any
+//           chain-spawned newcomers, then repaint both rails. New rows
+//           render with .cs-q-chain-in for the fade+grow animation.
+//   1400ms — clear the chain-in markers so future repaints don't replay
+//            the in-animation.
+function claimQuestFromRail(questId){
+  if(!questId) return;
+  // Defensive: ignore re-clicks while a previous claim is still
+  // animating out (the row is still in the DOM, just collapsing).
+  var existingRow = document.querySelector('.cs-q-row.cs-q-claiming[data-qid="' + (window.CSS && CSS.escape ? CSS.escape(questId) : questId) + '"]');
+  if(existingRow) return;
+
+  // Snapshot active quest ids BEFORE claim so we can detect anything
+  // spawned by the .next chain.
+  var beforeIds = {};
+  var qs0 = (PERSIST.town && PERSIST.town.quests) ? PERSIST.town.quests : null;
+  if(qs0 && Array.isArray(qs0.active)){
+    qs0.active.forEach(function(a){ beforeIds[a.id] = true; });
+  }
+
+  // Find every rail row representing this quest (both rails could be
+  // mounted simultaneously on the area screen) and start phase 1.
+  var sel = '.cs-q-row[data-qid="' + (window.CSS && CSS.escape ? CSS.escape(questId) : questId) + '"]';
+  var rows = document.querySelectorAll(sel);
+  rows.forEach(function(row){
+    var fill = row.querySelector('.cs-q-bar-fill');
+    if(fill) fill.style.width = '0%'; // .cs-q-bar-fill already has a width transition
+  });
+
+  // Phase 2: collapse the row.
+  setTimeout(function(){
+    rows.forEach(function(row){ row.classList.add('cs-q-claiming'); });
+  }, 320);
+
+  // Phase 3: actual claim + repaint with chain-in flags.
+  setTimeout(function(){
+    claimQuest(questId);
+    var qs1 = (PERSIST.town && PERSIST.town.quests) ? PERSIST.town.quests : null;
+    if(qs1 && Array.isArray(qs1.active)){
+      qs1.active.forEach(function(a){
+        if(!beforeIds[a.id]) _csQuestChainIns[a.id] = Date.now();
+      });
+    }
+    if(typeof buildCsQuestRail === 'function')   buildCsQuestRail();
+    if(typeof buildAreaQuestRail === 'function') buildAreaQuestRail();
+  }, 760);
+
+  // Phase 4: clear chain-in markers after the in-animation settles.
+  setTimeout(function(){ _csQuestChainIns = {}; }, 1400);
+}
+
 function questTick(seconds){
   var quests = PERSIST.town.quests;
   if(!quests) return;
@@ -2935,8 +3015,8 @@ function buildBestiaryCreatures(){
     if(area && area.color) vigBg = 'radial-gradient(ellipse at center bottom, '+area.color+'33 0%, rgba(10,5,1,.8) 100%)';
 
     var spriteHtml = isSeen
-      ? creatureImgHTML(id, e.icon, '32px')
-      : '<span style="font-size:24px;color:#2a1808;font-weight:700;">?</span>';
+      ? creatureImgHTML(id, e.icon, '48px')
+      : '<span style="font-size:36px;color:#2a1808;font-weight:700;">?</span>';
 
     // Badges
     var badgeHtml = '';
@@ -3026,7 +3106,7 @@ function renderBestiaryDetail(id){
 
   if(!isSeen){
     panel.innerHTML='<div style="padding:40px 20px;text-align:center;">'
-      +'<div style="margin:0 auto 16px;">'+creatureImgHTML(id, e.icon, '192px', 'bcd-silhouette')+'</div>'
+      +'<div style="margin:0 auto 16px;">'+creatureImgHTML(id, e.icon, '288px', 'bcd-silhouette')+'</div>'
       +'<div class="bcd-name" style="color:#3a2810;">???</div>'
       +'<div class="bcd-section-label" style="text-align:center;margin-top:20px;">UNCATALOGUED</div>'
       +'<div style="font-size:9px;color:#4a3010;font-style:italic;padding:8px 20px;">Encounter this creature in combat to begin cataloguing.</div>'
@@ -3047,7 +3127,7 @@ function renderBestiaryDetail(id){
 
   html+='<div class="bcd-display-case">'
     +'<div class="bcd-case-corners">'
-    +creatureImgHTML(id, e.icon, '192px')
+    +creatureImgHTML(id, e.icon, '288px')
     +'</div>'
     +'</div>';
 
@@ -3519,45 +3599,23 @@ function openChampPanelFor(champId){
 var _sanctumChamp = null;
 var _sanctumTab   = 'overview';
 
-// Per-champion card items retired — Sanctum now uses Card Fragments universally
-var SANCTUM_CHAMP_CARD = {}; // kept for save compatibility, no longer used
-
-// Cost tables — all deck operations now cost Card Fragments
-var SANCTUM_COSTS = {
-  remove_card:  10,  // remove a card from starting deck
-  add_copy:     25,  // add an extra copy of any card already known
-  swap_base:    30,  // replace Strike/Brace with a champion-specific card
-  swap_champ:   40,  // replace one champion card with another
-  add_collected:15,  // add a card from the collected pool to the deck
-  tier_ruby:    { fragments:50,  sparks:10 },
-  tier_emerald: { fragments:100, embers:5 },
-  tier_sapphire:{ fragments:200, flameShards:2 },
-  floor_2:      { gold:100, fragments:50 },
-  floor_3:      { gold:200, fragments:100 },
-  floor_4:      { gold:400, fragments:180 },
-  floor_5:      { gold:700, fragments:300 },
-};
-
-var TIER_ORDER = ['base','ruby','emerald','sapphire','turquoise','amethyst','topaz','obsidian','opal'];
-
-// Fragment-based sanctum currency helpers
-function getFragmentCount(){ return PERSIST.town.cardFragments||0; }
-function spendFragments(n){
-  if(getFragmentCount()<n) return false;
-  PERSIST.town.cardFragments-=n;
-  return true;
-}
-// Card collection pool — cards earned from runs, available to add to decks
+// Round 67p: the per-champion / per-card fragment-cost Sanctum was
+// retired in favour of the free-form deck builder (see deck_builder.js
+// and Kaine's tutorial). The following constants and helpers used to
+// live here and have been removed:
+//   SANCTUM_CHAMP_CARD, SANCTUM_COSTS, TIER_ORDER, getFragmentCount,
+//   spendFragments, getSanctumCardItem, getSanctumCardCount,
+//   spendSanctumCards
+// Card Fragments as a currency are gone — there was no spending sink
+// left in the live game. The Sanctum collection pool (the random card
+// awarded by the spoils overlay) remains, surfaced via the
+// deck builder's COLLECTION filter.
 function getSanctumCollected(cardId){ return (PERSIST.sanctum.unlockedCards&&PERSIST.sanctum.unlockedCards[cardId])||0; }
 function addToSanctumPool(cardId, qty){
   if(!PERSIST.sanctum.unlockedCards) PERSIST.sanctum.unlockedCards={};
   PERSIST.sanctum.unlockedCards[cardId]=(PERSIST.sanctum.unlockedCards[cardId]||0)+(qty||1);
   savePersist();
 }
-// Legacy stubs — kept so old save data doesn't break anything
-function getSanctumCardItem(champId){ return null; }
-function getSanctumCardCount(champId){ return getFragmentCount(); }
-function spendSanctumCards(champId, n){ return spendFragments(n); }
 
 function refreshSanctumPanel(){
   showLockedBuildingUI('sanctum');
@@ -4104,264 +4162,19 @@ function openDeckEditorFromSanctum(champId){
   _deReturnScreen = 'sanctum-return';
 }
 
-function toggleCardEditRow(champId, cardId, isBase, cell, frags, champCards, deck, deckCounts){
-  var section=document.getElementById('sanctum-edit-section');
-  if(!section) return;
-  var cd=CARDS[cardId];
-  if(!cd) return;
-  var canRemove=frags>=(SANCTUM_COSTS.remove_card)&&deck.length>1;
-  var canSwap=isBase&&champCards.length>0&&frags>=(SANCTUM_COSTS.swap_base);
-  var canAdd=frags>=(SANCTUM_COSTS.add_copy);
-
-  section.innerHTML='<div style="background:rgba(20,10,2,.7);border:1px solid #3a2010;border-radius:6px;padding:10px;">'
-    +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">'
-      +'<span style="font-size:20px;">'+(cd.icon||'?')+'</span>'
-      +'<div>'
-        +'<div style="font-size:10px;color:#d4a843;">'+cd.name+'</div>'
-        +'<div style="font-size:7px;color:#8a6040;line-height:1.4;">'+cd.effect+'</div>'
-      +'</div>'
-    +'</div>'
-    +'<div style="display:flex;gap:5px;flex-wrap:wrap;">'
-    +(canRemove?'<button class="sanctum-btn sanctum-btn-remove" onclick="sanctumRemoveCard(\''+champId+'\',\''+cardId+'\')">-1 copy ('+SANCTUM_COSTS.remove_card+' 🃏)</button>':'')
-    +(canAdd?'<button class="sanctum-btn" onclick="sanctumAddCard(\''+champId+'\',\''+cardId+'\')">+1 copy ('+SANCTUM_COSTS.add_copy+' 🃏)</button>':'')
-    +(canSwap?'<button class="sanctum-btn sanctum-btn-swap" onclick="sanctumShowSwapMenu(\''+champId+'\',\''+cardId+'\',this)">Swap out ('+SANCTUM_COSTS.swap_base+' 🃏)</button>':'')
-    +'<button class="sanctum-btn" onclick="document.getElementById(\'sanctum-edit-section\').innerHTML=\'<div style=\\"font-size:8px;color:#4a3010;font-style:italic;text-align:center;padding:4px;\\">Click a card above to edit it</div>\'">✕ Close</button>'
-    +'</div>'
-  +'</div>';
-}
-
-function resetSanctumDeck(champId){
-  if(!confirm('Reset '+getCreaturePlayable(champId).name+'\'s deck to default? This cannot be undone.')) return;
-  if(PERSIST.sanctum.deckMods[champId]){
-    PERSIST.sanctum.deckMods[champId]={swaps:[],extras:[],removed:[],cardTiers:{}};
-  }
-  savePersist();
-  showTownToast('Deck reset to default.');
-  refreshSanctumPanel();
-}
-
-
-// ── UPGRADE PANE ───────────────────────────────────────────────────
-function buildSanctumUpgradesPane(){
-  var list=document.getElementById('sanctum-upgrades-list');
-  if(!list) return;
-  list.innerHTML='';
-  var champId=_sanctumChamp; if(!champId) return;
-  var mods=getSanctumMods(champId);
-  var deck=buildStartDeck(champId);
-  var frags=getFragmentCount();
-  var active=!!(PERSIST.town.buildings.sanctum&&PERSIST.town.buildings.sanctum.unlocked);
-  var uniqueIds=[...new Set(deck)];
-
-  var intro=document.createElement('div');
-  intro.style.cssText='font-size:8px;color:#7a6030;margin-bottom:10px;line-height:1.5;padding:6px 8px;background:rgba(0,0,0,.3);border-radius:4px;';
-  intro.textContent='Upgrade card tiers to start runs with more powerful versions. Uses Card Fragments + materials.';
-  list.appendChild(intro);
-
-  uniqueIds.forEach(function(cardId){
-    var cd=CARDS[cardId]; if(!cd) return;
-    var curTier=mods.cardTiers&&mods.cardTiers[cardId]?mods.cardTiers[cardId]:'base';
-    var curIdx=TIER_ORDER.indexOf(curTier);
-    var nextTier=curIdx<TIER_ORDER.length-1?TIER_ORDER[curIdx+1]:null;
-    var cost=nextTier?SANCTUM_COSTS['tier_'+nextTier]:null;
-    var tierCol={base:'#555',ruby:'#c0392b',emerald:'#27ae60',sapphire:'#2980b9',turquoise:'#17a589',amethyst:'#8e44ad',topaz:'#d4ac0d',obsidian:'#2c3e50'};
-
-    var row=document.createElement('div');
-    row.className='sanctum-upgrade-row';
-    if(cost){
-      var matKey=cost.sparks?'sparks':cost.embers?'embers':'flameShards';
-      var matAmt=cost.sparks||cost.embers||cost.flameShards||0;
-      var matHave=PERSIST.town.materials[matKey]||0;
-      // Round 38: was gemImgHTML('ruby','16px') — gemImgHTML now floors
-      // at 48px, so used emoji here to match the row's dense 16px
-      // sparks/embers icons. When a real flameShards.png lands, swap
-      // back to an asset rendering at 48px and bump the row layout.
-      var matIcon={'sparks':'✨','embers':'🔥','flameShards':'💎'}[matKey]||'';
-      var hasFrags=frags>=cost.fragments;
-      var hasMats=matHave>=matAmt;
-      var canAfford=active&&hasFrags&&hasMats;
-      row.innerHTML='<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #1a0e00;">'
-        +'<span style="font-size:16px;">'+(cd.icon||'?')+'</span>'
-        +'<div style="flex:1;min-width:0;">'
-          +'<div style="font-size:9px;color:#d4a843;">'+cd.name+'</div>'
-          +'<div style="display:flex;align-items:center;gap:4px;margin-top:2px;">'
-            +'<span style="font-size:7px;color:'+tierCol[curTier]+';border:1px solid '+tierCol[curTier]+';padding:1px 4px;border-radius:2px;">'+curTier.toUpperCase()+'</span>'
-            +'<span style="font-size:8px;color:#444;">→</span>'
-            +'<span style="font-size:7px;color:'+tierCol[nextTier]+';border:1px solid '+tierCol[nextTier]+';padding:1px 4px;border-radius:2px;">'+nextTier.toUpperCase()+'</span>'
-          +'</div>'
-        +'</div>'
-        +'<div style="text-align:right;font-size:7px;margin-right:6px;">'
-          +'<div style="color:'+(hasFrags?'#c09030':'#7a2020')+';">'+cost.fragments+' 🃏</div>'
-          +(matAmt?'<div style="color:'+(hasMats?'#8a9040':'#7a2020')+';">'+matAmt+matIcon+'</div>':'')
-        +'</div>'
-        +(canAfford
-          ?'<button class="sanctum-btn sanctum-btn-upgrade" onclick="sanctumUpgradeCard(\''+champId+'\',\''+cardId+'\')">UPGRADE</button>'
-          :'<button class="sanctum-btn" disabled style="opacity:.4;">UPGRADE</button>')
-        +'</div>';
-    } else {
-      row.innerHTML='<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #1a0e00;">'
-        +'<span style="font-size:16px;">'+(cd.icon||'?')+'</span>'
-        +'<span style="font-size:9px;color:#d4a843;flex:1;">'+cd.name+'</span>'
-        +'<span style="font-size:7px;color:'+tierCol[curTier]+';border:1px solid '+tierCol[curTier]+';padding:1px 4px;border-radius:2px;">'+curTier.toUpperCase()+'</span>'
-        +'<span style="font-size:7px;color:#3a6020;margin-left:4px;">MAX</span>'
-        +'</div>';
-    }
-    list.appendChild(row);
-  });
-
-  if(!active){
-    var el=document.createElement('div');
-    el.style.cssText='font-size:9px;color:#4a3010;text-align:center;padding:16px;';
-    el.textContent='Slot a gem to unlock card tier upgrades.';
-    list.appendChild(el);
-  }
-}
-
-// ── TRAINING PANE ──────────────────────────────────────────────────
-function buildSanctumTrainingPane(){
-  var list=document.getElementById('sanctum-training-list');
-  if(!list) return;
-  list.innerHTML='';
-  var champId=_sanctumChamp; if(!champId) return;
-  var ch=CREATURES[champId]; if(!ch) return;
-  var frags=getFragmentCount();
-  var curFloor=PERSIST.sanctum.levelFloors[champId]||1;
-  var cp=getChampPersist(champId);
-
-  var infoDiv=document.createElement('div');
-  infoDiv.style.cssText='font-size:9px;color:#7a6030;margin-bottom:10px;line-height:1.6;padding:6px 8px;background:rgba(0,0,0,.3);border-radius:4px;';
-  infoDiv.innerHTML='<strong style="color:#d4a843;">'+ch.name+'</strong> · Current level: <strong>'+cp.level+'</strong>'
-    +'<br>Level floor ensures your champion always starts a run at a minimum level.';
-  list.appendChild(infoDiv);
-
-  [2,3,4,5].forEach(function(floor){
-    var cost=SANCTUM_COSTS['floor_'+floor];
-    var alreadySet=curFloor>=floor;
-    var hasGold=PERSIST.gold>=cost.gold;
-    var hasFrags=frags>=cost.fragments;
-    var canAfford=!alreadySet&&hasGold&&hasFrags;
-    var row=document.createElement('div');
-    row.className='sanctum-upgrade-row';
-    row.innerHTML='<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #1a0e00;">'
-      +'<span style="font-size:20px;">'+(alreadySet?'✅':'🏆')+'</span>'
-      +'<div style="flex:1;">'
-        +'<div style="font-size:9px;color:#d4a843;">Level Floor '+floor+'</div>'
-        +'<div style="font-size:7px;color:#7a6030;margin-top:1px;">Runs start at Lv.'+floor+' minimum</div>'
-        +'<div style="font-size:7px;margin-top:3px;display:flex;gap:8px;">'
-          +'<span style="color:'+(hasGold||alreadySet?'#c09030':'#7a2020')+';">'+cost.gold+'g</span>'
-          +'<span style="color:'+(hasFrags||alreadySet?'#d4a843':'#7a2020')+';">'+cost.fragments+' 🃏</span>'
-        +'</div>'
-      +'</div>'
-      +(alreadySet
-        ?'<span style="font-size:8px;color:#27ae60;">UNLOCKED</span>'
-        :canAfford
-          ?'<button class="sanctum-btn sanctum-btn-upgrade" onclick="sanctumBuyLevelFloor(\''+champId+'\','+floor+')">UNLOCK</button>'
-          :'<button class="sanctum-btn" disabled style="opacity:.4;">UNLOCK</button>')
-      +'</div>';
-    list.appendChild(row);
-  });
-}
-
-// ── SANCTUM ACTIONS ────────────────────────────────────────────────
-function sanctumRemoveCard(champId, cardId){
-  var cost=SANCTUM_COSTS.remove_card;
-  if(!spendFragments(cost)){ showTownToast('Not enough Card Fragments (need '+cost+').'); return; }
-  var mods=getSanctumMods(champId);
-  // Check card isn't already marked for removal beyond what's in deck
-  var deck=buildStartDeck(champId);
-  if(deck.indexOf(cardId)===-1){ showTownToast('That card is not in the starting deck.'); return; }
-  // Add to removed list
-  var existing=mods.removed.find(function(r){return r.cardId===cardId;});
-  if(existing) existing.copies=(existing.copies||1)+1;
-  else mods.removed.push({cardId:cardId,copies:1});
-  savePersist(); showTownToast('Removed one '+CARDS[cardId].name+' from starting deck.'); refreshSanctumPanel();
-}
-
-function sanctumAddCard(champId, cardId){
-  var cost=SANCTUM_COSTS.add_copy;
-  if(!spendFragments(cost)){ showTownToast('Not enough Card Fragments (need '+cost+').'); return; }
-  var mods=getSanctumMods(champId);
-  var existing=mods.extras.find(function(e){return e.cardId===cardId;});
-  if(existing) existing.copies=(existing.copies||1)+1;
-  else mods.extras.push({cardId:cardId,copies:1});
-  savePersist(); showTownToast('+1 '+CARDS[cardId].name+' added to starting deck.'); refreshSanctumPanel();
-}
-
-function sanctumSwapIn(champId, newCardId){
-  // Swap a strike or brace for the new champion card
-  var mods=getSanctumMods(champId);
-  var deck=buildStartDeck(champId);
-  // Find a swappable base card (strike first, then brace)
-  var fromId=deck.indexOf('strike')!==-1?'strike':deck.indexOf('brace')!==-1?'brace':null;
-  if(!fromId){ showTownToast('No base cards (Strike/Brace) left to swap out.'); return; }
-  var cost=SANCTUM_COSTS.swap_base;
-  if(!spendFragments(cost)){ showTownToast('Not enough Card Fragments (need '+cost+').'); return; }
-  mods.swaps.push({fromId:fromId,toId:newCardId});
-  savePersist(); showTownToast('Swapped a '+CARDS[fromId].name+' for '+CARDS[newCardId].name+'!'); refreshSanctumPanel();
-}
-
-function sanctumAddCollected(champId, cardId){
-  var pool=PERSIST.sanctum.unlockedCards||{};
-  if(!(pool[cardId]>0)){ showTownToast('No copies of that card in your collection.'); return; }
-  var cost=SANCTUM_COSTS.add_collected;
-  if(!spendFragments(cost)){ showTownToast('Not enough Card Fragments (need '+cost+').'); return; }
-  // Add to deck extras and consume from pool
-  var mods=getSanctumMods(champId);
-  var existing=mods.extras.find(function(e){return e.cardId===cardId;});
-  if(existing) existing.copies=(existing.copies||1)+1;
-  else mods.extras.push({cardId:cardId,copies:1});
-  pool[cardId]--;
-  savePersist();
-  showTownToast(CARDS[cardId].name+' added to '+getCreaturePlayable(champId).name+' starting deck!');
-  refreshSanctumPanel();
-}
-
-function sanctumShowSwapMenu(champId, fromCardId, btn){
-  // Simple: swap a champion card back to strike
-  var mods=getSanctumMods(champId);
-  var cost=SANCTUM_COSTS.swap_champ;
-  // Find existing swap entry and remove it to undo
-  var swapIdx=mods.swaps.findIndex(function(s){return s.toId===fromCardId;});
-  if(swapIdx!==-1){
-    // Undo swap — restore the original base card, refund nothing (intentional)
-    mods.swaps.splice(swapIdx,1);
-    savePersist(); showTownToast('Swapped back. Cards are NOT refunded on undo.'); refreshSanctumPanel();
-  } else {
-    showTownToast('Use Swap to replace base cards with champion-specific cards.');
-  }
-}
-
-function sanctumUpgradeCard(champId, cardId){
-  var mods=getSanctumMods(champId);
-  var curTier=mods.cardTiers[cardId]||'base';
-  var curIdx=TIER_ORDER.indexOf(curTier);
-  if(curIdx>=TIER_ORDER.length-1){ showTownToast('Already at max tier!'); return; }
-  var nextTier=TIER_ORDER[curIdx+1];
-  var cost=SANCTUM_COSTS['tier_'+nextTier];
-  if(!cost){ showTownToast('No upgrade cost defined for '+nextTier+'.'); return; }
-  var matKey=cost.sparks?'sparks':cost.embers?'embers':'flameShards';
-  var matAmt=cost.sparks||cost.embers||cost.flameShards||0;
-  if(!spendFragments(cost.fragments)){ showTownToast('Not enough Card Fragments (need '+cost.fragments+').'); return; }
-  if(matAmt&&(PERSIST.town.materials[matKey]||0)<matAmt){
-    PERSIST.town.cardFragments+=cost.fragments; // refund
-    showTownToast('Not enough '+matKey+' (need '+matAmt+').'); return;
-  }
-  if(matAmt) PERSIST.town.materials[matKey]-=matAmt;
-  mods.cardTiers[cardId]=nextTier;
-  savePersist();
-  showTownToast(CARDS[cardId].name+' upgraded to '+nextTier.toUpperCase()+'!');
-  refreshSanctumPanel();
-}
-
-function sanctumBuyLevelFloor(champId, floor){
-  var costKey='floor_'+floor;
-  var cost=SANCTUM_COSTS[costKey];
-  if(PERSIST.gold<cost.gold){ showTownToast('Not enough gold (need '+cost.gold+'g).'); return; }
-  if(!spendFragments(cost.fragments)){ showTownToast('Not enough Card Fragments (need '+cost.fragments+').'); return; }
-  PERSIST.gold-=cost.gold;
-  PERSIST.sanctum.levelFloors[champId]=floor;
-  savePersist(); updateNavBar('town'); showTownToast('Level floor raised to '+floor+' for '+getCreaturePlayable(champId).name+'!'); refreshSanctumPanel();
-}
+// Round 67p: ~260 lines of fragment-cost Sanctum UI + action handlers
+// removed here. The functions targeted DOM that no longer exists
+// (#sanctum-edit-section, #sanctum-upgrades-list, #sanctum-training-list)
+// and depended on the SANCTUM_COSTS / spendFragments machinery that
+// was also retired. Removed functions:
+//   toggleCardEditRow, resetSanctumDeck, buildSanctumUpgradesPane,
+//   buildSanctumTrainingPane, sanctumRemoveCard, sanctumAddCard,
+//   sanctumSwapIn, sanctumAddCollected, sanctumShowSwapMenu,
+//   sanctumUpgradeCard, sanctumBuyLevelFloor
+// Card tier upgrades and per-champ level floors were never re-wired to
+// any post-fragment system. If those features come back they should be
+// rebuilt fresh against the current Sanctum/deck-builder architecture
+// rather than restored from this dead chassis.
 
 // ── MARKET (new tabbed system) ──
 var _marketTab = 'wares';
@@ -6124,12 +5937,11 @@ function showSpoilsOverlay(champId){
   var pool=buildSpoilsCardPool();
   _spoilsChampId=champId;
 
-  // Fragment reward — scales with area level
-  var areaLevel=gs&&gs.area?gs.area.level:1;
-  var fragReward=Math.round(10+areaLevel*4); // Lv1=14, Lv5=30, Lv10=50
-  PERSIST.town.cardFragments=(PERSIST.town.cardFragments||0)+fragReward;
-
   // Gem shard reward — small amount from area clears
+  // Round 67p: Card Fragments reward removed alongside the rest of
+  // the fragment system. The random Sanctum-pool card below is the
+  // remaining reward from this overlay.
+  var areaLevel=gs&&gs.area?gs.area.level:1;
   var shardReward=areaLevel>=3?Math.floor(areaLevel/3):0;
   if(shardReward>0) PERSIST.town.materials.gemShards=(PERSIST.town.materials.gemShards||0)+shardReward;
 
@@ -6138,18 +5950,12 @@ function showSpoilsOverlay(champId){
   // Build rewards display
   var rewardsRow=document.getElementById('spoils-rewards-row');
   if(rewardsRow){
-    rewardsRow.innerHTML=
+    rewardsRow.innerHTML = (shardReward>0?
       '<div style="background:rgba(0,0,0,.4);border:1px solid #4a3010;border-radius:8px;padding:12px 18px;min-width:90px;">'
-        +'<div style="font-size:28px;margin-bottom:4px;">🃏</div>'
-        +'<div style="font-size:16px;color:#d4a843;">+'+fragReward+'</div>'
-        +'<div style="font-size:8px;color:#7a6030;margin-top:2px;">Card Fragments</div>'
-      +'</div>'
-      +(shardReward>0?
-        '<div style="background:rgba(0,0,0,.4);border:1px solid #4a3010;border-radius:8px;padding:12px 18px;min-width:90px;">'
-          +'<div style="font-size:28px;margin-bottom:4px;">💎</div>'
-          +'<div style="font-size:16px;color:#d4a843;">+'+shardReward+'</div>'
-          +'<div style="font-size:8px;color:#7a6030;margin-top:2px;">Gem Shards</div>'
-        +'</div>':'');
+        +'<div style="font-size:28px;margin-bottom:4px;">💎</div>'
+        +'<div style="font-size:16px;color:#d4a843;">+'+shardReward+'</div>'
+        +'<div style="font-size:8px;color:#7a6030;margin-top:2px;">Gem Shards</div>'
+      +'</div>':'');
   }
 
   // Pick one card from the pool to add to Sanctum collection
@@ -6905,15 +6711,22 @@ function _refreshSummonsPoolGrid(){
 // ═══════════════════════════════════════════════════════
 
 var TUTORIALS = {
-  deck_builder_intro: {
-    title:'Deck Builder',
-    isNpc: false,
+  // Round 67p: Kaine's in-character intro for the deck editor, fired
+  // the first time the player opens it (regardless of quest state).
+  // Replaces the old `deck_builder_intro` and the retired
+  // fragment-cost copy. Kaine now teaches the full editor — UI, filter
+  // chips, STR/Dead Weight mechanic, ascension sharing, and the
+  // Sanctum's role — all in voice.
+  sanctum_deck_edit: {
+    title:'Kaine (Sanctum Keeper)',
+    isNpc: true,
     pages:[
-      {body:'<strong>Build your champion\'s deck from a unified card library.</strong> Cards in your deck appear on the left. The card library fills the centre. Click any card to inspect it on the right; click <span style="color:#7fc06a;">+</span> on a library card to add a copy, or <span style="color:#d05858;">−</span> on a deck row to remove one.', tip:null},
-      {body:'<strong>Filter the library</strong> with the <span style="color:#d4a843;">SOURCE</span> chips: <span style="color:#d4a843;">CHAMPION</span> shows your native cards, <span style="color:#d4a843;">UNIVERSAL</span> shows Strike / Brace / Dead Weight, <span style="color:#d4a843;">SHARED</span> shows cards borrowed from other Ruby+ ascended champions, <span style="color:#d4a843;">COLLECTION</span> shows anything else you\'ve unlocked. Empty categories are hidden.', tip:null},
-      {body:'The <span style="color:#d4a843;">TYPE</span> chips narrow by Attack / Defense / Utility. The <span style="color:#d4a843;">Search</span> box matches card names as you type. The <span style="color:#d4a843;">Sort</span> dropdown reorders by mana, name, source, or type. Filters are orthogonal: combine them freely.', tip:null},
-      {body:'<strong>Dead Weight</strong> (the orange-glowing rows) fills any deck slot you haven\'t assigned. Your deck size scales with STR; every unassigned slot becomes a Dead Weight. Mechanically: it is a [Sorcery] card that spends <span style="color:#5080c0;">all your current mana</span> to draw 1 card. If you have no mana, the Sorcery does not fire.', tip:null},
-      {body:'<strong>Ascension sharing:</strong> once a champion reaches Ruby tier or above, they can use cards from other Ruby+ champions via the <span style="color:#d4a843;">SHARED</span> filter. Borrowed cards display a gold "↗" badge and the inspector shows where they came from. Their effects fire normally; stat scaling uses the active champion\'s stats.', tip:null},
+      {body:'My lord. A moment, if you would spare it for one so small. I am Kaine, of the Sanctum. I felt your hand upon the deck and could not, in good conscience, leave you here alone with the work.', tip:null},
+      {body:'The deck rests to your left, my lord. The library waits in the centre. A card chosen on either side opens itself to the right, for your inspection. To add a copy from the library, the green <span style="color:#7fc06a;">+</span>. To strip one from the deck, the red <span style="color:#d05858;">−</span>. The work is quiet. There is no cost. Take and give as suits you.', tip:null},
+      {body:'For sifting the library, my lord, the chips above it. <span style="color:#d4a843;">SOURCE</span> divides cards by their origin. <span style="color:#d4a843;">CHAMPION</span> shows what is native to your champion. <span style="color:#d4a843;">UNIVERSAL</span>, the common cards every champion may hold: Strike, Brace, the Dead Weight. <span style="color:#d4a843;">SHARED</span> opens once your champion has ascended. <span style="color:#d4a843;">COLLECTION</span> shows what you have gathered from the field. The <span style="color:#d4a843;">TYPE</span> chips and the <span style="color:#d4a843;">Search</span> box narrow further. Combine them as you will.', tip:null},
+      {body:'Permit me to speak plainly of the bond. Your champion\'s <span style="color:#e88060;">STR</span> sets the size of the deck. One point, one slot. Strength swells, the cycle widens; strength fails, it narrows. Such is the bond between flesh and card, my lord.', tip:null},
+      {body:'Slots you do not fill yourself do not remain empty. The deck supplies its own, and we call them <strong>Dead Weight</strong>. The orange-glowing rows, my lord. A [Sorcery] card by nature. When drawn, it spends every drop of mana you carry for a single new card. Carry no mana when it arrives, and it falters. A quiet pause in the breath of your hand.', tip:null},
+      {body:'When the moment finds you, my lord, come and see me at the Sanctum. Ascension, the binding of relics, the records of every deck your champions have drawn. All of it rests beneath my care. Ascend, and the <span style="color:#d4a843;">SHARED</span> library opens, the work of other ascended champions made yours to borrow. I would not wish your champion to walk far without the full reach of what they may become. The path is short. I am patient.', tip:null},
     ]
   },
   // Round 67o: combat_intro removed — the scripted wolf-vs-goblin
@@ -7001,7 +6814,7 @@ var TUTORIALS = {
     title:"The Adventurer's Board",
     isNpc: true,
     pages:[
-      {body:'The Board offers quests with specific completion conditions. One quest may be active at a time. Quest progress is tracked across runs. Completing a quest awards its listed reward: gold, <span style="color:#d4a843;">🃏 Fragments</span>, <span style="color:#2980b9;">💎 Gem Shards</span>, or Materials. Incomplete quests can be abandoned; the slot refreshes on a timer.',
+      {body:'The Board offers quests with specific completion conditions. One quest may be active at a time. Quest progress is tracked across runs. Completing a quest awards its listed reward: gold, <span style="color:#9a7030;">Mastery XP</span>, <span style="color:#2980b9;">💎 Gem Shards</span>, or Materials. Incomplete quests can be abandoned; the slot refreshes on a timer.',
        tip:null},
     ]
   },
@@ -7040,16 +6853,12 @@ var TUTORIALS = {
        tip:null},
     ]
   },
-  sanctum_deck_edit: {
-    title:'Deck Editing',
-    isNpc: true,
-    pages:[
-      {body:'Click any card in the deck grid to open its edit panel. Available operations: <strong>Remove</strong> (-1 copy, 10 🃏), <strong>Add copy</strong> (+1 copy of an existing card, 25 🃏), <strong>Swap</strong> (replace a Strike or Brace with a champion card, 30 🃏). All operations spend <span style="color:#d4a843;">🃏 Card Fragments</span>.',
-       tip:null},
-      {body:'The <strong>Available Cards</strong> section shows champion-specific cards not yet in the deck (swappable in) and your <strong>Sanctum Collection</strong> — cards earned from runs. Collection cards cost 15 🃏 to add. <strong>Reset to Default</strong> wipes all modifications for this champion and is always free.',
-       tip:null},
-    ]
-  },
+  // Round 67p: the old `sanctum_deck_edit` entry that lived here
+  // described the retired Card-Fragment Sanctum (per-card costs, swap
+  // menus). Removed because (a) the new free-form deck builder doesn't
+  // charge for edits, and (b) this duplicate key was silently
+  // clobbering Kaine's NPC intro defined earlier in the same object
+  // literal (last-key-wins).
 };
 
 // Seen tutorials stored in PERSIST

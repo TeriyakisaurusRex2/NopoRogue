@@ -38,14 +38,14 @@ function openDeckEditor(champId){
   var ch = getCreaturePlayable(champId);
   var cp = getChampPersist(champId);
 
-  setCreatureImg(document.getElementById('de-portrait'), champId, ch.icon, '32px');
+  setCreatureImg(document.getElementById('de-portrait'), champId, ch.icon, '48px');
   document.getElementById('de-champ-name').textContent = ch.name;
   document.getElementById('de-champ-sub').textContent = 'Lv.' + cp.level + ' ' + getAscensionTierName(champId);
   document.getElementById('de-stat-row').innerHTML =
     '<span class="de-stat de-stat-str">'+Math.round(cp.stats.str)+' STR</span>'+
     '<span class="de-stat de-stat-agi">'+Math.round(cp.stats.agi)+' AGI</span>'+
     '<span class="de-stat de-stat-wis">'+Math.round(cp.stats.wis)+' WIS</span>';
-  document.getElementById('de-gold-row').innerHTML = goldImgHTML('12px')+' '+PERSIST.gold;
+  document.getElementById('de-gold-row').innerHTML = goldImgHTML('16px')+' '+PERSIST.gold;
   var deRelic = document.getElementById('de-relic-row');
   if(deRelic) deRelic.innerHTML = relicStripHTML(champId, {size:'22px'});
 
@@ -58,7 +58,11 @@ function openDeckEditor(champId){
   _deRender();
   showScreen('deck-edit-screen');
   showNav(false);
-  if(typeof showTutorial === 'function') showTutorial('deck_builder_intro');
+  // Round 67p: Kaine teaches the deck builder on first open, full
+  // stop. The old `deck_builder_intro` (dry, no NPC) was retired —
+  // Kaine now carries every page of the explanation in voice.
+  // PERSIST.seenTutorials ensures it fires once.
+  if(typeof showTutorial === 'function') showTutorial('sanctum_deck_edit');
 }
 
 function _deRender(){
@@ -519,7 +523,7 @@ function _deBuyUnlock(cardId, goldCost){
   savePersist();
   showTownToast('Unlocked '+CARDS[cardId].name+'!');
   _deRenderBrowser();
-  document.getElementById('de-gold-row').innerHTML = goldImgHTML('12px')+' '+PERSIST.gold;
+  document.getElementById('de-gold-row').innerHTML = goldImgHTML('16px')+' '+PERSIST.gold;
 }
 
 // ── Undo / Reset / Done / Save ──

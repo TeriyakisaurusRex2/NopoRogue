@@ -201,10 +201,15 @@ function refreshVaultPanel(){
     renderVaultUpgradesFooter();
     return;
   }
-  // Materials tab: restore default scrollable block layout
+  // Materials tab: default scrollable block layout. Reset display +
+  // flexDirection to inline defaults, but EXPLICITLY re-enable
+  // overflow-y so the auto-scroll engages. Setting overflowY = ''
+  // wipes the inline property and the cascade falls to `visible` —
+  // which is why the materials tab stopped scrolling after the
+  // inventory tab toggled it to `hidden`.
   inner.style.display = '';
   inner.style.flexDirection = '';
-  inner.style.overflowY = '';
+  inner.style.overflowY = 'auto';
 
   // ── MATERIALS TAB — Forge Ledger Layout ──
   var u=PERSIST.town.vaultUpgrades||{};

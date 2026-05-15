@@ -250,8 +250,12 @@ function _tutorialSkip(){
   if(ov) ov.classList.remove('show');
   _tutorial.active = false;
   PERSIST.tutorialComplete = true;
-  // Round 67l: story quest activation TABLED (see _tutorialFinishToChampSelect).
-  // _activateStoryQuest(STORY_QUESTS.pick_first_champion);
+  // Round 67p: the starter story chain kicks off regardless of whether
+  // the player did the combat tutorial or skipped it — skipping is a
+  // pacing preference, not a story opt-out.
+  if(typeof STORY_QUESTS !== 'undefined' && STORY_QUESTS.story_reach_lv2 && typeof _activateStoryQuest === 'function'){
+    _activateStoryQuest(STORY_QUESTS.story_reach_lv2);
+  }
   if(typeof savePersist === 'function') savePersist();
   // Continue into the normal champion-select flow.
   if(typeof showNav === 'function') showNav(true);
@@ -556,6 +560,12 @@ function _tutorialEnd(){
   if(ov) ov.classList.remove('show');
   if(_tutorial.fallbackT){ clearTimeout(_tutorial.fallbackT); _tutorial.fallbackT = null; }
   PERSIST.tutorialComplete = true;
+  // Round 67p: defensive fallback — also kick off the story chain
+  // here so the player can't end up tutorial-complete but without
+  // the starter quest active.
+  if(typeof STORY_QUESTS !== 'undefined' && STORY_QUESTS.story_reach_lv2 && typeof _activateStoryQuest === 'function'){
+    _activateStoryQuest(STORY_QUESTS.story_reach_lv2);
+  }
   if(typeof savePersist === 'function') savePersist();
   if(typeof showNav === 'function') showNav(true);
 }

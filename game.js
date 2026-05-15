@@ -618,7 +618,7 @@ var PERSIST={
     vaultUpgrades:{shelf1:false,shelf2:false,shelf3:false,sellDesk:false,recycle:false},
     vaultGenProgress:0,   // 0–100, fills toward producing an item
     vaultGenTarget:null,  // randomised target (seconds) for current fill cycle
-    cardFragments:0,
+    // Round 67p: cardFragments retired (no spending sink remained).
     marketOffers:[],
     buildingXp:{vault:0,forge:0,bestiary:0,shard_well:0,sanctum:0,market:0,adventurers_hall:0,arena:0},
     buildingLevel:{vault:1,forge:1,bestiary:1,shard_well:1,sanctum:1,market:1,adventurers_hall:1,arena:1},
@@ -2212,7 +2212,7 @@ function loadPersist(){
         if(p.town.buildingXp) PERSIST.town.buildingXp=Object.assign({vault:0,forge:0,shrine:0,bestiary:0,shard_well:0,sanctum:0,market:0,board:0},p.town.buildingXp);
         if(p.town.buildingLevel) PERSIST.town.buildingLevel=Object.assign({vault:1,forge:1,shrine:1,bestiary:1,shard_well:1,sanctum:1,market:1,board:1},p.town.buildingLevel);
         PERSIST.town.vaultUpgrades=Object.assign({shelf1:false,shelf2:false,shelf3:false,sellDesk:false,recycle:false},p.town.vaultUpgrades||{});
-        PERSIST.town.cardFragments=p.town.cardFragments||0;
+        // Round 67p: cardFragments retired — no longer loaded from disk.
         PERSIST.town.vaultGenProgress=p.town.vaultGenProgress||0;
         PERSIST.town.vaultGenTarget=p.town.vaultGenTarget||null;
         PERSIST.town.marketOffers=p.town.marketOffers||[];
