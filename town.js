@@ -1776,6 +1776,15 @@ function _csqEsc(s){
   return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+// Round 67q: which quest is selected in the detail panel. null until
+// first render; renderer auto-picks the first quest if unset.
+var _questSelectedId = null;
+
+function selectQuest(questId){
+  _questSelectedId = questId;
+  _renderHallContent();
+}
+
 function _renderQuestsTab(){
   var quests = PERSIST.town.quests || {offered:[], active:[], completed:[]};
   // Migrate old format
@@ -1796,10 +1805,6 @@ function _renderQuestsTab(){
     quests.offered.forEach(function(q, i){
       if(!q || !q.id) return;
       if(seenIds[q.id]){
-        // Collision. If this offered entry IS the active one, leave its
-        // id and re-stamp the earlier dupe via a second pass below. In
-        // practice _generateBounties only adds NEW offers (not active
-        // ones) so the simpler path is: re-stamp this dupe.
         if(!activeIdSet[q.id]){
           q.id = 'quest_' + Date.now() + '_' + i + '_' + Math.random().toString(36).slice(2,8);
           changed = true;
@@ -1810,9 +1815,9 @@ function _renderQuestsTab(){
     if(changed && typeof savePersist === 'function') savePersist();
   }
 
-  var target = getQuestOfferedCount();
+  var targetCount = getQuestOfferedCount();
   if(!quests.offered || quests.offered.length === 0){
-    quests.offered = _generateBounties(target);
+    quests.offered = _generateBounties(targetCount);
     PERSIST.town.quests = quests;
     savePersist();
   }
@@ -1820,80 +1825,192 @@ function _renderQuestsTab(){
   var maxActive = getMaxActiveQuests();
   var activeIds = quests.active.map(function(a){ return a.id; });
 
-  // Refresh timer
+  // If no quest is selected (or the selected one has been claimed/
+  // removed), pick the first one in the offered list so the detail
+  // panel never renders empty when quests exist.
+  if(!_questSelectedId || !quests.offered.some(function(q){ return q.id === _questSelectedId; })){
+    _questSelectedId = quests.offered.length ? quests.offered[0].id : null;
+  }
+
+  // Refresh timer (compact header).
   var refreshEta = Math.max(0, Math.ceil(QUEST_REFRESH_SECS - (quests.refreshProgress||0)));
   var rh = Math.floor(refreshEta/3600); var rm = Math.floor((refreshEta%3600)/60);
 
-  var html = '<div style="display:flex;justify-content:space-between;align-items:center;padding:0 4px 8px;">'
-    +'<span style="font-size:8px;color:#5a4020;">TRACKING: '+quests.active.length+' / '+maxActive+'</span>'
-    +'<span style="font-size:7px;color:#4a3010;">NEW QUESTS: '+(rh>0?rh+'h ':'')+rm+'m</span>'
-    +'</div>';
+  // Header strip — tracking + refresh ETA.
+  var html =
+      '<div class="hall-quest-header">'
+    +   '<span class="hall-quest-tracking">TRACKING: '+quests.active.length+' / '+maxActive+'</span>'
+    +   '<span class="hall-quest-refresh">NEW QUESTS: '+(rh>0?rh+'h ':'')+rm+'m</span>'
+    + '</div>';
 
-  html += '<div class="hall-quest-grid">';
+  // Two-column layout: list on the left, contact detail on the right.
+  html += '<div class="hall-quest-layout">';
 
+  // ── LEFT: scrollable list of quest rows ──────────────────────────
+  html += '<div class="hall-quest-list">';
   quests.offered.forEach(function(q, idx){
-    var isActive = activeIds.indexOf(q.id) !== -1;
+    var isActive   = activeIds.indexOf(q.id) !== -1;
     var activeEntry = isActive ? quests.active.find(function(a){ return a.id === q.id; }) : null;
-    var progress = activeEntry ? activeEntry.progress : 0;
-    var isComplete = isActive && progress >= q.target;
-    var pct = Math.min(100, Math.round((progress / q.target) * 100));
+    var progress   = activeEntry ? activeEntry.progress : 0;
+    var isComplete = isActive && progress >= (q.target || 1);
+    var isSelected = (_questSelectedId === q.id);
+    var info = getQuestIssuerInfo(q.issuer);
 
-    var cls = 'hall-quest-card' + (isComplete ? ' complete' : isActive ? ' active' : '');
-    html += '<div class="' + cls + '">';
+    var rowCls = 'hall-quest-row'
+      + (isSelected ? ' selected' : '')
+      + (isComplete ? ' complete' : isActive ? ' active' : '');
 
-    if(isComplete) html += '<div class="hall-quest-stamp complete-stamp">COMPLETE</div>';
-    else if(isActive) html += '<div class="hall-quest-stamp active-stamp">ACTIVE</div>';
+    var statusBadge = isComplete
+      ? '<span class="hall-quest-row-status complete">CLAIM</span>'
+      : isActive
+        ? '<span class="hall-quest-row-status active">ACTIVE</span>'
+        : '';
 
-    html += '<div class="hall-quest-title">' + q.title + '</div>';
-    html += '<div class="hall-quest-issuer">issued by ' + (q.issuer || 'Leona') + '</div>';
-    html += '<div class="hall-quest-desc">' + q.desc + '</div>';
-    // Round 67o: explicit OBJECTIVE line so players see the actionable
-    // ask without parsing flavour text. Renders the same verb/noun
-    // phrasing used in the active-quests rail (Defeat N Goblin, Clear
-    // The Sewers, Apply Burn N times, etc).
-    html += '<div class="hall-quest-objective">Objective: ' + _questActionHtml(q) + '</div>';
+    // Tiny portrait inline with the row — 32px (clean 1/3 of 96px native).
+    var portraitHtml = info.sprite
+      ? '<div class="hall-quest-row-portrait"><img src="assets/creatures/'+info.sprite+'.png" onerror="this.outerHTML=\'<div class=hall-quest-row-portrait-emoji>📜</div>\'"></div>'
+      : '<div class="hall-quest-row-portrait hall-quest-row-portrait-mystery">?</div>';
 
-    html += '<div class="hall-quest-difficulty">';
-    for(var d = 0; d < 5; d++) html += '<div class="hall-quest-dot' + (d < q.difficulty ? '' : ' empty') + '"></div>';
-    html += '</div>';
-
-    if(isActive || isComplete){
-      html += '<div class="hall-quest-progress"><div class="hall-quest-progress-fill' + (isComplete ? ' complete' : '') + '" style="width:' + pct + '%"></div></div>';
-      html += '<div class="hall-quest-progress-txt">' + progress + ' / ' + q.target + '</div>';
-    }
-
-    html += '<div class="hall-quest-rewards">';
-    (q.rewards || []).forEach(function(r){
-      html += '<div class="hall-reward-chip">' + (r.icon || goldImgHTML('10px')) + ' ' + r.amount + ' ' + (r.label || r.type) + '</div>';
-    });
-    html += '</div>';
-
-    if(isComplete){
-      html += '<button class="hall-quest-btn claim" data-action="claim" data-questid="'+q.id+'">CLAIM REWARD</button>';
-    } else if(isActive){
-      html += '<button class="hall-quest-btn" data-action="abandon" data-questid="'+q.id+'" style="border-color:#5a3020;color:#8a5030;">ABANDON</button>';
-    } else if(quests.active.length < maxActive){
-      html += '<button class="hall-quest-btn" data-action="accept" data-questidx="' + idx + '">ACCEPT</button>';
-    } else {
-      html += '<div style="font-size:8px;color:#6a5030;text-align:center;padding:4px;">Quest slots full</div>';
-    }
-
-    html += '</div>';
+    html +=
+        '<div class="'+rowCls+'" onclick="selectQuest(\''+q.id+'\')">'
+      +   portraitHtml
+      +   '<div class="hall-quest-row-body">'
+      +     '<div class="hall-quest-row-title">'+q.title+'</div>'
+      +     '<div class="hall-quest-row-issuer">'+(q.issuer || 'Leona')+'</div>'
+      +   '</div>'
+      +   statusBadge
+      + '</div>';
   });
 
-  // Show vacant slots for missing quests (waiting for refresh)
-  var target = getQuestOfferedCount();
-  var vacant = target - quests.offered.length;
+  // Vacant rows for missing slots.
+  var vacant = targetCount - quests.offered.length;
   for(var v = 0; v < vacant; v++){
-    html += '<div class="hall-quest-card vacant">'
-      +'<div style="text-align:center;padding:20px 10px;">'
-      +'<div style="font-size:20px;opacity:.2;margin-bottom:8px;">📋</div>'
-      +'<div style="font-size:8px;color:#3a2810;letter-spacing:1px;">VACANT</div>'
-      +'<div style="font-size:7px;color:#2a1808;margin-top:4px;">New quest arrives at refresh</div>'
-      +'</div></div>';
+    html +=
+        '<div class="hall-quest-row vacant">'
+      +   '<div class="hall-quest-row-portrait hall-quest-row-portrait-vacant">📋</div>'
+      +   '<div class="hall-quest-row-body">'
+      +     '<div class="hall-quest-row-title vacant-title">VACANT</div>'
+      +     '<div class="hall-quest-row-issuer">Awaiting refresh</div>'
+      +   '</div>'
+      + '</div>';
+  }
+  html += '</div>'; // /hall-quest-list
+
+  // ── RIGHT: contact-detail card for the selected quest ───────────
+  html += '<div class="hall-quest-detail">';
+  html += _renderQuestDetailCard(_questSelectedId, quests, activeIds, maxActive);
+  html += '</div>';
+
+  html += '</div>'; // /hall-quest-layout
+  return html;
+}
+
+// Detail card for the right-hand pane. Pure function of (questId, quests state).
+function _renderQuestDetailCard(questId, quests, activeIds, maxActive){
+  var q = (quests.offered || []).find(function(o){ return o.id === questId; });
+  if(!q){
+    return '<div class="hall-quest-detail-empty">No quest selected.</div>';
+  }
+  var info = getQuestIssuerInfo(q.issuer);
+  var isActive = activeIds.indexOf(q.id) !== -1;
+  var activeEntry = isActive ? quests.active.find(function(a){ return a.id === q.id; }) : null;
+  var progress   = activeEntry ? activeEntry.progress : 0;
+  var target     = q.target || 1;
+  var isComplete = isActive && progress >= target;
+  var pct        = Math.min(100, Math.round((progress / target) * 100));
+
+  // Portrait — 96px clean. Mystery silhouette when sprite is null.
+  var portrait = info.sprite
+    ? '<img src="assets/creatures/'+info.sprite+'.png" class="hall-quest-detail-portrait-img" onerror="this.parentNode.classList.add(\'mystery\');this.outerHTML=\'?\'">'
+    : '?';
+  var portraitCls = 'hall-quest-detail-portrait' + (info.sprite ? '' : ' mystery');
+
+  var html = '';
+
+  // Issuer band — portrait + name + title + faction.
+  html +=
+      '<div class="hall-quest-detail-issuer-band">'
+    +   '<div class="'+portraitCls+'">'+portrait+'</div>'
+    +   '<div class="hall-quest-detail-issuer-meta">'
+    +     '<div class="hall-quest-detail-issuer-label">QUEST GIVER</div>'
+    +     '<div class="hall-quest-detail-issuer-name">'+(q.issuer || 'Leona')+'</div>'
+    +     '<div class="hall-quest-detail-issuer-title">'+info.title+'</div>'
+    +     (info.faction ? '<div class="hall-quest-detail-issuer-faction">'+info.faction+'</div>' : '')
+    +   '</div>'
+    + '</div>';
+
+  // Stamp (active / complete).
+  if(isComplete) html += '<div class="hall-quest-detail-stamp complete-stamp">COMPLETE</div>';
+  else if(isActive) html += '<div class="hall-quest-detail-stamp active-stamp">ACTIVE</div>';
+
+  // Title + flavour desc.
+  html += '<div class="hall-quest-detail-title">'+q.title+'</div>';
+  html += '<div class="hall-quest-detail-desc">'+q.desc+'</div>';
+
+  // Objective line — the parsed verb/noun action.
+  html += '<div class="hall-quest-detail-section">'
+       +    '<div class="hall-quest-detail-section-lbl">OBJECTIVE</div>'
+       +    '<div class="hall-quest-detail-objective">'+_questActionHtml(q)+'</div>'
+       +  '</div>';
+
+  // Difficulty dots (skip for story quests — they don't have one).
+  if(q.difficulty != null && !q.isStory){
+    var dots = '';
+    for(var d = 0; d < 5; d++){
+      dots += '<div class="hall-quest-dot'+(d < q.difficulty ? '' : ' empty')+'"></div>';
+    }
+    html += '<div class="hall-quest-detail-section">'
+         +    '<div class="hall-quest-detail-section-lbl">DIFFICULTY</div>'
+         +    '<div class="hall-quest-detail-difficulty">'+dots+'</div>'
+         +  '</div>';
   }
 
-  html += '</div>';
+  // Progress bar — only when active.
+  if(isActive){
+    html += '<div class="hall-quest-detail-section">'
+         +    '<div class="hall-quest-detail-section-lbl">PROGRESS</div>'
+         +    '<div class="hall-quest-detail-progress"><div class="hall-quest-detail-progress-fill'+(isComplete?' complete':'')+'" style="width:'+pct+'%"></div></div>'
+         +    '<div class="hall-quest-detail-progress-txt">'+progress+' / '+target+'</div>'
+         +  '</div>';
+  }
+
+  // Rewards.
+  var rewardsHtml = '';
+  (q.rewards || []).forEach(function(r){
+    rewardsHtml += '<div class="hall-reward-chip">'+(r.icon || goldImgHTML('12px'))+' '+r.amount+' '+(r.label || r.type)+'</div>';
+  });
+  if(rewardsHtml){
+    html += '<div class="hall-quest-detail-section">'
+         +    '<div class="hall-quest-detail-section-lbl">REWARDS</div>'
+         +    '<div class="hall-quest-detail-rewards">'+rewardsHtml+'</div>'
+         +  '</div>';
+  }
+
+  // Time limit — placeholder, currently only present if q.timeLimit is set
+  // on the quest object. No quests use this yet, but the slot is wired
+  // so future timed quests render the band without further plumbing.
+  if(q.timeLimit){
+    html += '<div class="hall-quest-detail-section">'
+         +    '<div class="hall-quest-detail-section-lbl">TIME LIMIT</div>'
+         +    '<div class="hall-quest-detail-timelimit">'+q.timeLimit+'</div>'
+         +  '</div>';
+  }
+
+  // Action button.
+  var btn = '';
+  if(isComplete){
+    btn = '<button class="hall-quest-btn claim" data-action="claim" data-questid="'+q.id+'">CLAIM REWARD</button>';
+  } else if(isActive){
+    btn = '<button class="hall-quest-btn" data-action="abandon" data-questid="'+q.id+'" style="border-color:#5a3020;color:#8a5030;">ABANDON</button>';
+  } else if(quests.active.length < maxActive){
+    // Use the offered-list index so acceptQuest(idx) still works.
+    var idx = (quests.offered || []).findIndex(function(o){ return o.id === q.id; });
+    btn = '<button class="hall-quest-btn" data-action="accept" data-questidx="'+idx+'">ACCEPT QUEST</button>';
+  } else {
+    btn = '<div class="hall-quest-detail-slotsfull">Quest slots full</div>';
+  }
+  html += '<div class="hall-quest-detail-action">'+btn+'</div>';
+
   return html;
 }
 
@@ -2328,7 +2445,12 @@ function _generateBounties(count){
     // match every offered card once one was accepted, so the whole grid
     // visually read as ACTIVE. The random suffix breaks the tie.
     var uid = 'quest_' + Date.now() + '_' + i + '_' + Math.random().toString(36).slice(2,8);
-    bounties.push({id:uid, title:t.title, desc:t.desc, type:t.type, areaId:t.areaId, enemyId:t.enemyId, target:t.target, difficulty:t.difficulty, rewards:t.rewards, issuer:'Leona'});
+    // Round 67q: respect the template's issuer field (was hard-coded
+    // 'Leona' for everything, which silently overrode the Town Guard /
+    // Scholar / Merchant Caravan / Bounty Office variety baked into
+    // the templates). Default to Leona only when the template doesn't
+    // specify.
+    bounties.push({id:uid, title:t.title, desc:t.desc, type:t.type, areaId:t.areaId, enemyId:t.enemyId, target:t.target, difficulty:t.difficulty, rewards:t.rewards, issuer:(t.issuer || 'Leona')});
   }
   return bounties;
 }
@@ -2347,6 +2469,71 @@ function getQuestOfferedCount(){
 }
 
 var QUEST_REFRESH_SECS = 14400; // 4 hours
+
+// Round 67q: quest issuer registry. Each issuer key (a string used on
+// quest definitions, e.g. q.issuer = 'Leona') resolves to a portrait
+// sprite + title + faction shown in the new contact-detail view in
+// the Hall.
+// Adding a new issuer: drop an entry here. If a quest's issuer isn't
+// in this map, getQuestIssuerInfo returns a sensible fallback (the
+// raw string as the title, no sprite). The '???' issuer renders as
+// a mysterious silhouette — used for early story quests where the
+// player hasn't met the NPC yet.
+var QUEST_ISSUERS = {
+  'Leona':            { sprite:'guild_girl',      title:'Guild Receptionist',    faction:"Adventurer's Hall" },
+  'Town Guard':       { sprite:'_temple_guardian',title:'Captain of the Guard',  faction:'Town Garrison' },
+  'Merchant Caravan': { sprite:'merchant',        title:'Caravan Master',        faction:'Merchant Guild' },
+  'Bounty Office':    { sprite:'bandit',          title:'Bounty Clerk',          faction:'Bounty Office' },
+  'Scholar':          { sprite:'_NPC1',           title:'Scholar',               faction:'Independent' },
+  'Bestiary Scholar': { sprite:'hoot_archivist',  title:'Archivist',             faction:'The Bestiary' },
+  'Alchemist':        { sprite:'_NPC2',           title:'Alchemist',             faction:'Independent' },
+  // Story-quest NPCs.
+  'Kaine':            { sprite:'sanctum_keeper',  title:'Sanctum Keeper',        faction:'The Sanctum' },
+  "M'bur":            { sprite:'forge_keeper',    title:'Blacksmith',            faction:'The Forge' },
+  'Shtole':           { sprite:'vault_keeper',    title:'Vault Keeper',          faction:'The Vault' },
+  'Theo':             { sprite:'arena_keeper',    title:'Arena Master',          faction:'The Arena' },
+  'Hoot':             { sprite:'hoot_archivist',  title:'Archivist',             faction:'The Bestiary' },
+  // Unknown issuer — sprite is null so the renderer paints a silhouette.
+  '???':              { sprite:null,              title:'???',                   faction:'Unknown' },
+};
+
+function getQuestIssuerInfo(name){
+  var key = name || 'Leona';
+  var info = QUEST_ISSUERS[key];
+  if(info) return info;
+  // Fallback: unknown issuer name. Render the string as the title with
+  // no portrait and a blank faction.
+  return { sprite:null, title:key, faction:'' };
+}
+
+// Round 67q: is a specific quest currently active? Used by UI code
+// that wants to highlight the target element (e.g. the EDIT DECK
+// button pulses while story_edit_deck is in the active list). Story
+// quests live in PERSIST.town.quests.active as [{id, progress}].
+function isQuestActive(questId){
+  if(!questId || !PERSIST.town || !PERSIST.town.quests) return false;
+  var active = PERSIST.town.quests.active;
+  if(!Array.isArray(active)) return false;
+  for(var i = 0; i < active.length; i++){
+    if(active[i] && active[i].id === questId) return true;
+  }
+  return false;
+}
+
+// Round 67q: is a quest active AND still pending (progress < target)?
+// Used by UI nudges that should turn OFF once the player has fulfilled
+// the goal — e.g. the EDIT DECK button stops pulsing after the deck
+// edit is saved (the quest is then complete-and-claimable, not still
+// asking the player to act).
+function isQuestPending(questId){
+  if(!isQuestActive(questId)) return false;
+  var quests = PERSIST.town.quests;
+  var entry = (quests.active || []).find(function(a){ return a.id === questId; });
+  if(!entry) return false;
+  var def = (quests.offered || []).find(function(o){ return o.id === questId; });
+  var target = (def && def.target) || 1;
+  return (entry.progress || 0) < target;
+}
 
 // Advance progress on any active quest matching the given event. Called from
 // combat at three points in game.js:
@@ -6717,9 +6904,22 @@ var TUTORIALS = {
   // fragment-cost copy. Kaine now teaches the full editor — UI, filter
   // chips, STR/Dead Weight mechanic, ascension sharing, and the
   // Sanctum's role — all in voice.
-  sanctum_deck_edit: {
+  //
+  // Round 67q: id renamed from `sanctum_deck_edit` → `sanctum_kaine_deck_intro`
+  // so it can't inherit the seen-flag from the retired fragment-cost
+  // tutorial that used the same key. PERSIST.seenTutorials[old id]
+  // may still be `true` on existing saves; the new id has a clean
+  // slate. Sprite/pitch still auto-derive via the `sanctum_` prefix
+  // (renderer walks parts left-to-right looking for a BUILDINGS match).
+  sanctum_kaine_deck_intro: {
     title:'Kaine (Sanctum Keeper)',
     isNpc: true,
+    // Round 67q: story-quest tutorials bypass the global tutorial
+    // toggle. SETTINGS.tutorial is for "stop showing me UI tips" —
+    // it should not silence named NPCs delivering narrative
+    // exposition. PERSIST.seenTutorials still applies, so Kaine
+    // only appears once per save regardless.
+    isStory: true,
     pages:[
       {body:'My lord. A moment, if you would spare it for one so small. I am Kaine, of the Sanctum. I felt your hand upon the deck and could not, in good conscience, leave you here alone with the work.', tip:null},
       {body:'The deck rests to your left, my lord. The library waits in the centre. A card chosen on either side opens itself to the right, for your inspection. To add a copy from the library, the green <span style="color:#7fc06a;">+</span>. To strip one from the deck, the red <span style="color:#d05858;">−</span>. The work is quiet. There is no cost. Take and give as suits you.', tip:null},
@@ -6867,15 +7067,18 @@ var _tutCurrent=null;
 var _tutPage=0;
 
 function showTutorial(id){
-  if(!SETTINGS.tutorial) return;
-  // Round 66: suppress per-system tutorials while the scripted
-  // wolf-vs-goblin combat tutorial is running — the mysterious
-  // figure handles ALL teaching during that flow, and stacking
-  // a second tutorial on top would be chaos.
+  var tut = TUTORIALS[id];
+  if(!tut) return;
+  // Round 67q: story-flagged tutorials bypass the global tutorial
+  // toggle — named NPC moments deliver narrative exposition and
+  // shouldn't be silenced by "Dismiss All Tutorials". seenTutorials
+  // still gates them so they only fire once per save.
+  if(!tut.isStory && !SETTINGS.tutorial) return;
+  // Suppress per-system tutorials while the scripted combat tutorial
+  // is running — the mysterious figure handles ALL teaching during
+  // that flow, and stacking a second tutorial on top would be chaos.
   if(typeof isTutorialActive === 'function' && isTutorialActive()) return;
-  if(!TUTORIALS[id]) return;
   if(PERSIST.seenTutorials[id]) return; // already seen
-  // Queue it if one is already showing
   if(_tutCurrent){
     if(_tutQueue.indexOf(id)===-1) _tutQueue.push(id);
     return;

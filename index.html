@@ -1255,6 +1255,7 @@
     <div class="settings-tab-row">
       <button class="settings-tab active" id="stab-audio"    onclick="switchSettingsTab('audio')">AUDIO</button>
       <button class="settings-tab"        id="stab-gameplay" onclick="switchSettingsTab('gameplay')">GAMEPLAY</button>
+      <button class="settings-tab"        id="stab-controls" onclick="switchSettingsTab('controls')">CONTROLS</button>
     </div>
 
     <!-- Tab bodies -->
@@ -1304,6 +1305,19 @@
         <div class="setting-row">
           <div class="setting-lbl">Tutorial Tips<small>Show guidance for new systems</small></div>
           <label class="toggle"><input type="checkbox" id="s-tutorial" checked onchange="applySetting('tutorial',this.checked)"><div class="toggle-track"></div><div class="toggle-thumb"></div></label>
+        </div>
+      </div>
+
+      <!-- CONTROLS — Round 67q. Combat hotkey remapping. Nav/menu
+           bindings deferred (see Noporogue Additional/_CONTROLS_TODO.txt).
+           Rows are rendered by buildControlsPane(); REBIND button on
+           each row enters capture mode and the next keydown becomes
+           the new binding. -->
+      <div class="settings-pane" id="spane-controls" style="display:none;">
+        <div class="controls-hint">Click a key to rebind. Press Esc while rebinding to cancel.</div>
+        <div id="controls-rows"></div>
+        <div class="controls-footer">
+          <button class="controls-reset-btn" onclick="resetHotkeysToDefaults()">RESET TO DEFAULTS</button>
         </div>
       </div>
 

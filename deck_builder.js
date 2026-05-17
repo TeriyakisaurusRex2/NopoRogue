@@ -13,6 +13,17 @@ var _deTab     = 'champion';                // legacy — kept for any external 
 var _deInspect = null;
 var _deReturnScreen = 'area-screen';
 var MAX_CARD_COPIES = 5;
+// Round 67q: the canonical list of universal card ids. Drives BOTH:
+//   - the no-copy-cap rule (universals are uncapped so high-STR
+//     champions can always fill their deck without depending on
+//     ascension / shared cards)
+//   - the deck-builder library's UNIVERSAL filter (which cards appear
+//     under that source chip)
+// Add new universal cards here AND define them in data/cards.js. Any
+// id that doesn't have a CARDS entry is silently skipped by the
+// library populator, so phantom ids are harmless.
+var UNIVERSAL_CARD_IDS = ['strike','brace','focus','filler','quickstep'];
+function isUncappedCardId(id){ return UNIVERSAL_CARD_IDS.indexOf(id) !== -1; }
 // Library view state
 var _deSearch       = '';                   // free-text filter on card name
 var _deSourceFilter = 'all';                // 'all'|'champion'|'universal'|'shared'|'collection'
@@ -61,8 +72,9 @@ function openDeckEditor(champId){
   // Round 67p: Kaine teaches the deck builder on first open, full
   // stop. The old `deck_builder_intro` (dry, no NPC) was retired —
   // Kaine now carries every page of the explanation in voice.
-  // PERSIST.seenTutorials ensures it fires once.
-  if(typeof showTutorial === 'function') showTutorial('sanctum_deck_edit');
+  // PERSIST.seenTutorials ensures it fires once. Story flag bypasses
+  // the global tutorial toggle (Round 67q).
+  if(typeof showTutorial === 'function') showTutorial('sanctum_kaine_deck_intro');
 }
 
 function _deRender(){
@@ -101,7 +113,7 @@ function _deRenderDeckList(){
     var isInsp = _deInspect && _deInspect.id === g.id;
     var isFiller = g.id === 'filler';
     var sc = statColors[cd.stat] || '#c0a060';
-    var atMaxCopies = !isFiller && g.count >= MAX_CARD_COPIES;
+    var atMaxCopies = !isUncappedCardId(g.id) && g.count >= MAX_CARD_COPIES;
 
     var rowCls = 'de-drow'+(isInsp?' selected':'')+(isFiller?' de-drow-filler':'');
     // Filler rows: only show − (the +-equivalent for filler is "add another empty
@@ -175,7 +187,9 @@ function _deBuildLibrary(){
   // 2. Universal cards (always available). Note: 'filler' is the card id;
   // its display name is 'Dead Weight'. Earlier code referenced 'dead_weight'
   // which doesn't exist as a CARDS key — silently dropped from the pool.
-  ['strike','brace','focus','filler'].forEach(function(id){
+  // Round 67q: single source of truth — UNIVERSAL_CARD_IDS at the top
+  // of this file. Add new universal cards there (and to data/cards.js).
+  UNIVERSAL_CARD_IDS.forEach(function(id){
     if(CARDS[id]) add(id, 'universal', null, false, false);
   });
 
@@ -320,7 +334,7 @@ function _deRenderGrid(){
   sorted.forEach(function(item){
     var cardId = item.cardId;
     var card = CARDS[cardId]; if(!card) return;
-    var atMax = (deckCounts[cardId]||0) >= MAX_CARD_COPIES;
+    var atMax = !isUncappedCardId(cardId) && (deckCounts[cardId]||0) >= MAX_CARD_COPIES;
     var inDeck = deckCounts[cardId] || 0;
     var buyGold = 50;
     var effLine = (card.effect||'').split('\n')[0];
@@ -436,8 +450,11 @@ function _deAddCard(cardId){
   var cap = calcDeckCap(cp.stats.str);
   var counts = {};
   _deDeck.forEach(function(id){ counts[id]=(counts[id]||0)+1; });
-  // Filler doesn't have a copy cap — every empty slot becomes one.
-  if(cardId !== 'filler' && (counts[cardId]||0) >= MAX_CARD_COPIES){
+  // Universal cards (Strike, Brace, Focus, filler) have no copy cap so
+  // high-STR champions can always fill their deck without depending on
+  // ascension / shared cards. Champion-specific and collection cards
+  // are still capped at MAX_CARD_COPIES.
+  if(!isUncappedCardId(cardId) && (counts[cardId]||0) >= MAX_CARD_COPIES){
     showTownToast('Max '+MAX_CARD_COPIES+' copies'); return;
   }
   _deHistory.push(_deDeck.slice());

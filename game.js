@@ -304,10 +304,117 @@ function gemImgHTML(tier, size){
 // to a player landing on the main menu for the first time. Stored
 // settings (cetd_settings localStorage) override these for returning
 // players, so existing volumes are preserved.
-var SETTINGS = { music:20, sfx:20, logd:'normal', confirm:false, tutorial:true };
+var SETTINGS = { music:20, sfx:20, logd:'normal', confirm:false, tutorial:true, hotkeys:{} };
 var pendingConfirmIdx = -1;
 var _muteStash = { music:70, sfx:85 };
 var _settingsTab = 'audio';
+
+// ═══════════════════════════════════════════════════════
+// HOTKEY SYSTEM (Round 67q)
+// ═══════════════════════════════════════════════════════
+// DEFAULT_HOTKEYS is the canonical "out of the box" mapping. The live
+// map HOTKEYS is merged from DEFAULTS + any user overrides loaded from
+// SETTINGS.hotkeys (which is persisted to cetd_settings). Combat-only
+// for now — nav/menu bindings stay hardcoded until the next pass.
+//
+// Action ids use dot-namespacing (combat.X). The keydown listener
+// checks bindings via _hkMatches(action, event). Letters compare
+// case-insensitively so caps-lock doesn't break play.
+//
+// Stored key strings match the values produced by KeyboardEvent.key:
+//   ' '         → Space
+//   'Enter'     → Enter
+//   'ArrowLeft' → ←
+//   'p'         → P
+// _hkKeyLabel(k) renders these for display.
+
+var DEFAULT_HOTKEYS = {
+  'combat.pause':      'p',
+  'combat.deckView':   'd',
+  'combat.innate':     ' ',
+  'combat.selectPrev': 'ArrowLeft',
+  'combat.selectNext': 'ArrowRight',
+  'combat.confirm':    'Enter',
+  'combat.playCard1':  '1',
+  'combat.playCard2':  '2',
+  'combat.playCard3':  '3',
+  'combat.playCard4':  '4',
+  'combat.playCard5':  '5',
+  'combat.playCard6':  '6',
+  'combat.playCard7':  '7',
+};
+
+// Human-readable labels for the Controls tab. Keep ordering — the rows
+// render in this order.
+var HOTKEY_ACTIONS = [
+  { id:'combat.pause',      label:'Pause / Resume',      group:'Combat' },
+  { id:'combat.deckView',   label:'Open Deck View',      group:'Combat' },
+  { id:'combat.innate',     label:'Activate Innate',     group:'Combat' },
+  { id:'combat.selectPrev', label:'Select Previous Card',group:'Combat' },
+  { id:'combat.selectNext', label:'Select Next Card',    group:'Combat' },
+  { id:'combat.confirm',    label:'Play Selected Card',  group:'Combat' },
+  { id:'combat.playCard1',  label:'Play Card Slot 1',    group:'Combat' },
+  { id:'combat.playCard2',  label:'Play Card Slot 2',    group:'Combat' },
+  { id:'combat.playCard3',  label:'Play Card Slot 3',    group:'Combat' },
+  { id:'combat.playCard4',  label:'Play Card Slot 4',    group:'Combat' },
+  { id:'combat.playCard5',  label:'Play Card Slot 5',    group:'Combat' },
+  { id:'combat.playCard6',  label:'Play Card Slot 6',    group:'Combat' },
+  { id:'combat.playCard7',  label:'Play Card Slot 7',    group:'Combat' },
+];
+
+var HOTKEYS = Object.assign({}, DEFAULT_HOTKEYS);
+
+// Repopulate HOTKEYS from DEFAULTS + SETTINGS.hotkeys overrides. Called
+// after settings load and after every rebind so the live map stays
+// current without needing a reload.
+function _hkRebuild(){
+  HOTKEYS = Object.assign({}, DEFAULT_HOTKEYS);
+  if(SETTINGS.hotkeys && typeof SETTINGS.hotkeys === 'object'){
+    Object.keys(SETTINGS.hotkeys).forEach(function(action){
+      if(DEFAULT_HOTKEYS.hasOwnProperty(action)){
+        HOTKEYS[action] = SETTINGS.hotkeys[action];
+      }
+    });
+  }
+}
+
+// Compare a KeyboardEvent against the binding for an action.
+// Letters compare case-insensitively (so shift / caps-lock are fine).
+// Non-letter keys (Enter, ArrowLeft, ' ', '1'-'9') compare exactly.
+function _hkMatches(action, e){
+  var bind = HOTKEYS[action];
+  if(!bind) return false;
+  if(bind.length === 1 && /[a-z]/i.test(bind)){
+    return (e.key || '').toLowerCase() === bind.toLowerCase();
+  }
+  return e.key === bind;
+}
+
+// Human-readable label for a stored key. Empty / missing → "Unbound".
+function _hkKeyLabel(k){
+  if(!k && k !== '') return 'Unbound';
+  if(k === ' ')          return 'Space';
+  if(k === 'ArrowLeft')  return '←';
+  if(k === 'ArrowRight') return '→';
+  if(k === 'ArrowUp')    return '↑';
+  if(k === 'ArrowDown')  return '↓';
+  if(k === 'Enter')      return 'Enter';
+  if(k === 'Backspace')  return 'Backspace';
+  if(k === 'Escape')     return 'Esc';
+  if(k === 'Tab')        return 'Tab';
+  if(k.length === 1)     return k.toUpperCase();
+  return k;
+}
+
+// Which action (if any) currently uses this key? Returns the action id
+// or null. Used by the rebind flow to detect collisions.
+function _hkFindAction(key){
+  var keys = Object.keys(HOTKEYS);
+  for(var i = 0; i < keys.length; i++){
+    if(HOTKEYS[keys[i]] === key) return keys[i];
+  }
+  return null;
+}
 
 function openSettings(){
   playUiSettingsSfx();
@@ -327,12 +434,13 @@ function closeSettings(){
 // Round 62l: tab switcher for the settings panel. Stashes the active
 // tab in _settingsTab so re-opening returns you to the same tab.
 function switchSettingsTab(tab){
-  // Round 65: 'save' removed — only audio + gameplay remain.
-  // Defensive: if a stale localStorage / module value still says
-  // 'save', fall back to 'audio'.
-  if(tab !== 'audio' && tab !== 'gameplay') tab = 'audio';
+  // Round 65: 'save' removed.
+  // Round 67q: 'controls' added.
+  // Defensive: if a stale localStorage / module value names an
+  // unknown tab, fall back to 'audio'.
+  if(tab !== 'audio' && tab !== 'gameplay' && tab !== 'controls') tab = 'audio';
   _settingsTab = tab;
-  ['audio','gameplay'].forEach(function(t){
+  ['audio','gameplay','controls'].forEach(function(t){
     var btn  = document.getElementById('stab-'+t);
     var pane = document.getElementById('spane-'+t);
     if(btn)  btn.classList.toggle('active', t===tab);
@@ -341,6 +449,83 @@ function switchSettingsTab(tab){
   // The "Now Playing" line is only on the AUDIO tab — refresh when we
   // land there so a re-open mid-track-change shows the right name.
   if(tab === 'audio') refreshNowPlaying();
+  // Build the controls pane on demand so it reflects current bindings.
+  if(tab === 'controls') buildControlsPane();
+}
+
+// ═══════════════════════════════════════════════════════
+// CONTROLS PANE — render + rebind capture (Round 67q)
+// ═══════════════════════════════════════════════════════
+// State during a rebind: which action we're listening for. null when
+// not capturing. Set by clicking a key chip; cleared on next keydown
+// or by clicking the chip a second time / pressing Esc.
+var _hkRebindingAction = null;
+
+function buildControlsPane(){
+  var host = document.getElementById('controls-rows');
+  if(!host) return;
+  // Group rows by category — currently only "Combat".
+  var groups = {};
+  HOTKEY_ACTIONS.forEach(function(a){
+    if(!groups[a.group]) groups[a.group] = [];
+    groups[a.group].push(a);
+  });
+  var html = '';
+  Object.keys(groups).forEach(function(g){
+    html += '<div class="controls-group-hdr">' + g + '</div>';
+    groups[g].forEach(function(a){
+      var bound = HOTKEYS[a.id];
+      var isOverride = bound !== DEFAULT_HOTKEYS[a.id];
+      var isCapturing = (_hkRebindingAction === a.id);
+      var chipCls = 'controls-key-chip'
+        + (isCapturing ? ' capturing' : '')
+        + (isOverride && !isCapturing ? ' overridden' : '');
+      var chipText = isCapturing ? 'Press a key…' : _hkKeyLabel(bound);
+      html +=
+          '<div class="controls-row" data-action="' + a.id + '">'
+        +   '<div class="controls-row-lbl">' + a.label + '</div>'
+        +   '<button class="' + chipCls + '" data-action="' + a.id + '" onclick="beginHotkeyRebind(this.dataset.action)">' + chipText + '</button>'
+        + '</div>';
+    });
+  });
+  host.innerHTML = html;
+}
+
+// Enter rebind mode for a given action. Second click cancels back to
+// the existing binding (no change). Only one rebind can be active at
+// a time — starting a new one cancels any prior capture.
+function beginHotkeyRebind(actionId){
+  if(_hkRebindingAction === actionId){
+    _hkRebindingAction = null;
+    buildControlsPane();
+    return;
+  }
+  _hkRebindingAction = actionId;
+  buildControlsPane();
+}
+
+// Apply a captured key to the action currently being rebound. Handles
+// conflict resolution: if another action already holds this key, the
+// existing binding is cleared (set to '' = Unbound). The user can
+// then assign that orphan action to a fresh key.
+function _hkApplyRebind(action, key){
+  var existing = _hkFindAction(key);
+  if(existing && existing !== action){
+    SETTINGS.hotkeys[existing] = ''; // mark as Unbound
+  }
+  SETTINGS.hotkeys[action] = key;
+  _hkRebuild();
+  try{ localStorage.setItem('cetd_settings', JSON.stringify(SETTINGS)); }catch(e){}
+  _hkRebindingAction = null;
+  buildControlsPane();
+}
+
+function resetHotkeysToDefaults(){
+  SETTINGS.hotkeys = {};
+  _hkRebuild();
+  try{ localStorage.setItem('cetd_settings', JSON.stringify(SETTINGS)); }catch(e){}
+  _hkRebindingAction = null;
+  buildControlsPane();
 }
 
 // Round 62l: mute / unmute a slider (music or sfx). Stores the prior
@@ -524,6 +709,10 @@ function loadSettings(){
     // Round 67p: removed setFontTheme('press') + setTextSize(9). The
     // pixel font is now the body default in CSS — no class-level
     // override needed.
+    // Round 67q: hotkey overrides. _hkRebuild merges DEFAULTS with
+    // SETTINGS.hotkeys to refresh the live HOTKEYS map after load.
+    if(s.hotkeys && typeof s.hotkeys === 'object') SETTINGS.hotkeys = s.hotkeys;
+    if(typeof _hkRebuild === 'function') _hkRebuild();
   }catch(e){}
 }
 
@@ -655,7 +844,13 @@ var PERSIST={
 // deep-clone a fresh defaults state into PERSIST when minting a new
 // slot. Captured here (immediately after the literal) so nothing has
 // mutated it yet. _resetPersistToDefaults() reads from this.
-_PERSIST_DEFAULTS_SNAPSHOT = JSON.parse(JSON.stringify(PERSIST));
+//
+// Round 67q: the redundant `var _PERSIST_DEFAULTS_SNAPSHOT = null;`
+// further down (formerly line ~1266) was overwriting this capture
+// back to null at module-load time, which silently disabled the
+// town-state reset inside _resetPersistToDefaults. Declaration is
+// hoisted up here now and the duplicate has been deleted.
+var _PERSIST_DEFAULTS_SNAPSHOT = JSON.parse(JSON.stringify(PERSIST));
 
 function champPersistDefault(champId){
   var ch=CREATURES[champId];
@@ -1234,36 +1429,37 @@ function createNewSave(name){
 
 // Wipe PERSIST in-memory back to the original defaults declared above.
 // Used by createNewSave and after deleting the active save.
+//
+// Round 67q rewrite: previously this hand-picked ~10 fields to reset
+// and tried (but silently failed, see snapshot comment up top) to
+// reset PERSIST.town from the snapshot. Fields not on the hand-pick
+// list — quests state, seenTutorials, activeRun, unlockedRelicRecipes,
+// sanctum, gems, etc. — leaked from save to save when the player hit
+// "New Save" from the main menu. The reproducer: prior save was
+// mid-chain on "Find Your Stride: reach level 3"; making a new save
+// inherited the same quest.
+//
+// New behaviour: drop every existing key off PERSIST and repopulate
+// from a fresh deep-clone of the original-literal snapshot. Object
+// identity is preserved (we mutate in place) so all the long-standing
+// references to PERSIST elsewhere stay valid. Any field added to the
+// PERSIST literal in the future is automatically covered — no
+// hand-picking needed.
 function _resetPersistToDefaults(){
-  PERSIST.unlockedChamps = ['druid','paladin','thief'];
-  PERSIST.favoriteChamps = {};
-  PERSIST.lastUsedChamp = null;
-  PERSIST.tutorialComplete = false;
-  PERSIST.champStorySeen = {};
-  PERSIST.seenEnemies = [];
-  PERSIST.gold = 50;
-  PERSIST.metaCurrency = 0;
-  PERSIST.achievements = {};
-  PERSIST.champions = {};
-  PERSIST.soulShards = 0;
+  if(!_PERSIST_DEFAULTS_SNAPSHOT){
+    console.warn('[reset] PERSIST defaults snapshot missing — cannot fully reset.');
+    return;
+  }
+  // Strip every existing key.
+  Object.keys(PERSIST).forEach(function(k){ delete PERSIST[k]; });
+  // Repopulate from a fresh deep-clone so subsequent edits don't
+  // mutate the snapshot itself.
+  var fresh = JSON.parse(JSON.stringify(_PERSIST_DEFAULTS_SNAPSHOT));
+  Object.keys(fresh).forEach(function(k){ PERSIST[k] = fresh[k]; });
+  // Runtime-stamped fields that don't live in the literal.
   PERSIST.lastSeen = Date.now();
   PERSIST.playerName = '';
-  // Deep-reset town to its initial-state literal. The cleanest way is to
-  // restore PERSIST.town from a fresh snapshot — but the original
-  // literal lives inline in the PERSIST declaration. We rely on
-  // loadPersist's path of starting from in-memory defaults + overlay,
-  // so here we restore the town defaults by cloning the original
-  // structure. For now, the simplest correct thing is to rebuild town
-  // by reading what loadPersist would set when given null. We achieve
-  // that by parsing the freshly-stringified PERSIST shape captured at
-  // module load.
-  if(_PERSIST_DEFAULTS_SNAPSHOT){
-    PERSIST.town = JSON.parse(JSON.stringify(_PERSIST_DEFAULTS_SNAPSHOT.town));
-  }
 }
-// Snapshot the original PERSIST.town shape on script load so new
-// saves can deep-clone it back as a fresh default.
-var _PERSIST_DEFAULTS_SNAPSHOT = null;
 
 // Delete a save. If it's the active one, clears active. Returns true
 // on success.
@@ -3326,6 +3522,13 @@ function buildCsChampRail(id, idPrefix, railId){
       selectedChampId = id;
       if(typeof openChampSanctum === 'function') openChampSanctum();
     };
+    // Round 67q: pulse the EDIT DECK button while the story_edit_deck
+    // quest is pending (active AND progress < target). The pulse is a
+    // "find this button" nudge — it turns off the moment the player
+    // saves a deck change (which advances the quest to claimable).
+    // From there the rail's own claim-row pulse takes over.
+    var nudgeDeck = (typeof isQuestPending === 'function') && isQuestPending('story_edit_deck');
+    editBtn.classList.toggle('quest-target-pulse', nudgeDeck);
   }
 }
 
@@ -7359,6 +7562,22 @@ function _kbSelectArea(dir, cols){
 document.addEventListener('keydown',function(e){
   if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA'||e.target.tagName==='SELECT') return;
 
+  // Round 67q: hotkey capture mode. If the Controls pane is listening
+  // for a rebind, the next keydown becomes the new binding (unless
+  // it's Escape, which cancels). Intercepts BEFORE screen routing so
+  // the captured key doesn't trigger its old action mid-rebind.
+  if(_hkRebindingAction){
+    e.preventDefault();
+    e.stopPropagation();
+    if(e.key === 'Escape'){
+      _hkRebindingAction = null;
+      buildControlsPane();
+      return;
+    }
+    _hkApplyRebind(_hkRebindingAction, e.key);
+    return;
+  }
+
   var screen=_kbActiveScreen();
   var modal=_kbIsModalOpen();
 
@@ -7456,52 +7675,59 @@ document.addEventListener('keydown',function(e){
   if(screen==='game-screen'){
     _kbShowHints(true);
 
-    // P = pause/resume
-    if(e.key==='p'||e.key==='P'){ togglePause(); return; }
+    // Round 67q: combat bindings now read from HOTKEYS (DEFAULT_HOTKEYS
+    // + user overrides). _hkMatches handles letter case + special keys.
 
-    // D = deck view
-    if((e.key==='d'||e.key==='D')&&gs&&gs.running){ e.preventDefault(); showDeckView(); return; }
+    if(_hkMatches('combat.pause', e)){ togglePause(); return; }
 
-    // 1–7 = play card at position
-    var num=parseInt(e.key);
-    if(!isNaN(num)&&num>=1&&num<=7){
-      if(gs&&gs.running&&!paused){
-        var idx=num-1;
-        if(SETTINGS.confirm){
-          if(_kbCardIdx===idx){ _kbSelectCard(-1); playCard(idx); }
-          else { _kbSelectCard(idx); }
-        } else {
-          _kbSelectCard(-1);
-          playCard(idx);
+    if(_hkMatches('combat.deckView', e) && gs && gs.running){
+      e.preventDefault(); showDeckView(); return;
+    }
+
+    // Play-card slots 1-7. Check each binding so users can remap which
+    // physical key plays slot N (e.g. QWERTY layout to Q W E R T Y U).
+    for(var slot = 1; slot <= 7; slot++){
+      if(_hkMatches('combat.playCard' + slot, e)){
+        if(gs && gs.running && !paused){
+          var idx = slot - 1;
+          if(SETTINGS.confirm){
+            if(_kbCardIdx === idx){ _kbSelectCard(-1); playCard(idx); }
+            else { _kbSelectCard(idx); }
+          } else {
+            _kbSelectCard(-1);
+            playCard(idx);
+          }
         }
+        return;
+      }
+    }
+
+    // Cycle card selection. If the same physical key is bound to both
+    // selectPrev and selectNext (silly but allowed), prev wins.
+    var prev = _hkMatches('combat.selectPrev', e);
+    var next = _hkMatches('combat.selectNext', e);
+    if(prev || next){
+      e.preventDefault();
+      if(!gs || !gs.running || paused) return;
+      var len = gs.hand.length; if(!len) return;
+      var dir = prev ? -1 : 1;
+      var target = _kbCardIdx < 0 ? 0 : (_kbCardIdx + dir + len) % len;
+      _kbSelectCard(target);
+      return;
+    }
+
+    if(_hkMatches('combat.confirm', e)){
+      e.preventDefault();
+      if(!gs || !gs.running || paused) return;
+      if(_kbCardIdx >= 0 && _kbCardIdx < gs.hand.length){
+        var ci = _kbCardIdx; _kbSelectCard(-1); playCard(ci);
       }
       return;
     }
 
-    // Arrow left/right = cycle card selection
-    if(e.key==='ArrowLeft'||e.key==='ArrowRight'){
+    if(_hkMatches('combat.innate', e)){
       e.preventDefault();
-      if(!gs||!gs.running||paused) return;
-      var len=gs.hand.length; if(!len) return;
-      var next=_kbCardIdx<0?0:(_kbCardIdx+(e.key==='ArrowRight'?1:-1)+len)%len;
-      _kbSelectCard(next);
-      return;
-    }
-
-    // Enter = play selected card
-    if(e.key==='Enter'){
-      e.preventDefault();
-      if(!gs||!gs.running||paused) return;
-      if(_kbCardIdx>=0&&_kbCardIdx<gs.hand.length){
-        var ci=_kbCardIdx; _kbSelectCard(-1); playCard(ci);
-      }
-      return;
-    }
-
-    // Space = innate ability
-    if(e.key===' '){
-      e.preventDefault();
-      if(gs&&gs.running&&!paused) activateInnate();
+      if(gs && gs.running && !paused) activateInnate();
       return;
     }
   }

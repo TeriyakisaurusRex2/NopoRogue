@@ -822,7 +822,11 @@ var STORY_QUESTS = {
     target:         1,
     isStory:        true,
     rewards:        [{type:'gold', icon:'✦', amount:100, label:'Gold'}],
-    issuer:         '???',
+    // Round 67q: M'bur asks the player to come to the Forge for this
+    // one — they're crafting at his anvil. The "???" issuer is reserved
+    // for the early reach-level quests where the player hasn't met the
+    // story NPCs yet.
+    issuer:         "M'bur",
     next:           'story_equip_safety_net',
   },
 
@@ -835,7 +839,9 @@ var STORY_QUESTS = {
     target:         1,
     isStory:        true,
     rewards:        [{type:'gold', icon:'✦', amount:100, label:'Gold'}],
-    issuer:         '???',
+    // Round 67q: Kaine — closing the loop on his deck-builder
+    // invitation. Player visits the Sanctum, Kaine slots the relic.
+    issuer:         'Kaine',
     next:           null,
   },
 };

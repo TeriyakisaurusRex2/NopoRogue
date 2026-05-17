@@ -88,9 +88,20 @@ document.addEventListener('mouseout',function(e){
 
 var CARDS = {
   // ── Universal basics ──
+  // Strike / Brace are in every champion's starting deck via deckOrder.
+  // Dead Weight pads unfilled deck slots automatically. Cards below
+  // these three are universal but NOT in starting decks — players add
+  // them via the deck editor's UNIVERSAL filter. Add new universals
+  // here AND to UNIVERSAL_CARD_IDS in deck_builder.js.
   strike:      {id:'strike',      name:'Strike',        icon:'⚔️', type:'attack',  unique:false, champ:null,    statId:null,  effect:'Deal 18 damage.', effects:[{type:'dmg_conditional',base:18,hits:1}]},
   brace:       {id:'brace',       name:'Brace',         icon:'🛡', type:'defense', unique:false, champ:null,    statId:null,  effect:'Gain 20 [Shield] for 5s.', effects:[{type:'apply_status',status:'shield',target:'self',value:20,dur:5}]},
   filler:      {id:'filler',      name:'Dead Weight',   icon:'🪨', type:'utility', unique:false, champ:null,    statId:null,  effect:'[Sorcery] (all mana): Draw 1.', effects:[{type:'sorcery',cost:'all',effect:{type:'draw_cards',count:1}}]},
+  // Round 67q: first non-starter universal. Simple [Haste] applicator —
+  // a sliver of draw-speed for one breath. Tuned in the same ballpark
+  // as champion haste effects (0.15-0.30 for 2-4s) but without the
+  // damage / sorcery riders those carry, since this is a pure utility
+  // card players can slot into any deck.
+  quickstep:   {id:'quickstep',   name:'Quickstep',     icon:'💨', type:'utility', unique:false, champ:null,    statId:null,  effect:'Gain [Haste] 20% for 4s.', effects:[{type:'apply_status',status:'haste',target:'self',value:0.20,dur:4}]},
 
   // ── Starcaller Druid ──
   druid_void_bolt: {id:'druid_void_bolt', name:'Void Bolt', icon:'🔵', type:'attack', unique:true, champ:'druid', statId:'wis',

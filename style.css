@@ -186,8 +186,17 @@ button, input, select, textarea{font-family:inherit;}
 .cs-q-row.cs-q-row-story .cs-q-bar-fill{background:linear-gradient(90deg,#5a4018,#c09030,#f0a53a);}
 .cs-q-star{color:#f0a53a;text-shadow:0 0 6px rgba(240,165,58,.6);margin-right:4px;}
 /* Round 67p: rail-side CLAIM button so early-game story quests are
-   claimable without entering town. */
-.cs-q-row-complete{box-shadow:0 0 12px rgba(154,220,126,.18);}
+   claimable without entering town.
+   Round 67q: complete rows pulse a green glow so the player notices
+   there's a reward waiting on the side rail. Sibling rule on the
+   CLAIM button itself adds a matching pulse so the action is doubly
+   obvious. */
+@keyframes questClaimPulse {
+  0%,100% { box-shadow: 0 0 10px rgba(154,220,126,.25); }
+  50%     { box-shadow: 0 0 22px rgba(154,220,126,.65); }
+}
+.cs-q-row-complete{box-shadow:0 0 12px rgba(154,220,126,.18);animation:questClaimPulse 1.4s ease-in-out infinite;}
+.cs-q-row-complete .cs-q-claim{animation:questClaimPulse 1.4s ease-in-out infinite;}
 /* Round 67p: claim-out — bar drains via its existing transition, then
    the whole row collapses to 0 height + fades. Driven by the
    .cs-q-claiming class added by claimQuestFromRail after the drain. */
@@ -1891,6 +1900,17 @@ button, input, select, textarea{font-family:inherit;}
 .ach-card.claimable{border-color:#d4a843;animation:claimPulse 1.5s ease-in-out infinite;}
 @keyframes claimPulse{0%,100%{box-shadow:0 0 6px rgba(212,168,67,.15);}50%{box-shadow:0 0 14px rgba(212,168,67,.4);}}
 
+/* Round 67q: generic "this is the next thing to click" pulse — toggled
+   onto any element when a quest is asking the player to interact with
+   it (e.g. EDIT DECK button while story_edit_deck is active). Brighter
+   and chunkier than claimPulse so it reads as a tutorial nudge rather
+   than a passive idle state. JS adds/removes via classList.toggle. */
+@keyframes questTargetPulse {
+  0%,100% { box-shadow: 0 0 8px rgba(212,168,67,.35), 0 0 0 1px rgba(212,168,67,.4); }
+  50%     { box-shadow: 0 0 22px rgba(240,200,90,.85), 0 0 0 2px rgba(240,200,90,.75); }
+}
+.quest-target-pulse { animation: questTargetPulse 1.4s ease-in-out infinite; }
+
 /* Tutorial overlay */
 .tutorial-overlay{display:none;position:fixed;inset:0;z-index:999;background:rgba(4,2,0,.85);align-items:center;justify-content:center;}
 .tutorial-overlay.show{display:flex;}
@@ -2167,6 +2187,21 @@ button, input, select, textarea{font-family:inherit;}
 .settings-body{flex:1;overflow-y:auto;padding:14px 20px;scrollbar-width:thin;scrollbar-color:#2a1808 transparent;}
 .settings-pane{display:flex;flex-direction:column;gap:10px;}
 
+/* Round 67q: Controls tab — rebindable hotkey rows. */
+.controls-hint{font-size:9px;color:#7a6030;font-style:italic;padding:0 0 8px;line-height:1.4;}
+.controls-group-hdr{font-size:9px;letter-spacing:2.5px;color:#9a7030;padding:8px 0 4px;border-bottom:1px solid #2a1808;margin-bottom:6px;}
+.controls-group-hdr:first-child{padding-top:0;}
+.controls-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:5px 0;}
+.controls-row-lbl{font-size:10px;color:#c0a060;flex:1;line-height:1.4;}
+.controls-key-chip{font-family:inherit;font-size:10px;letter-spacing:1px;padding:6px 12px;min-width:78px;text-align:center;border:1px solid #5a3a18;border-radius:4px;background:#1a0e04;color:#c0a060;cursor:pointer;transition:all .15s;}
+.controls-key-chip:hover{border-color:#c09030;color:#d4a843;background:rgba(40,24,8,.6);}
+.controls-key-chip.overridden{border-color:#a07840;color:#d4a843;background:rgba(60,36,10,.5);}
+.controls-key-chip.capturing{border-color:#9adc7e;color:#9adc7e;background:rgba(20,40,10,.6);animation:controlsCapturePulse 1s ease-in-out infinite;}
+@keyframes controlsCapturePulse{0%,100%{box-shadow:0 0 4px rgba(154,220,126,.3);}50%{box-shadow:0 0 12px rgba(154,220,126,.7);}}
+.controls-footer{margin-top:14px;padding-top:10px;border-top:1px solid #2a1808;display:flex;justify-content:flex-end;}
+.controls-reset-btn{font-family:inherit;font-size:9px;letter-spacing:1.5px;padding:7px 14px;border:1px solid #5a3818;border-radius:4px;background:rgba(20,10,2,.6);color:#a07840;cursor:pointer;transition:all .15s;}
+.controls-reset-btn:hover{border-color:#c09030;color:#d4a843;background:rgba(40,20,5,.7);}
+
 /* Row + control primitives. Same names as before so existing JS works. */
 .setting-row{display:flex;align-items:center;justify-content:space-between;gap:12px;}
 .setting-lbl{font-size:10px;color:#c0a060;flex:1;line-height:1.4;}
@@ -2261,29 +2296,97 @@ button, input, select, textarea{font-family:inherit;}
 /* (Earlier .vault-tab boxed-style block removed — was overridden by the
    underline-style definition further down. The underline rule wins via
    cascade and is the actual visual used by Vault/Hall tabs.) */
-/* Quest cards */
-.hall-quest-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;padding:16px;}
-.hall-quest-card{background:linear-gradient(170deg,#e8d7a8,#d4c090);border:1px solid #a89373;border-radius:6px;padding:18px 22px;position:relative;transition:transform .15s,box-shadow .15s;color:#2a1a08;}
-.hall-quest-card:hover{transform:translateY(-2px);box-shadow:0 4px 16px rgba(0,0,0,.3);}
-.hall-quest-card.active{border-color:#d4a843;box-shadow:0 0 12px rgba(212,168,67,.2);}
-.hall-quest-card.complete{border-color:#7fc06a;box-shadow:0 0 16px rgba(127,192,106,.25);}
-.hall-quest-title{font-size:16px;color:#2a1a08;letter-spacing:1px;margin-bottom:5px;}
-.hall-quest-issuer{font-size:11px;color:#6a5030;font-style:italic;margin-bottom:8px;}
-.hall-quest-desc{font-size:12px;color:#4a3820;line-height:1.55;margin-bottom:10px;}
-.hall-quest-objective{font-size:12px;color:#2a1a08;background:rgba(212,168,67,.18);border:1px solid #c09030;border-radius:3px;padding:7px 12px;margin-bottom:10px;letter-spacing:.5px;}
-.hall-quest-objective a{color:#2a1a08;text-decoration:underline;}
-.hall-quest-progress{height:8px;background:#a89373;border-radius:3px;overflow:hidden;margin-bottom:7px;}
-.hall-quest-progress-fill{height:100%;background:linear-gradient(90deg,#c09030,#d4a843);border-radius:3px;transition:width .5s;}
-.hall-quest-progress-fill.complete{background:linear-gradient(90deg,#5a9a40,#7fc06a);}
-.hall-quest-progress-txt{font-size:11px;color:#6a5030;margin-bottom:8px;}
-.hall-quest-rewards{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:10px;}
-.hall-reward-chip{font-size:10px;padding:4px 10px;border-radius:3px;background:rgba(42,26,8,.15);border:1px solid #a89373;color:#4a3820;white-space:nowrap;}
-.hall-quest-btn{font-size:12px;padding:9px 18px;border-radius:4px;border:1px solid #a89373;background:linear-gradient(170deg,#2a1a08,#1a0e04);color:#d4a843;cursor:pointer;letter-spacing:1px;transition:all .15s;width:100%;}
-.hall-quest-btn:hover{border-color:#d4a843;}
+/* ── Quest tab — split layout (Round 67q) ──
+   Left column: scrollable list of quest rows (compact portrait +
+   title + issuer + status badge). Right column: contact-detail card
+   for the selected quest — issuer portrait, title, desc, objective,
+   difficulty, progress, rewards, action button. */
+.hall-quest-header{display:flex;justify-content:space-between;align-items:center;padding:10px 16px 8px;flex-shrink:0;}
+.hall-quest-tracking{font-size:11px;color:#9a7030;letter-spacing:1.5px;}
+.hall-quest-refresh{font-size:10px;color:#5a4020;letter-spacing:1px;}
+.hall-quest-layout{display:flex;gap:16px;padding:8px 16px 16px;flex:1;min-height:0;}
+
+/* LEFT — quest list */
+.hall-quest-list{width:340px;flex-shrink:0;display:flex;flex-direction:column;gap:6px;overflow-y:auto;padding-right:6px;scrollbar-width:thin;scrollbar-color:#5a3a18 transparent;}
+.hall-quest-list::-webkit-scrollbar{width:6px;}
+.hall-quest-list::-webkit-scrollbar-track{background:transparent;}
+.hall-quest-list::-webkit-scrollbar-thumb{background:#3a2010;border-radius:3px;}
+.hall-quest-list::-webkit-scrollbar-thumb:hover{background:#5a3a18;}
+
+.hall-quest-row{display:flex;align-items:center;gap:10px;padding:10px 12px;background:rgba(10,5,1,.55);border:1px solid #2a1808;border-radius:5px;cursor:pointer;transition:border-color .15s,background .15s,transform .12s;}
+.hall-quest-row:hover{border-color:#5a3a18;background:rgba(20,10,2,.7);}
+.hall-quest-row.selected{border-color:#c09030;background:rgba(40,24,8,.55);box-shadow:0 0 8px rgba(212,168,67,.18);}
+.hall-quest-row.active{border-left:3px solid #d4a843;padding-left:9px;}
+.hall-quest-row.complete{border-left:3px solid #7fc06a;padding-left:9px;}
+.hall-quest-row.vacant{opacity:.5;cursor:default;border-style:dashed;}
+.hall-quest-row.vacant:hover{border-color:#2a1808;background:rgba(10,5,1,.55);}
+
+.hall-quest-row-portrait{width:40px;height:40px;flex-shrink:0;background:radial-gradient(ellipse at center,rgba(40,24,8,.5) 0%,rgba(8,4,2,.8) 80%);border:1px solid #3a2010;border-radius:4px;display:flex;align-items:center;justify-content:center;overflow:hidden;}
+.hall-quest-row-portrait img{width:32px;height:32px;image-rendering:pixelated;object-fit:contain;}
+.hall-quest-row-portrait-emoji{font-size:20px;line-height:1;}
+.hall-quest-row-portrait-mystery{font-size:22px;color:#c09030;font-weight:bold;text-shadow:0 0 8px rgba(212,168,67,.4);}
+.hall-quest-row-portrait-vacant{font-size:18px;opacity:.5;}
+
+.hall-quest-row-body{flex:1;min-width:0;}
+.hall-quest-row-title{font-size:12px;color:#d4a843;letter-spacing:.4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.hall-quest-row-title.vacant-title{color:#5a4020;}
+.hall-quest-row-issuer{font-size:9px;color:#7a6030;font-style:italic;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.hall-quest-row-status{font-size:8px;letter-spacing:1.2px;padding:3px 7px;border:1px solid;border-radius:3px;flex-shrink:0;}
+.hall-quest-row-status.active{color:#d4a843;border-color:#5a3a18;}
+.hall-quest-row-status.complete{color:#7fc06a;border-color:#3a5a18;background:rgba(20,40,10,.4);animation:claimPulse 1.5s ease-in-out infinite;}
+
+/* RIGHT — contact detail card */
+.hall-quest-detail{flex:1;min-width:0;display:flex;flex-direction:column;gap:12px;padding:14px 18px;background:rgba(10,5,1,.45);border:1px solid #2a1808;border-radius:6px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#5a3a18 transparent;position:relative;}
+.hall-quest-detail::-webkit-scrollbar{width:6px;}
+.hall-quest-detail::-webkit-scrollbar-track{background:transparent;}
+.hall-quest-detail::-webkit-scrollbar-thumb{background:#3a2010;border-radius:3px;}
+.hall-quest-detail-empty{flex:1;display:flex;align-items:center;justify-content:center;color:#5a4020;font-style:italic;font-size:11px;letter-spacing:1px;}
+
+/* Issuer band — portrait left, meta right */
+.hall-quest-detail-issuer-band{display:flex;gap:14px;align-items:center;padding:12px;background:linear-gradient(180deg,rgba(60,36,12,.35),rgba(20,12,4,.2));border:1px solid #3a2010;border-radius:5px;}
+.hall-quest-detail-portrait{width:96px;height:96px;flex-shrink:0;background:radial-gradient(ellipse at center,rgba(40,24,8,.5) 0%,rgba(8,4,2,.85) 70%);border:1px solid #5a3a18;border-radius:6px;display:flex;align-items:center;justify-content:center;overflow:hidden;}
+.hall-quest-detail-portrait-img{width:96px;height:96px;image-rendering:pixelated;object-fit:contain;filter:drop-shadow(0 2px 4px rgba(0,0,0,.5));}
+.hall-quest-detail-portrait.mystery{font-size:54px;color:#c09030;font-weight:bold;text-shadow:0 0 16px rgba(212,168,67,.5);background:radial-gradient(ellipse at center,rgba(60,36,12,.4) 0%,rgba(0,0,0,.9) 75%);}
+.hall-quest-detail-issuer-meta{flex:1;min-width:0;}
+.hall-quest-detail-issuer-label{font-size:9px;color:#7a6030;letter-spacing:2px;}
+.hall-quest-detail-issuer-name{font-size:18px;color:#d4a843;letter-spacing:.5px;margin-top:3px;}
+.hall-quest-detail-issuer-title{font-size:11px;color:#a08858;font-style:italic;margin-top:3px;}
+.hall-quest-detail-issuer-faction{font-size:10px;color:#6a5030;letter-spacing:1px;margin-top:5px;}
+
+/* Stamp — active / complete badge floating top-right of the card */
+.hall-quest-detail-stamp{position:absolute;top:14px;right:18px;font-size:11px;letter-spacing:2px;padding:4px 10px;border:2px solid;border-radius:4px;transform:rotate(7deg);z-index:2;}
+.hall-quest-detail-stamp.active-stamp{color:#d4a843;border-color:#d4a843;background:rgba(40,24,8,.6);}
+.hall-quest-detail-stamp.complete-stamp{color:#7fc06a;border-color:#7fc06a;background:rgba(20,40,10,.5);}
+
+/* Title + desc */
+.hall-quest-detail-title{font-size:18px;color:#d4a843;letter-spacing:.8px;margin-top:4px;}
+.hall-quest-detail-desc{font-size:12px;color:#a08858;line-height:1.6;font-style:italic;}
+
+/* Sections — label + body */
+.hall-quest-detail-section{padding:8px 0;border-top:1px dashed #2a1808;}
+.hall-quest-detail-section:first-of-type{border-top:none;padding-top:4px;}
+.hall-quest-detail-section-lbl{font-size:9px;color:#7a6030;letter-spacing:2px;margin-bottom:5px;}
+.hall-quest-detail-objective{font-size:12px;color:#d4a843;background:rgba(60,36,12,.3);border:1px solid #5a3a18;border-radius:4px;padding:8px 12px;letter-spacing:.3px;}
+.hall-quest-detail-objective a{color:#d4a843;text-decoration:underline;}
+.hall-quest-detail-difficulty{display:flex;gap:5px;}
+.hall-quest-dot{width:11px;height:11px;border-radius:50%;background:#c09030;border:1px solid #5a3a18;}
+.hall-quest-dot.empty{background:#1a0e04;}
+.hall-quest-detail-progress{height:8px;background:#1a0e04;border:1px solid #3a2010;border-radius:3px;overflow:hidden;}
+.hall-quest-detail-progress-fill{height:100%;background:linear-gradient(90deg,#c09030,#d4a843);border-radius:3px;transition:width .5s;}
+.hall-quest-detail-progress-fill.complete{background:linear-gradient(90deg,#5a9a40,#7fc06a);box-shadow:0 0 8px rgba(127,192,106,.5);}
+.hall-quest-detail-progress-txt{font-size:10px;color:#9a7030;margin-top:4px;text-align:right;}
+.hall-quest-detail-rewards{display:flex;gap:7px;flex-wrap:wrap;}
+.hall-reward-chip{font-size:11px;padding:5px 12px;border-radius:3px;background:rgba(20,12,4,.7);border:1px solid #5a3a18;color:#c0a060;white-space:nowrap;}
+.hall-quest-detail-timelimit{font-size:11px;color:#e07040;letter-spacing:.5px;padding:6px 10px;background:rgba(60,20,8,.4);border:1px solid #7a3010;border-radius:3px;}
+
+/* Action footer */
+.hall-quest-detail-action{margin-top:auto;padding-top:10px;}
+.hall-quest-detail-slotsfull{font-size:10px;color:#5a4020;text-align:center;padding:8px;font-style:italic;}
+
+/* Buttons — shared with achievements (keep this generic) */
+.hall-quest-btn{font-family:inherit;font-size:11px;padding:10px 18px;border-radius:4px;border:1px solid #5a3a18;background:linear-gradient(170deg,#2a1a08,#1a0e04);color:#d4a843;cursor:pointer;letter-spacing:1.5px;transition:all .15s;width:100%;}
+.hall-quest-btn:hover{border-color:#d4a843;background:linear-gradient(170deg,#3a240a,#1f1306);}
 .hall-quest-btn.claim{border-color:#7fc06a;color:#7fc06a;animation:claimPulse 1.5s ease-in-out infinite;}
-.hall-quest-stamp{position:absolute;top:14px;right:14px;font-size:13px;letter-spacing:2px;padding:4px 10px;border:2px solid;border-radius:4px;transform:rotate(8deg);}
-.hall-quest-stamp.active-stamp{color:#d4a843;border-color:#d4a843;}
-.hall-quest-stamp.complete-stamp{color:#7fc06a;border-color:#7fc06a;}
 .vault-upgrades-bar{display:flex;align-items:center;gap:6px;padding:8px 14px;border-top:1px solid #2a1808;flex-shrink:0;background:rgba(6,3,1,.4);overflow-x:auto;}
 
 /* ── VAULT — Forge Ledger Layout ── */
