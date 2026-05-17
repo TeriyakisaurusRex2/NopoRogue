@@ -799,16 +799,27 @@ var STORY_QUESTS = {
     targetLevel:  3,
     target:       1,
     isStory:      true,
-    rewards:      [{type:'gold', icon:'✦', amount:75, label:'Gold'}],
+    // Round 67q: rewards rebalanced. Gold removed; instead the player
+    // gets the Forge opening up + the exact mats for the Safety Net
+    // recipe (2x Ancient Bark — Pale Road rare drop, themed for
+    // "woven fibre / cord / catch-rope"). The recipe is updated to
+    // match (see data/relics.js), so claiming this quest hands the
+    // player everything they need to walk into the Forge and craft.
+    // Sanctum unlock has been moved to story_craft_safety_net's
+    // onClaim — Kaine opens his door when there's something to slot.
+    rewards:      [
+      {type:'unlock',   icon:'🔓', label:'The Forge'},
+      {type:'material', icon:'🌳', id:'ancient_bark', amount:2, label:'Ancient Bark'},
+    ],
     issuer:       '???',
     next:         'story_craft_safety_net',
-    // Unlocks the Forge AND the Sanctum (the player needs the Sanctum
-    // to equip the relic they're about to craft).
     onClaim: function(){
-      if(PERSIST && PERSIST.town && PERSIST.town.buildings){
-        if(PERSIST.town.buildings.forge)   PERSIST.town.buildings.forge.unlocked   = true;
-        if(PERSIST.town.buildings.sanctum) PERSIST.town.buildings.sanctum.unlocked = true;
-        if(typeof showTownToast === 'function') showTownToast('✦ The Forge and Sanctum open their doors.');
+      // Material reward (ancient_bark x2) is granted by claimQuest's
+      // reward loop based on the rewards array above — don't re-add
+      // it here. Only the building unlock needs a side-effect hook.
+      if(PERSIST && PERSIST.town && PERSIST.town.buildings && PERSIST.town.buildings.forge){
+        PERSIST.town.buildings.forge.unlocked = true;
+        if(typeof showTownToast === 'function') showTownToast('✦ The Forge opens its doors.');
       }
     },
   },
@@ -828,6 +839,17 @@ var STORY_QUESTS = {
     // story NPCs yet.
     issuer:         "M'bur",
     next:           'story_equip_safety_net',
+    // Round 67q: Sanctum unlock moved here from story_reach_lv3. Kaine
+    // only opens his doors once the player has something worth bringing
+    // him — the freshly-crafted relic from M'bur's anvil. The next
+    // quest (story_equip_safety_net) needs the Sanctum, so this hands
+    // it over just in time.
+    onClaim: function(){
+      if(PERSIST && PERSIST.town && PERSIST.town.buildings && PERSIST.town.buildings.sanctum){
+        PERSIST.town.buildings.sanctum.unlocked = true;
+        if(typeof showTownToast === 'function') showTownToast("✦ Kaine's door is unbarred.");
+      }
+    },
   },
 
   story_equip_safety_net: {
@@ -842,6 +864,76 @@ var STORY_QUESTS = {
     // Round 67q: Kaine — closing the loop on his deck-builder
     // invitation. Player visits the Sanctum, Kaine slots the relic.
     issuer:         'Kaine',
+    // Round 67q: chain continues into the market-build arc. Leona
+    // brokers the road-clearing job; Barau steps in once the caravan
+    // can reach town; the Shard Master closes the arc with the well.
+    next:           'story_clear_pale_road',
+  },
+
+  // ── Chain part 2: opening the Market + Shard Well ─────────────────
+  // The starter chain so far has been ??? then named NPCs the player
+  // ALREADY knows from the deck-builder / forge / sanctum loop. From
+  // here the chain widens the town: each quest unlocks one more
+  // building, ending with the first Shard Well summon.
+
+  story_clear_pale_road: {
+    id:             'story_clear_pale_road',
+    title:          'The Road Must Be Open',
+    desc:           'Bandits and beasts have closed the Pale Road. The Merchant Caravan refuses to pass while it stays that way. Clear the road. The materials for a market wait beyond the rise, but only if the caravan can deliver them.',
+    type:           'clear',
+    areaId:         'pale_road',
+    target:         1,
+    isStory:        true,
+    rewards:        [
+      {type:'gold',     icon:'✦', amount:150, label:'Gold'},
+      {type:'material', icon:'🪵', id:'thornwood_resin', amount:5, label:'Thornwood Resin'},
+    ],
+    issuer:         'Leona',
+    next:           'story_meet_barau',
+    onClaim: function(){
+      // Unlock the Market on claim — the caravan can now reach town.
+      if(PERSIST && PERSIST.town && PERSIST.town.buildings && PERSIST.town.buildings.market){
+        PERSIST.town.buildings.market.unlocked = true;
+        if(typeof showTownToast === 'function') showTownToast('✦ The Market opens its stalls.');
+      }
+    },
+  },
+
+  story_meet_barau: {
+    id:             'story_meet_barau',
+    title:          "Barau's Welcome",
+    desc:           'The caravan made it. Barau has set up shop. Visit the Market — he says he has more to discuss than wares.',
+    type:           'visit_building',
+    targetBuildingId: 'market',
+    target:         1,
+    isStory:        true,
+    rewards:        [
+      {type:'soul_shards', icon:'🔮', amount:100, label:'Soul Shards'},
+    ],
+    issuer:         'Barau',
+    next:           'story_first_summon',
+    onClaim: function(){
+      // Unlock the Shard Well — Barau's "tip" was about a place that
+      // hears the shards. The player can now spend the 100 he just
+      // gave them on a first summon.
+      if(PERSIST && PERSIST.town && PERSIST.town.buildings && PERSIST.town.buildings.shard_well){
+        PERSIST.town.buildings.shard_well.unlocked = true;
+        if(typeof showTownToast === 'function') showTownToast('✦ Barau points to the Shard Well. Its door is no longer barred.');
+      }
+    },
+  },
+
+  story_first_summon: {
+    id:             'story_first_summon',
+    title:          'The Well Hears',
+    desc:           'The Shard Master will not speak plainly. The well takes shards and gives champions. There is only one way to know what it gives you.',
+    type:           'summon_complete',
+    target:         1,
+    isStory:        true,
+    rewards:        [
+      {type:'gold', icon:'✦', amount:200, label:'Gold'},
+    ],
+    issuer:         'Shard Master',
     next:           null,
   },
 };
@@ -871,6 +963,16 @@ function _activateStoryQuest(def){
   var startProgress = _checkStoryQuestAlreadyMet(def) ? (def.target || 1) : 0;
   q.active.push({ id: def.id, progress: startProgress });
   if(typeof savePersist === 'function') savePersist();
+  // Round 67q: announce story quests with issuer attribution. Random
+  // bounties don't toast on activation — they're picked up from the
+  // Hall board, no surprise reveal. Story quests are pushed at the
+  // player, so the toast doubles as a "where did this come from" cue.
+  if(def.isStory && typeof showTownToast === 'function'){
+    var issuer = def.issuer || 'Leona';
+    var prefix = (issuer === '???') ? '✦ NEW QUEST: ' : '✦ ' + issuer + ': ';
+    showTownToast(prefix + (def.title || 'New task'));
+  }
+  if(def.isStory && typeof playQuestNotifySfx === 'function') playQuestNotifySfx();
 }
 
 // Check whether the player has already met the quest's goal at the
@@ -899,6 +1001,36 @@ function _checkStoryQuestAlreadyMet(def){
     for(var cid2 in champs2){
       var cp2 = champs2[cid2];
       if(cp2 && Array.isArray(cp2.relics) && cp2.relics.indexOf(rid2) !== -1) return true;
+    }
+    return false;
+  }
+  // Round 67q: clear / visit_building / summon_complete branches.
+  if(def.type === 'clear'){
+    var aid = def.areaId;
+    if(!aid) return false;
+    // PERSIST.areaRuns[aid] tracks every run started in that area.
+    // If the player has already finished a run there, the quest is met.
+    return !!(PERSIST.areaRuns && (PERSIST.areaRuns[aid] || 0) > 0);
+  }
+  if(def.type === 'visit_building'){
+    var bid = def.targetBuildingId;
+    if(!bid) return false;
+    // Unlocking the target building proves the player visited it
+    // (every unlock path goes through openBuilding → the unlock UI).
+    // Strict "have they OPENED it" requires a flag we don't track yet;
+    // unlocked-state is the strongest proxy and only matters on the
+    // resume-after-reload edge case.
+    var b = PERSIST.town && PERSIST.town.buildings && PERSIST.town.buildings[bid];
+    return !!(b && b.unlocked);
+  }
+  if(def.type === 'summon_complete'){
+    // Any champion unlock beyond the starter trio (druid/paladin/thief)
+    // means a summon (or achievement reward) granted them — treat that
+    // as "you've used the well already".
+    var starters = ['druid','paladin','thief'];
+    var champs = PERSIST.unlockedChamps || [];
+    for(var i = 0; i < champs.length; i++){
+      if(starters.indexOf(champs[i]) === -1) return true;
     }
     return false;
   }

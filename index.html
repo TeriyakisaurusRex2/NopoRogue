@@ -848,9 +848,9 @@
       <div class="town-locked-msg" id="market-locked-msg" style="display:none;"></div>
       <div id="market-inner" style="display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;">
         <div class="npc-greeting" id="market-npc-greeting">
-          <div class="npc-greeting-sprite"><img src="assets/creatures/merchant.png" alt="Merchant" onerror="this.parentNode.textContent='🧳'"></div>
+          <div class="npc-greeting-sprite"><img src="assets/creatures/merchant.png" alt="Barau" onerror="this.parentNode.textContent='🧳'"></div>
           <div class="npc-greeting-text">
-            <div class="npc-greeting-name">THE MERCHANT</div>
+            <div class="npc-greeting-name">BARAU</div>
             <div class="npc-greeting-msg" id="market-npc-msg"></div>
           </div>
         </div>
@@ -1285,6 +1285,13 @@
             <button class="setting-player-btn" id="s-player-pause" onclick="toggleMusicPause();refreshNowPlaying();" title="Pause / play">⏸</button>
             <button class="setting-player-btn" id="s-player-skip"  onclick="skipMusicTrack();refreshNowPlaying();" title="Skip to next track">⏭</button>
           </div>
+        </div>
+        <!-- Round 67q: track progress + position readout. Updated by
+             refreshNowPlaying via a setInterval started in openSettings
+             and stopped in closeSettings. -->
+        <div class="setting-music-progress" id="s-music-progress">
+          <div class="setting-music-progress-bar"><div class="setting-music-progress-fill" id="s-music-progress-fill" style="width:0%"></div></div>
+          <div class="setting-music-progress-times"><span id="s-music-time-cur">0:00</span><span id="s-music-time-dur">0:00</span></div>
         </div>
       </div>
 

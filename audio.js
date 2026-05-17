@@ -143,19 +143,25 @@ function updateSfxVolume(pct){
 //
 // Backwards-compat: playMusic('menu_theme') / ('theme_town') still
 // work via the alias map below — callers haven't been updated yet.
+// Round 67q: new tracks added to assets/audio/music/ — theme_menu_2,
+// theme_battle_3, theme_battle_4. Registered here + named below so
+// the random pool picks them up automatically.
 var MUSIC_SETS = {
-  menu:   { tracks:['theme_menu'],                       label:'Adventurer\'s Rest' },
-  town:   { tracks:['theme_town_1','theme_town_2'],      label:'The Town at Dusk'   },
-  battle: { tracks:['theme_battle_1','theme_battle_2'],  label:'Battle'             },
+  menu:   { tracks:['theme_menu','theme_menu_2'],                                          label:'Adventurer\'s Rest' },
+  town:   { tracks:['theme_town_1','theme_town_2'],                                        label:'The Town at Dusk'   },
+  battle: { tracks:['theme_battle_1','theme_battle_2','theme_battle_3','theme_battle_4'],  label:'Battle'             },
 };
 // Per-track display names. Falls back to set.label if a track isn't
 // listed here individually.
 var MUSIC_TRACK_NAMES = {
-  theme_menu:     'Adventurer\'s Rest',
+  theme_menu:     'Adventurer\'s Rest I',
+  theme_menu_2:   'Adventurer\'s Rest II',
   theme_town_1:   'The Town at Dusk I',
   theme_town_2:   'The Town at Dusk II',
   theme_battle_1: 'Battle Theme I',
   theme_battle_2: 'Battle Theme II',
+  theme_battle_3: 'Battle Theme III',
+  theme_battle_4: 'Battle Theme IV',
 };
 // Legacy aliases — old call sites used these key strings; keep the
 // alias map so we don't have to chase down every playMusic('menu_theme')
@@ -170,6 +176,13 @@ var _musicSet      = null;   // current scene set key ('menu' | 'town' | 'battle
 var _musicTrack    = null;   // currently-playing track key ('theme_menu' etc)
 var _musicEl       = null;   // active Audio element
 var _musicFadeTimer= null;
+// Round 67q: the outgoing element captured in the current crossfade.
+// If a new _playTrack interrupts an in-flight fade, the previous "old"
+// element used to be left running at whatever volume the fade had
+// reached — leaving TWO (or more, with rapid skips) tracks audible at
+// once. Stashing the reference here lets _stopMusicFade pause it
+// before the timer is cleared so leftover audio can't accumulate.
+var _musicFadeOldEl = null;
 var _musicPaused   = false;  // manual pause (skip/pause button); independent from screen-transition fades
 
 // Pick a set key based on which .screen.active is currently visible.
@@ -263,8 +276,13 @@ function _playTrack(key){
   newEl.addEventListener('ended', _onTrackEnded);
 
   // Capture the outgoing element + its volume BEFORE we swap _musicEl.
+  // Round 67q: stash on the module level so a follow-up _stopMusicFade
+  // (triggered by another _playTrack mid-window) can hard-pause this
+  // element. Was leaking previously: rapid Skip clicks during the 1.2s
+  // crossfade would leave the previous "old" track audible, accumulating.
   var oldEl = _musicEl;
   var oldStartVol = oldEl ? oldEl.volume : 0;
+  _musicFadeOldEl = oldEl;
 
   // Start the new track (autoplay-block recovery in case it's the
   // first play of the session and the user hasn't interacted yet).
@@ -296,6 +314,9 @@ function _playTrack(key){
       clearInterval(_musicFadeTimer);
       _musicFadeTimer = null;
       if(oldEl){ oldEl.pause(); }
+      // Fade is done, this oldEl is gone — clear the stash so future
+      // _stopMusicFade calls don't double-pause something we don't own.
+      if(_musicFadeOldEl === oldEl) _musicFadeOldEl = null;
     }
   }, 30);
 
@@ -387,12 +408,26 @@ function getCurrentMusicName(){
       || _musicTrack;
 }
 
+// Round 67q: live track position. Returns {current, duration, fraction}
+// or null when no track is loaded. Used by Settings → Audio progress
+// bar; safe to call every ~250ms.
+function getCurrentMusicPosition(){
+  if(!_musicEl) return null;
+  var dur = _musicEl.duration || 0;
+  var cur = _musicEl.currentTime || 0;
+  if(!isFinite(dur) || dur <= 0) return { current: cur, duration: 0, fraction: 0 };
+  return { current: cur, duration: dur, fraction: Math.min(1, cur / dur) };
+}
+
 function updateMusicVolume(){
   if(!_musicEl) return;
   var v = Math.min(1, (SETTINGS.music || 0) / 100);
   _musicEl.volume = v;
   if(v <= 0) _musicEl.pause();
-  else if(_musicEl.paused){ _musicEl.play().catch(function(){}); }
+  // Round 67q: only auto-resume if the player hasn't MANUALLY paused.
+  // Previously this would silently un-pause the track when the user
+  // nudged the volume slider after hitting the pause button.
+  else if(_musicEl.paused && !_musicPaused){ _musicEl.play().catch(function(){}); }
 }
 
 function _fadeOutMusic(cb){
@@ -429,4 +464,11 @@ function _fadeInMusic(targetVol){
 
 function _stopMusicFade(){
   if(_musicFadeTimer){ clearInterval(_musicFadeTimer); _musicFadeTimer = null; }
+  // Round 67q: pause the in-flight "old" element if we're cutting the
+  // fade short — without this, the previous crossfade's outgoing track
+  // keeps playing at whatever volume the fade had reached.
+  if(_musicFadeOldEl){
+    try { _musicFadeOldEl.pause(); } catch(e){}
+    _musicFadeOldEl = null;
+  }
 }

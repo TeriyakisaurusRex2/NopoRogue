@@ -422,6 +422,8 @@ function openSettings(){
   switchSettingsTab(_settingsTab);
   refreshNowPlaying();
   refreshMuteButtons();
+  // Round 67q: live music progress while settings is open.
+  _startMusicProgressTicker();
 }
 function closeSettings(){
   playUiCloseSfx();
@@ -429,6 +431,9 @@ function closeSettings(){
   // Round 65: deleteSaveCancel() call removed — Save Data tab no
   // longer lives in Settings (moved to login screen). Function
   // still exists for any lingering call sites.
+  // Round 67q: pause the progress ticker — no need to poll while the
+  // panel is hidden.
+  _stopMusicProgressTicker();
 }
 
 // Round 62l: tab switcher for the settings panel. Stashes the active
@@ -583,6 +588,48 @@ function refreshNowPlaying(){
     pauseBtn.textContent = pausedNow ? '▶' : '⏸';
     pauseBtn.title = pausedNow ? 'Resume music' : 'Pause music';
   }
+  // Round 67q: track-progress bar + position readout. Polled by the
+  // ticker started in openSettings; safe to also call inline (button
+  // handlers, etc.) without ill effect.
+  var fillEl = document.getElementById('s-music-progress-fill');
+  var curEl  = document.getElementById('s-music-time-cur');
+  var durEl  = document.getElementById('s-music-time-dur');
+  if(fillEl || curEl || durEl){
+    var pos = (typeof getCurrentMusicPosition === 'function') ? getCurrentMusicPosition() : null;
+    if(pos && pos.duration > 0){
+      if(fillEl) fillEl.style.width = Math.round(pos.fraction * 100) + '%';
+      if(curEl) curEl.textContent = _fmtMmSs(pos.current);
+      if(durEl) durEl.textContent = _fmtMmSs(pos.duration);
+    } else {
+      if(fillEl) fillEl.style.width = '0%';
+      if(curEl) curEl.textContent = '0:00';
+      if(durEl) durEl.textContent = '0:00';
+    }
+  }
+}
+
+// Round 67q: m:ss formatter for the music-position readout.
+function _fmtMmSs(seconds){
+  var s = Math.max(0, Math.floor(seconds || 0));
+  var m = Math.floor(s / 60);
+  var r = s % 60;
+  return m + ':' + (r < 10 ? '0' : '') + r;
+}
+
+// Round 67q: progress ticker — fires while the Settings panel is on
+// the AUDIO tab so the bar moves with the track. Started in
+// openSettings, cleared in closeSettings (and on tab switch away from
+// audio inside switchSettingsTab). 250ms is plenty for a smooth bar
+// without forcing a layout every frame.
+var _musicProgressTimer = null;
+function _startMusicProgressTicker(){
+  if(_musicProgressTimer) return;
+  _musicProgressTimer = setInterval(function(){
+    if(_settingsTab === 'audio') refreshNowPlaying();
+  }, 250);
+}
+function _stopMusicProgressTicker(){
+  if(_musicProgressTimer){ clearInterval(_musicProgressTimer); _musicProgressTimer = null; }
 }
 
 // ── Export ──
@@ -1423,6 +1470,15 @@ function createNewSave(name){
   _resetPersistToDefaults();
   PERSIST.playerName = trimmed;
   if(typeof selectedChampId !== 'undefined') selectedChampId = null;
+  // Round 67q: force tutorial tips ON for new saves. SETTINGS is
+  // global (cetd_settings localStorage), so a prior session that
+  // flipped tutorials off would otherwise silence Kaine and the
+  // building intros for any fresh player using this browser. Sync
+  // the inline DOM toggle too so the Settings panel reflects state.
+  SETTINGS.tutorial = true;
+  try{ localStorage.setItem('cetd_settings', JSON.stringify(SETTINGS)); }catch(e){}
+  var tutToggle = document.getElementById('s-tutorial');
+  if(tutToggle) tutToggle.checked = true;
   savePersist();
   return meta;
 }
@@ -1718,6 +1774,16 @@ function _shortAssetName(src){
 // date the lastUsedChamp field or have never run a champion.
 function _pickSaveChampionId(data){
   if(!data) return null;
+  // Round 67q: pre-tutorial saves show the Dire Wolf — that's the
+  // champion the combat tutorial puts the player in. Once the
+  // tutorial completes (or is skipped), this falls through to the
+  // normal "last used champion" logic and the portrait swaps to
+  // whichever champion they actually picked. dire_wolf is flagged
+  // UNIMPLEMENTED_CHAMPS for the runtime roster but the CREATURES
+  // entry is real, so the sprite + name resolve cleanly here.
+  if(!data.tutorialComplete && CREATURES.dire_wolf){
+    return 'dire_wolf';
+  }
   var unlocked = (data.unlockedChamps || []).filter(function(id){ return CREATURES[id]; });
   if(!unlocked.length) return null;
   // Round 64: prefer the explicitly-tracked last-used champion, but
@@ -3942,7 +4008,10 @@ function buildAreaScreen(){
     var grind=area.level<champLevel-1;
     var card=document.createElement('div');
     var isBoss=!!(area.def&&area.def.isBossArea);
-    card.className='area-card'+(danger?' danger':'')+(grind?' grind':'')+(isBoss?' boss-area':'');
+    // Round 67q: pulse the card if a pending story quest is asking
+    // the player to clear this area (e.g. story_clear_pale_road).
+    var isQuestTarget = (typeof isAreaQuestTarget === 'function') && isAreaQuestTarget(area.def && area.def.id);
+    card.className='area-card'+(danger?' danger':'')+(grind?' grind':'')+(isBoss?' boss-area':'')+(isQuestTarget?' quest-target-pulse':'');
     card.onclick=function(){
       playSelectSfx();
       document.querySelectorAll('.area-card').forEach(function(c){c.classList.remove('selected');});

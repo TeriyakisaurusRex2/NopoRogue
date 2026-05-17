@@ -90,9 +90,11 @@ var RELIC_RECIPES = {
   // Round 67p: Safety Net is the starter recipe — only one unlocked by
   // default on a new save. Other recipes are gated by story-quest
   // progress (see isRecipeUnlocked / PERSIST.unlockedRelicRecipes).
-  // Sewer-area mats so it's craftable straight after the first quest
-  // chain landing the player in the Sewers.
-  safety_net:         {tier:'base',    mats:{slick_stone:3, bog_iron:2}},
+  // Round 67q: recipe simplified to 2x Ancient Bark (Pale Road rare).
+  // Bark fibre = woven cord = net, thematically. The preceding quest
+  // (story_reach_lv3) drops exactly these 2 mats as its reward, so the
+  // player walks out of the Hall with everything they need to craft.
+  safety_net:         {tier:'base',    mats:{ancient_bark:2}},
   wildfire_focus:     {tier:'base',    mats:{slick_stone:3, rancid_bile:2}},
   gamblers_coin:      {tier:'base',    mats:{bog_iron:3, vault_bronze:1}},
   quick_draw_holster: {tier:'base',    mats:{thornwood_resin:4, harpy_talon:1}},

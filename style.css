@@ -2235,6 +2235,14 @@ button, input, select, textarea{font-family:inherit;}
 .setting-player-btn{background:rgba(8,4,1,.5);border:1px solid #3a2010;border-radius:4px;color:#9a8040;font-size:12px;line-height:1;padding:4px 8px;cursor:pointer;transition:color .12s,border-color .12s,background .12s;font-family:inherit;}
 .setting-player-btn:hover{color:#d4a843;border-color:#c09030;background:rgba(40,25,5,.7);}
 
+/* Round 67q: music-track progress bar + time readout. Sits below the
+   Now Playing strip in the Audio settings tab. Polled at 250ms by the
+   music-progress ticker (started in openSettings). */
+.setting-music-progress{display:flex;flex-direction:column;gap:4px;padding:6px 0 0;}
+.setting-music-progress-bar{height:6px;background:rgba(0,0,0,.4);border:1px solid #2a1808;border-radius:3px;overflow:hidden;}
+.setting-music-progress-fill{height:100%;width:0%;background:linear-gradient(90deg,#5a3a18,#c09030,#d4a843);border-radius:2px;transition:width .25s linear;}
+.setting-music-progress-times{display:flex;justify-content:space-between;font-size:9px;color:#7a6030;letter-spacing:.5px;}
+
 /* Save Data tab — block form for the Import paste row (textarea can't
    sit inline with the label cleanly) and a destructive zone for delete. */
 .setting-block{display:flex;flex-direction:column;gap:6px;}
@@ -2377,6 +2385,10 @@ button, input, select, textarea{font-family:inherit;}
 .hall-quest-detail-progress-txt{font-size:10px;color:#9a7030;margin-top:4px;text-align:right;}
 .hall-quest-detail-rewards{display:flex;gap:7px;flex-wrap:wrap;}
 .hall-reward-chip{font-size:11px;padding:5px 12px;border-radius:3px;background:rgba(20,12,4,.7);border:1px solid #5a3a18;color:#c0a060;white-space:nowrap;}
+/* Round 67q: unlock-type reward chip (e.g. "🔓 The Forge"). Brighter
+   gold to distinguish access-unlock rewards from numeric resources. */
+.hall-reward-chip-unlock{background:linear-gradient(180deg,rgba(60,36,12,.7),rgba(20,12,4,.7));border-color:#c09030;color:#d4a843;}
+.qrwd-unlock{border-color:#c09030;color:#d4a843;background:rgba(40,24,8,.5);}
 .hall-quest-detail-timelimit{font-size:11px;color:#e07040;letter-spacing:.5px;padding:6px 10px;background:rgba(60,20,8,.4);border:1px solid #7a3010;border-radius:3px;}
 
 /* Action footer */

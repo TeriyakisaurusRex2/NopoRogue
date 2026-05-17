@@ -146,7 +146,10 @@ var BUILDINGS = {
   },
   market: {
     id:'market', name:'The Market', icon:'🛒', sprite:'merchant', buildingIcon:'market',
-    npc:{name:'The Merchant', title:'Trader', greeting:'Fresh stock! Well... freshish.', pitch:1.2},
+    // Round 67q: named (was 'The Merchant'). Barau runs the caravan that
+    // re-opens trade once the Pale Road is cleared (story quest 6) and
+    // tips the player off about the Shard Well (story quest 7).
+    npc:{name:'Barau', title:'Caravan Master', greeting:'Fresh stock! Well... freshish. The road is open, friend.', pitch:1.2},
     desc:'Rotating stock of materials, tomes, and rare finds.',
     unlocked:true,
   },
@@ -1041,6 +1044,18 @@ var NPC_CONDITIONS = {
   ],
 
   adventurers_hall: [
+    // Round 67q: Leona reacts to the story-chain quest she's running
+    // for the player (clear the Pale Road, open the caravan route).
+    // Top of the list so it wins over generic mood lines while the
+    // quest is pending. isQuestPending returns false the moment the
+    // quest progresses to claimable, so the line stops surfacing then.
+    {id:'story_pale_road', check:function(){
+      return typeof isQuestPending === 'function' && isQuestPending('story_clear_pale_road');
+    }, lines:[
+      'The Pale Road! Yes! That\'s the one. The caravan really, really needs it cleared. No pressure.',
+      'You\'re going to the Pale Road, right? Right? The contract is right here. Already filled out. Just in case.',
+      'I won\'t say I\'ve been refreshing the road-status board every five minutes. I won\'t say that.',
+    ]},
     // Leona's conditions
     {id:'quest_complete', check:function(){
       var q = PERSIST.town.quests;
@@ -1119,6 +1134,17 @@ var NPC_CONDITIONS = {
     }, lines:['The archives are empty. Go explore and bring me something to study.','No entries yet. Every great catalogue starts somewhere.']},
   ],
   market: [
+    // Round 67q: Barau acknowledges the player on first visit during
+    // the story chain. The quest is "visit_building" so the very act
+    // of opening this panel completes it — this line still surfaces
+    // on subsequent re-opens until claim, in case the player needs
+    // a reminder about the reward in the Hall.
+    {id:'story_meet_barau', check:function(){
+      return typeof isQuestPending === 'function' && isQuestPending('story_meet_barau');
+    }, lines:[
+      'There you are. I owe you for the road. A purse of shards and a tip about a place that hears them. Both yours.',
+      'The caravan made it because of you. Take this, with my thanks. And come back. I deal in more than wares.',
+    ]},
     {id:'rich_player', check:function(){ return PERSIST.gold >= 500; },
      lines:['That\'s a heavy purse. I can lighten it for you.','With that much gold, I\'d recommend the rare shelf.']},
     {id:'all_sold', check:function(){
@@ -1132,6 +1158,16 @@ var NPC_CONDITIONS = {
     }, lines:['Psst. Check the rare shelf today. Worth it. Trust me.']},
   ],
   sanctum: [
+    // Round 67q: Kaine welcomes the player when the equip-Safety-Net
+    // quest is open. The relic is in their vault; he just needs them
+    // to choose a champion.
+    {id:'story_equip_safety_net', check:function(){
+      return typeof isQuestPending === 'function' && isQuestPending('story_equip_safety_net');
+    }, lines:[
+      'My lord. The Net waits. Choose a champion. The cord remembers a hand only after it has been tied.',
+      'You bring me the Net, and I am grateful. But it does no work in your vault, my lord. Slot it. Bind it.',
+      'A relic unbound is a kindness undelivered. The champion. The slot. A small ceremony, between us.',
+    ]},
     {id:'can_ascend', check:function(){
       return PERSIST.unlockedChamps.some(function(id){ return canAscend(id); });
     }, lines:[
@@ -1151,6 +1187,16 @@ var NPC_CONDITIONS = {
   // Round 45: M'bur's stateful lines. Terse reactions to current
   // forge state — slot fullness, ready-to-collect, etc.
   forge: [
+    // Round 67q: M'bur reacts to the craft-Safety-Net quest. Once the
+    // relic is in the inventory, the quest moves to claimable and
+    // isQuestPending stops returning true.
+    {id:'story_craft_safety_net', check:function(){
+      return typeof isQuestPending === 'function' && isQuestPending('story_craft_safety_net');
+    }, lines:[
+      'Safety Net. Cord and stone. Bring the mats. I\'ll do the work.',
+      'Slick stone, bog iron. You bring \'em, I bind \'em. No tricks.',
+      'You here for the Net? Good. Place yer mats, leave the heat to me.',
+    ]},
     {id:'slot_ready', check:function(){
       var b = PERSIST.town.buildings.forge;
       if(!b || !b.queue) return false;
@@ -1169,6 +1215,18 @@ var NPC_CONDITIONS = {
     }, lines:[
       "Slots are full. Something has to finish before I start more.",
       "All forges going. You'll have to wait or take what's done."
+    ]},
+  ],
+  // Round 67q: Shard Master conditions — currently only the story
+  // first-summon quest. The base greeting lives in BUILDINGS.shard_well.npc.greeting;
+  // this array lets a quest line override it when relevant.
+  shard_well: [
+    {id:'story_first_summon', check:function(){
+      return typeof isQuestPending === 'function' && isQuestPending('story_first_summon');
+    }, lines:[
+      'The well listens, when you offer. Pour shards into it. See who answers.',
+      'It has waited. Come. Spend a hundred. The well will not refuse you.',
+      'You have shards now. The well has hunger. The trade was written before either of us arrived.',
     ]},
   ],
 };
@@ -1659,6 +1717,16 @@ function _questActionHtml(quest){
     var rname2 = rdef2 ? (rdef2.icon + ' ' + rdef2.name) : (rid2 || 'relic');
     return 'Equip ' + _csqEsc(rname2) + ' at the Sanctum';
   }
+  // Round 67q: visit + summon objectives.
+  if(t === 'visit_building'){
+    var bid = quest.targetBuildingId;
+    var bdef = (typeof BUILDINGS !== 'undefined' && bid) ? BUILDINGS[bid] : null;
+    var bname = bdef ? bdef.name : (bid || 'a building');
+    return 'Visit ' + _csqEsc(bname);
+  }
+  if(t === 'summon_complete'){
+    return 'Summon at the Shard Well';
+  }
   // Fallback: use the description as-is (escaped). Bracketed [Keywords]
   // are passed through renderKeywords so card-style keyword styling still
   // works for hand-authored quest copy.
@@ -1687,6 +1755,11 @@ function _questRewardChipsHTML(quest){
         || ((typeof MATERIALS !== 'undefined' && r.id && MATERIALS[r.id]) ? MATERIALS[r.id].icon : null)
         || '🪨';
       return '<span class="qrwd">'+icon+' '+r.amount+'</span>';
+    }
+    // Round 67q: unlock rewards — building / feature access. No amount,
+    // just icon + label. Used by story_reach_lv3 (unlocks the Forge).
+    if(r.type === 'unlock'){
+      return '<span class="qrwd qrwd-unlock">'+(r.icon || '🔓')+' '+_csqEsc(r.label || 'Unlock')+'</span>';
     }
     return '<span class="qrwd">+'+r.amount+' '+_csqEsc(r.label || r.type)+'</span>';
   }).filter(Boolean);
@@ -1977,7 +2050,14 @@ function _renderQuestDetailCard(questId, quests, activeIds, maxActive){
   // Rewards.
   var rewardsHtml = '';
   (q.rewards || []).forEach(function(r){
-    rewardsHtml += '<div class="hall-reward-chip">'+(r.icon || goldImgHTML('12px'))+' '+r.amount+' '+(r.label || r.type)+'</div>';
+    // Round 67q: `unlock` is a "you get access to a thing" reward — no
+    // numeric amount, just icon + label. Used by story_reach_lv3 which
+    // unlocks the Forge as part of its rewards.
+    if(r.type === 'unlock'){
+      rewardsHtml += '<div class="hall-reward-chip hall-reward-chip-unlock">'+(r.icon || '🔓')+' '+(r.label || 'Unlock')+'</div>';
+    } else {
+      rewardsHtml += '<div class="hall-reward-chip">'+(r.icon || goldImgHTML('12px'))+' '+r.amount+' '+(r.label || r.type)+'</div>';
+    }
   });
   if(rewardsHtml){
     html += '<div class="hall-quest-detail-section">'
@@ -2490,6 +2570,8 @@ var QUEST_ISSUERS = {
   // Story-quest NPCs.
   'Kaine':            { sprite:'sanctum_keeper',  title:'Sanctum Keeper',        faction:'The Sanctum' },
   "M'bur":            { sprite:'forge_keeper',    title:'Blacksmith',            faction:'The Forge' },
+  'Barau':            { sprite:'merchant',        title:'Caravan Master',        faction:'The Market' },
+  'Shard Master':     { sprite:'shard_master',    title:'Keeper of the Well',    faction:'The Shard Well' },
   'Shtole':           { sprite:'vault_keeper',    title:'Vault Keeper',          faction:'The Vault' },
   'Theo':             { sprite:'arena_keeper',    title:'Arena Master',          faction:'The Arena' },
   'Hoot':             { sprite:'hoot_archivist',  title:'Archivist',             faction:'The Bestiary' },
@@ -2535,6 +2617,45 @@ function isQuestPending(questId){
   return (entry.progress || 0) < target;
 }
 
+// Round 67q: predicates for UI nudges that pulse the "next thing to
+// click". Each scans active PENDING quests (not yet completable) and
+// returns true if any of them targets the given area / building.
+// Generic so future story quests automatically pulse the right UI
+// without further plumbing.
+function isAreaQuestTarget(areaId){
+  if(!areaId || !PERSIST.town || !PERSIST.town.quests) return false;
+  var active = PERSIST.town.quests.active || [];
+  var offered = PERSIST.town.quests.offered || [];
+  for(var i = 0; i < active.length; i++){
+    var entry = active[i];
+    var def = offered.find(function(o){ return o.id === entry.id; });
+    if(!def || !def.isStory) continue;
+    if(def.type !== 'clear' || def.areaId !== areaId) continue;
+    if((entry.progress || 0) < (def.target || 1)) return true;
+  }
+  return false;
+}
+function isBuildingQuestTarget(buildingId){
+  if(!buildingId || !PERSIST.town || !PERSIST.town.quests) return false;
+  var active = PERSIST.town.quests.active || [];
+  var offered = PERSIST.town.quests.offered || [];
+  for(var i = 0; i < active.length; i++){
+    var entry = active[i];
+    var def = offered.find(function(o){ return o.id === entry.id; });
+    if(!def || !def.isStory) continue;
+    if((entry.progress || 0) >= (def.target || 1)) continue;
+    // visit_building targets a specific building.
+    if(def.type === 'visit_building' && def.targetBuildingId === buildingId) return true;
+    // summon_complete points at the Shard Well — the only building it
+    // can be performed at — so map it to shard_well implicitly.
+    if(def.type === 'summon_complete' && buildingId === 'shard_well') return true;
+    // craft_relic / equip_relic point at the Forge / Sanctum.
+    if(def.type === 'craft_relic' && buildingId === 'forge') return true;
+    if(def.type === 'equip_relic' && buildingId === 'sanctum') return true;
+  }
+  return false;
+}
+
 // Advance progress on any active quest matching the given event. Called from
 // combat at three points in game.js:
 //   - on enemy kill          : checkQuestProgress('kill', {enemyId})
@@ -2576,6 +2697,18 @@ function checkQuestProgress(eventType, ctx){
     }
     else if(eventType === 'equip_relic' && q.type === 'equip_relic'){
       if(!q.targetRelicId || q.targetRelicId === ctx.relicId) advance = true;
+    }
+    // Round 67q: visit-a-building + summon-from-the-well events.
+    // visit_building fires when openBuilding() opens an UNLOCKED panel
+    // (locked panels show the unlock message instead — don't count).
+    // summon_complete fires after each shard-well summon, with the
+    // count of new entries pulled (in case a future quest wants to
+    // require a specific N pulls instead of just one).
+    else if(eventType === 'visit_building' && q.type === 'visit_building'){
+      if(!q.targetBuildingId || q.targetBuildingId === ctx.buildingId) advance = true;
+    }
+    else if(eventType === 'summon_complete' && q.type === 'summon_complete'){
+      advance = true;
     }
 
     if(advance){
@@ -2776,10 +2909,25 @@ function questTick(seconds){
 
 function openBuilding(id){
   playSelectSfx();
-  if(id==='vault'){ openVaultPanel(); showTutorial('vault_intro'); return; }
-  if(id==='adventurers_hall'){ openAdventurersHall(); showTutorial('adventurers_hall_intro'); return; }
+  // Round 67q: fire the visit_building quest event when an UNLOCKED
+  // panel is opened. Locked panels show the unlock-message UI instead
+  // and shouldn't count as a "visit". The vault and hall paths short-
+  // circuit above with their own helpers, so check unlock-state for
+  // each before firing.
+  if(id==='vault'){
+    var vb = PERSIST.town && PERSIST.town.buildings && PERSIST.town.buildings.vault;
+    if(vb && vb.unlocked && typeof checkQuestProgress === 'function') checkQuestProgress('visit_building', {buildingId:id});
+    openVaultPanel(); showTutorial('vault_intro'); return;
+  }
+  if(id==='adventurers_hall'){
+    var ahb = PERSIST.town && PERSIST.town.buildings && PERSIST.town.buildings.adventurers_hall;
+    if(ahb && ahb.unlocked && typeof checkQuestProgress === 'function') checkQuestProgress('visit_building', {buildingId:id});
+    openAdventurersHall(); showTutorial('adventurers_hall_intro'); return;
+  }
   var panelBg=document.getElementById(id+'-panel-bg');
   if(!panelBg) return;
+  var bb = PERSIST.town && PERSIST.town.buildings && PERSIST.town.buildings[id];
+  if(bb && bb.unlocked && typeof checkQuestProgress === 'function') checkQuestProgress('visit_building', {buildingId:id});
   panelBg.classList.add('show');
   refreshBuildingPanel(id);
   showTutorial(id+'_intro');
@@ -2951,7 +3099,10 @@ function buildTownGrid(){
 
     // Build card
     var card=document.createElement('div');
-    card.className='building-card'+(unlocked&&statusCls==='active'?' active':'')+(unlocked?'':' locked');
+    // Round 67q: pulse the card if a pending story quest is pointing
+    // the player at this building (visit / craft / equip / summon).
+    var isQuestTarget = (typeof isBuildingQuestTarget === 'function') && isBuildingQuestTarget(bdef.id);
+    card.className='building-card'+(unlocked&&statusCls==='active'?' active':'')+(unlocked?'':' locked')+(isQuestTarget?' quest-target-pulse':'');
 
     // All buildings are clickable (locked ones open with lock message)
     card.onclick=function(){ openBuilding(bdef.id); };
@@ -6661,6 +6812,13 @@ function doEternalPull(count){
     _gachaResults.push({c:CREATURES[picked.id],rarity:rarity,isNew:isNew,dupes:(PERSIST.champDupes&&PERSIST.champDupes[picked.id])||0,id:picked.id});
   }
   savePersist();
+
+  // Round 67q: fire summon_complete for the story chain. ctx.count =
+  // number of pulls in this summon (1 or 10) so a future quest can
+  // require a multi-pull if needed.
+  if(typeof checkQuestProgress === 'function'){
+    checkQuestProgress('summon_complete', {count: count});
+  }
 
   // Speed up rings for compression feel
   var r1=document.getElementById('es-ring1'),r2=document.getElementById('es-ring2');
