@@ -41,6 +41,11 @@ function _applyPoison(dpt, durMs){
       desc:'Poison: '+dpt+' dmg/s. Bypasses Shield.'});
     addTag('enemy','debuff',lbl,0,'dot','Poison: '+dpt+' dmg/s. Bypasses Shield.');
   }
+  // Round 67r: bypass path — fire the FX hook here since this function
+  // skips applyStatus()/applyDoT(). Player-applied debuff on enemy.
+  if(typeof _fxStatusApplyFromTarget === 'function'){
+    _fxStatusApplyFromTarget('enemy', 'poison', 'debuff');
+  }
 }
 
 // Apply Poison to the player (enemy-context, e.g. Plagued One self-poison on enemy turn)
@@ -58,6 +63,10 @@ function _applyPoisonToPlayer(dpt, durMs){
       remaining:durMs||8000,maxRemaining:durMs||8000,dot:true,dpt:dpt,tickMs:1000,tickAcc:0,
       desc:'Poison: '+dpt+' dmg/s. Bypasses Shield.'});
     addTag('player','debuff','Poison ('+dpt+'/s)',0,'dot','Poison: '+dpt+' dmg/s. Bypasses Shield.');
+  }
+  // Round 67r: bypass-path FX hook (enemy-applied debuff on player).
+  if(typeof _fxStatusApplyFromTarget === 'function'){
+    _fxStatusApplyFromTarget('player', 'poison', 'debuff');
   }
 }
 
@@ -79,6 +88,12 @@ function _applyBurn(dpt, durMs){
       desc:'Burn: '+dpt+' dmg/s. Bypasses Shield. Does not stack — reapplication refreshes duration.'});
     addTag('enemy','debuff','Burn ('+dpt+'/s)',0,'dot','Burn: '+dpt+' dmg/s. Bypasses Shield.');
   }
+  // Round 67r: bypass-path FX hook (player-applied debuff on enemy).
+  // Burn skips applyStatus()/applyDoT() — without this, Smite /
+  // Consecrate / Hellbent burns never surface the statusBolt look.
+  if(typeof _fxStatusApplyFromTarget === 'function'){
+    _fxStatusApplyFromTarget('enemy', 'burn', 'debuff');
+  }
 }
 
 // Apply Burn to player (used by enemy innates like Cursed Retribution)
@@ -91,6 +106,10 @@ function _applyBurnToPlayer(dpt, durMs){
       remaining:dur,maxRemaining:dur,dot:true,dpt:dpt,tickMs:1000,tickAcc:0,
       desc:'Burn: '+dpt+' dmg/s. Bypasses Shield.'});
     addTag('player','debuff','Burn ('+dpt+'/s)',0,'dot','Burn: '+dpt+' dmg/s. Bypasses Shield.');
+  }
+  // Round 67r: bypass-path FX hook (enemy-applied debuff on player).
+  if(typeof _fxStatusApplyFromTarget === 'function'){
+    _fxStatusApplyFromTarget('player', 'burn', 'debuff');
   }
 }
 
@@ -138,6 +157,12 @@ function _applyPoisonSelf(dpt, durMs, stacks){
       tickMs:1000,tickAcc:0,desc:'Self-Poison: '+totalDpt+' dmg/s.',selfPoison:true});
     addTag('player','debuff','Poison ('+totalDpt+'/s)',0,'dot','Self-Poison: '+totalDpt+' dmg/s.');
   }
+  // Round 67r: self-applied — sourceStr === targetStr suppresses the
+  // projectile (no "from-to" to convey on a self-cast). Lingering
+  // motes still spawn on the player.
+  if(typeof _fxStatusApplyFromTarget === 'function'){
+    _fxStatusApplyFromTarget('player', 'poison', 'debuff', 'player');
+  }
 }
 
 // Apply Poison to enemy self (when enemy is the Plagued One)
@@ -155,6 +180,11 @@ function _applyPoisonSelfEnemy(dpt, durMs, stacks){
       stat:'dot',remaining:durMs||8000,maxRemaining:durMs||8000,dot:true,dpt:totalDpt,
       tickMs:1000,tickAcc:0,desc:'Self-Poison: '+totalDpt+' dmg/s.'});
     addTag('enemy','debuff','Self-Poison ('+totalDpt+'/s)',0,'dot','Self-Poison: '+totalDpt+' dmg/s.');
+  }
+  // Round 67r: enemy self-poison (e.g. Plagued One innate). Same
+  // sourceStr === targetStr trick to suppress the projectile.
+  if(typeof _fxStatusApplyFromTarget === 'function'){
+    _fxStatusApplyFromTarget('enemy', 'poison', 'debuff', 'enemy');
   }
 }
 
@@ -1089,7 +1119,21 @@ var EFFECT_TYPES = {
         var critOverflowExcess = (gs && gs._relicCritOverflow && critPct > 100) ? (critPct - 100) : 0;
         var isCrit = ctx.markedCrit || (critPct > 0 && Math.random() * 100 < critPct);
         if (!isCrit && condMet && v.on_true === 'crit') isCrit = Math.random() < (+v.on_true_val / 100);
-        if (isCrit) { d = Math.round(d * 2); crits++; }
+        if (isCrit) {
+          d = Math.round(d * 2); crits++;
+          // Round 67q: fire the FX crit overlay on the impacted target.
+          // playCardFX already fired the base slash from playCard, but
+          // crit isn't known until the damage roll resolves — so we
+          // layer a gold burst on top once we know.
+          if (typeof Effects !== 'undefined' && Effects.critFlash && typeof FX !== 'undefined' && FX.centerInStage) {
+            try {
+              var critTgtEl = ctx.isEnemy ? document.getElementById('p-icon') : document.getElementById('e-icon');
+              // Round 67r: pass the DOM element too so critFlash can do the
+              // brightness(0) silhouette flash on top of the gold burst.
+              if (critTgtEl) Effects.critFlash(FX.centerInStage(critTgtEl), critTgtEl);
+            } catch(critFxErr){}
+          }
+        }
         if (critOverflowExcess > 0) { d = Math.round(d * (1 + critOverflowExcess/100)); }
         if (condMet && v.on_true === 'bonus_dmg' && i === 0) d += (+v.on_true_val || 0);
         total += d;
@@ -1220,6 +1264,8 @@ var EFFECT_TYPES = {
           }
           spawnFloatNum(side, '-🛡'+amt, false, 'block-num');
           addLog(tgt.creature.name+'\'s Shield stripped! (-'+amt+')', 'debuff');
+          // Round 67r: shared shield-break animation for cleanse-shield.
+          if(typeof _fxShieldBreakFromSide === 'function') _fxShieldBreakFromSide(side);
           removed++;
         }
         return;
@@ -1283,6 +1329,14 @@ var EFFECT_TYPES = {
       tgt.hand.push(newItem);
       var c = CARDS[cardId];
       addLog((c.name||cardId)+' added to '+(tgt === actor ? 'hand' : tgt.creature.name+'\'s hand')+'.', 'draw');
+      // Round 67q: conjure pulse on the player's hand when a card
+      // appears. Deferred a frame so the new DOM card exists for
+      // accurate slot positioning.
+      if(tgt.side === 'player' && typeof _fxCardZone === 'function'){
+        setTimeout(function(){
+          _fxCardZone('conjure', _fxHandSlotPos(gs.hand.length - 1));
+        }, 30);
+      }
     }
   },
 
@@ -1561,6 +1615,11 @@ var EFFECT_TYPES = {
             addTag(targetSide, 'debuff', 'Bleed', 0, '', 'Bleed: takes '+val+' damage each time a card is played.');
           }
           addLog(ctx.cardName + '! [Bleed] '+(v.dur||4)+'s.', 'debuff');
+          // Round 67r: bypass-path FX hook — this case pushes directly
+          // to gs.statusEffects, skipping applyStatus()/applyDoT().
+          if(typeof _fxStatusApplyFromTarget === 'function'){
+            _fxStatusApplyFromTarget(targetSide, 'bleed', 'debuff');
+          }
           break;
 
         case 'haste':
@@ -1630,6 +1689,18 @@ var EFFECT_TYPES = {
             addTag(targetSide, 'shield', 'Shield ('+val+')', null, null, 'Shield: absorbs '+val+' damage.');
           }
           addLog((ctx.cardName||'Shield')+': +'+val+' Shield '+v.dur+'s.', 'buff');
+          // Round 67q: fire the shield FX. Unlike most statuses, the
+          // shield path doesn't route through applyStatus() — it
+          // pushes directly to gs.statusEffects + addTag. So the
+          // central _fxStatusApplyFromTarget hook (which dispatches
+          // to Effects.shield for sid==='shield') never fires for
+          // shield gains unless we kick it manually here.
+          if(typeof _fxStatusApplyFromTarget === 'function'){
+            // cls='buff' is explicit but the shield short-circuit in
+            // _fxStatusApplyFromTarget runs before the debuff branch
+            // anyway — passing it keeps the call self-documenting.
+            _fxStatusApplyFromTarget(targetSide, 'shield', 'buff');
+          }
           break;
       }
     }
@@ -1711,6 +1782,12 @@ var EFFECT_TYPES = {
       actor.hand.push({id: pick.id, ghost: true, _new: true, _newDraw: true});
       var c = CARDS[pick.id];
       addLog('[Ethereal] copy of '+(c?c.name:pick.id)+' created.', 'draw');
+      // Round 67q: conjure pulse for the new ethereal copy.
+      if(actor.side === 'player' && typeof _fxCardZone === 'function'){
+        setTimeout(function(){
+          _fxCardZone('conjure', _fxHandSlotPos(gs.hand.length - 1));
+        }, 30);
+      }
     }
   },
 
@@ -1727,6 +1804,12 @@ var EFFECT_TYPES = {
       actor.hand.push({id: ctx._copiedCardId, ghost: true, _new: true, _newDraw: true});
       var c = CARDS[ctx._copiedCardId];
       addLog('[Ethereal] copy of '+(c?c.name:ctx._copiedCardId)+' created.', 'draw');
+      // Round 67q: conjure pulse for repeat ethereal copy.
+      if(actor.side === 'player' && typeof _fxCardZone === 'function'){
+        setTimeout(function(){
+          _fxCardZone('conjure', _fxHandSlotPos(gs.hand.length - 1));
+        }, 30);
+      }
     }
   },
 
@@ -1852,6 +1935,11 @@ var EFFECT_TYPES = {
             var cardEls = handEl.querySelectorAll('.card');
             if(cardEls[ri]) cardEl = cardEls[ri];
           }
+          // Round 67q: churn-out pulse at the doomed slot BEFORE
+          // the splice / fly-to-discard fires.
+          if(typeof _fxCardZone === 'function' && typeof _fxHandSlotPos === 'function'){
+            _fxCardZone('churn-out', _fxHandSlotPos(ri));
+          }
           var disc=gs.hand.splice(ri,1)[0];
           if(!disc.ghost){
             gs.discardPile.push(disc.id);
@@ -1890,6 +1978,16 @@ var EFFECT_TYPES = {
         }
         for(var d=0;d<discarded;d++) doDraw(null,false);
         renderHand(); renderPiles();
+        // Round 67q: churn-in pulse after draws complete + hand re-renders.
+        // Deferred a frame so the new card DOM is in place for accurate
+        // slot positioning.
+        if(typeof _fxCardZone === 'function' && discarded > 0){
+          setTimeout(function(){
+            for(var k = 0; k < discarded; k++){
+              _fxCardZone('churn-in', _fxHandSlotPos(gs.hand.length - 1 - k));
+            }
+          }, 30);
+        }
       }
       addLog('[Churn] '+n+'.','draw');
     }
@@ -1914,6 +2012,11 @@ var EFFECT_TYPES = {
       if(ctx.actor) ctx.actor.conjuredCount = gs.conjuredCount;
       addLog('[Conjured] ' + (CARDS[copyId]?CARDS[copyId].name:copyId) + ' added to discard.', 'draw');
       renderPiles();
+      // Round 67q: void-purple conjure pulse on the discard pile, the
+      // zone where the new copy actually landed.
+      if(!ctx.isEnemy && typeof _fxCardZone === 'function' && typeof _fxDiscardPilePos === 'function'){
+        _fxCardZone('conjure', _fxDiscardPilePos());
+      }
     }
   },
 
@@ -1933,6 +2036,12 @@ var EFFECT_TYPES = {
         addLog('[Echo] Purged ' + purged + ' [Conjured] copies.','draw');
         if(ctx.cardId) spawnEchoFloat(ctx.cardId);
         renderHand(); renderPiles();
+        // Round 67q: purge pulse at hand center + discard pile so the
+        // player sees BOTH zones losing their conjured copies.
+        if(!ctx.isEnemy && typeof _fxCardZone === 'function'){
+          _fxCardZone('purge', _fxHandCenterPos());
+          _fxCardZone('purge', _fxDiscardPilePos());
+        }
       }
     }
   },
@@ -1999,17 +2108,17 @@ var EFFECT_TYPES = {
         side = ctx.actor.side;
         var h = Math.min(healAmt, target.maxHp - target.hp);
         target.hp = Math.min(target.maxHp, target.hp + h);
-        if(h > 0){ spawnHealNum(side, h); flashHpBar(side, 'hp-flash-green'); }
+        if(h > 0){ spawnHealNum(side, h); flashHpBar(side, 'hp-flash-green'); _fxHealFromSide(side); }
         addLog(ctx.cardName + '! +' + h + ' HP.', 'heal');
       } else if(ctx.isEnemy){
         var h2 = Math.min(healAmt, gs.enemyMaxHp - gs.enemyHp);
         gs.enemyHp = Math.min(gs.enemyMaxHp, gs.enemyHp + h2);
-        if(h2 > 0){ spawnHealNum('enemy', h2); flashHpBar('enemy', 'hp-flash-green'); }
+        if(h2 > 0){ spawnHealNum('enemy', h2); flashHpBar('enemy', 'hp-flash-green'); _fxHealFromSide('enemy'); }
         addLog(ctx.cardName + '! +' + h2 + ' HP.', 'heal');
       } else {
         var h3 = Math.min(healAmt, gs.playerMaxHp - gs.playerHp);
         gs.playerHp = Math.min(gs.playerMaxHp, gs.playerHp + h3);
-        if(h3 > 0){ spawnHealNum('player', h3); flashHpBar('player', 'hp-flash-green'); }
+        if(h3 > 0){ spawnHealNum('player', h3); flashHpBar('player', 'hp-flash-green'); _fxHealFromSide('player'); }
         addLog(ctx.cardName + '! +' + h3 + ' HP.', 'heal');
       }
     }
@@ -2038,6 +2147,15 @@ var EFFECT_TYPES = {
       } else {
         for(var i=0;i<n;i++) doDraw(null,false);
         addLog(ctx.cardName+'! Drew '+n+' card'+(n>1?'s':'')+'.','draw');
+        // Round 67q: draw pulse on the player's hand after the new
+        // cards land. Deferred a frame so renderHand has run.
+        if(typeof _fxCardZone === 'function'){
+          setTimeout(function(){
+            for(var k = 0; k < n; k++){
+              _fxCardZone('draw', _fxHandSlotPos(gs.hand.length - 1 - k));
+            }
+          }, 30);
+        }
       }
     }
   },
@@ -2240,6 +2358,23 @@ var EFFECT_TYPES = {
       actor._cardMods.push(mod);
       addLog('Card mod \''+source+'\' applied.', 'buff');
       if(actor.side === 'player' && typeof renderHand === 'function') renderHand();
+      // Round 67q: modify pulse on each affected card in the player's
+      // hand. Round 67r: now filter properly — only cards that match
+      // the modification's filter get the sparkle. Previously every
+      // card pulsed regardless of filter (so Dead Weight twinkled on
+      // Shadow Mark even though it's not an attack card).
+      if(actor.side === 'player' && typeof _fxCardZone === 'function'){
+        var modFilter = mod.filter;
+        setTimeout(function(){
+          for(var k = 0; k < gs.hand.length; k++){
+            var handItem = gs.hand[k];
+            var handCard = handItem && CARDS[handItem.id];
+            if(_cardMatchesFilter(handItem && handItem.id, handCard, modFilter)){
+              _fxCardZone('modify', _fxHandSlotPos(k));
+            }
+          }
+        }, 30);
+      }
     }
   },
 
@@ -2292,6 +2427,12 @@ var EFFECT_TYPES = {
       addLog('Absorbed ' + CARDS[lastId].name + ' (Ethereal).','innate');
       if(actor.side === 'player') spawnDrawAnim(lastId, 'innate');
       if(actor.side === 'player') renderHand();
+      // Round 67q: conjure pulse for the absorbed copy.
+      if(actor.side === 'player' && typeof _fxCardZone === 'function'){
+        setTimeout(function(){
+          _fxCardZone('conjure', _fxHandSlotPos(gs.hand.length - 1));
+        }, 30);
+      }
     }
   },
 
@@ -2309,6 +2450,12 @@ var EFFECT_TYPES = {
       for(var i = 0; i < n; i++){
         if(actor.hand.length === 0) break;
         var ri = Math.floor(Math.random() * actor.hand.length);
+        // Round 67q: red doom flash on the chosen card BEFORE the
+        // existing fly-to-discard animation. Player-side only — enemy
+        // hand isn't visible.
+        if(actor.side === 'player' && typeof _fxCardZone === 'function' && typeof _fxHandSlotPos === 'function'){
+          _fxCardZone('discard-doom', _fxHandSlotPos(ri));
+        }
         var discItem = actor.hand.splice(ri, 1)[0];
         if(!discItem.ghost){
           actor.discardPile.push(discItem.id);

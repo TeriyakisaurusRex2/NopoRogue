@@ -185,6 +185,11 @@ button, input, select, textarea{font-family:inherit;}
 .cs-q-row.cs-q-row-story .cs-q-name{color:#e8d7a8;}
 .cs-q-row.cs-q-row-story .cs-q-bar-fill{background:linear-gradient(90deg,#5a4018,#c09030,#f0a53a);}
 .cs-q-star{color:#f0a53a;text-shadow:0 0 6px rgba(240,165,58,.6);margin-right:4px;}
+/* Round 67q: chain title tag — tiny uppercase line above the quest
+   title saying which questchain this is part of ("NEW BEGINNINGS"
+   etc). Subtle gold accent; non-decorative chains can repurpose it. */
+.cs-q-chain-tag{font-size:8px;color:#9a7030;letter-spacing:2px;text-transform:uppercase;margin-bottom:3px;opacity:.85;}
+.cs-q-row.cs-q-row-story .cs-q-chain-tag{color:#d4a843;}
 /* Round 67p: rail-side CLAIM button so early-game story quests are
    claimable without entering town.
    Round 67q: complete rows pulse a green glow so the player notices
@@ -280,6 +285,13 @@ button, input, select, textarea{font-family:inherit;}
 .btn-dim:hover{background:rgba(55,32,8,.7);}
 .btn-red{background:rgba(80,10,10,.6);border-color:#c03030;color:#e07070;}
 .btn-red:hover{background:rgba(110,15,15,.7);}
+/* Round 67q: locked-btn — generic "this is gated by a quest" disabled
+   state. Used on EDIT DECK before story_edit_deck activates. Dimmed
+   palette + no hover lift + not-allowed cursor. */
+.btn.locked-btn,
+button.locked-btn{background:rgba(20,12,4,.6)!important;border-color:#3a2010!important;color:#5a4020!important;cursor:not-allowed!important;opacity:.55;}
+.btn.locked-btn:hover,
+button.locked-btn:hover{background:rgba(20,12,4,.6)!important;transform:none!important;}
 
 /* ── NAV BAR ── */
 /* Round 67p: nav bar spans the full canvas width (was max-width 960
@@ -971,10 +983,16 @@ button, input, select, textarea{font-family:inherit;}
 .blessing *{pointer-events:none;}
 /* Deck view */
 #deck-screen{padding:0;}
-.dv-title{font-size:13px;color:#d4a843;letter-spacing:3px;text-align:center;padding:12px 8px 8px;flex-shrink:0;}
-.dv-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(158px,1fr));gap:8px;padding:0 8px;overflow-y:auto;flex:1;scrollbar-width:thin;scrollbar-color:#2a1808 transparent;}
-.dv-wrap{display:flex;flex-direction:column;align-items:center;}
-.dv-cnt{font-size:8px;color:#7a6030;margin-top:2px;}
+.dv-title{font-size:18px;color:#d4a843;letter-spacing:3px;text-align:center;padding:18px 12px 12px;flex-shrink:0;}
+.dv-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px;padding:0 24px 8px;overflow-y:auto;flex:1;scrollbar-width:thin;scrollbar-color:#2a1808 transparent;justify-items:center;}
+.dv-wrap{display:flex;flex-direction:column;align-items:center;gap:4px;}
+/* Round 67q: .card is absolute-positioned for the combat hand-fan
+   layout. Inside the deck view grid, that breaks the layout — cards
+   stack on top of each other at bottom:14px;left:50%. Reset to flow
+   normally here. width/height still come from .card. */
+.dv-grid .card{position:static;bottom:auto;left:auto;transform:none;cursor:default;}
+.dv-grid .card:hover{transform:none;}
+.dv-cnt{font-size:11px;color:#9a7030;letter-spacing:1px;}
 /* Filler card first-time glow */
 @keyframes fillerGlow{0%,100%{box-shadow:0 0 8px rgba(200,80,20,.4);}50%{box-shadow:0 0 20px rgba(240,120,40,.8),0 0 40px rgba(200,80,20,.4);}}
 .filler-glow{animation:fillerGlow 1.4s ease-in-out infinite;border-color:#c85010!important;}
@@ -2367,7 +2385,11 @@ button, input, select, textarea{font-family:inherit;}
 .hall-quest-detail-stamp.complete-stamp{color:#7fc06a;border-color:#7fc06a;background:rgba(20,40,10,.5);}
 
 /* Title + desc */
-.hall-quest-detail-title{font-size:18px;color:#d4a843;letter-spacing:.8px;margin-top:4px;}
+/* Round 67q: chain title — appears just above the main quest title
+   to identify the questchain ("NEW BEGINNINGS"). Bigger letter-
+   spacing than the rail version since the detail card has more room. */
+.hall-quest-detail-chain{font-size:10px;color:#d4a843;letter-spacing:3px;text-transform:uppercase;margin-top:6px;opacity:.9;}
+.hall-quest-detail-title{font-size:18px;color:#d4a843;letter-spacing:.8px;margin-top:2px;}
 .hall-quest-detail-desc{font-size:12px;color:#a08858;line-height:1.6;font-style:italic;}
 
 /* Sections — label + body */

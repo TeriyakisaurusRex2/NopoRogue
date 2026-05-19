@@ -938,6 +938,42 @@ var STORY_QUESTS = {
   },
 };
 
+// Round 67q: questchain registry. Each entry lists the story-quest IDs
+// that share a chain title. The post-init loop below stamps `chain`
+// onto each member def so the rail / detail-card renders can pick it
+// up as a per-quest tagline. Add future chains here (one per arc):
+//   'M\'bur\'s Forge':  ['story_xxx', 'story_yyy'],
+//   'Druid\'s Awakening': ['story_zzz', ...],
+// and the same renderer surfaces them without further code.
+var STORY_QUEST_CHAINS = {
+  'New Beginnings': [
+    'story_reach_lv2',
+    'story_edit_deck',
+    'story_reach_lv3',
+    'story_craft_safety_net',
+    'story_equip_safety_net',
+    'story_clear_pale_road',
+    'story_meet_barau',
+    'story_first_summon',
+  ],
+};
+
+Object.keys(STORY_QUEST_CHAINS).forEach(function(chainTitle){
+  STORY_QUEST_CHAINS[chainTitle].forEach(function(qid){
+    if(STORY_QUESTS[qid]) STORY_QUESTS[qid].chain = chainTitle;
+  });
+});
+
+// Lookup helper so the renderer can pull the chain title even when
+// the saved offered-def doesn't carry it (older saves predating this
+// round). Falls back to the live STORY_QUESTS entry by id.
+function getQuestChainTitle(def){
+  if(!def) return null;
+  if(def.chain) return def.chain;
+  if(def.id && STORY_QUESTS[def.id] && STORY_QUESTS[def.id].chain) return STORY_QUESTS[def.id].chain;
+  return null;
+}
+
 // Adds a story quest def to quests.offered (so the rail can look it up)
 // and pushes { id, progress:0 } to active. Idempotent — re-adding the
 // same id is a no-op.

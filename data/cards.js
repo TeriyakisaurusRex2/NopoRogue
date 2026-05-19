@@ -106,6 +106,10 @@ var CARDS = {
   // ── Starcaller Druid ──
   druid_void_bolt: {id:'druid_void_bolt', name:'Void Bolt', icon:'🔵', type:'attack', unique:true, champ:'druid', statId:'wis',
     effect:'Deal WIS÷2 damage.\n[Sorcery] [30]: [Churn] 1.\n[Echo]: Draw 1.',
+    // Round 67q: bespoke FX — projectile-with-comet-trail in void accent.
+    // Without this, the effect-driven router would fire a slash for the
+    // dmg_conditional, which is the wrong shape for a ranged WIS bolt.
+    fx: 'projectile_void',
     effects:[{type:'dmg_conditional',base:0,hits:1,stat:'wis',stat_div:2},{type:'sorcery',cost:30,effect:{type:'churn',count:1}}],
     onDiscard:[{type:'draw_cards',count:1}]},
 

@@ -14,6 +14,10 @@
 
 // ── SFX catalogue ──────────────────────────────────────────────
 // Each entry: volume multiplier relative to the sfx slider (0–1).
+// Optional `pitchVar` randomizes playbackRate in ±pitchVar (used for
+// rapidly-repeating sounds like slash to avoid sample fatigue).
+// Optional `poolSize` overrides the default 3 for sounds that need
+// more simultaneous instances (e.g. multi-hit slashes).
 // Tweak these if something feels too loud or too quiet.
 var SFX_FILES = {
   card_play:      { file:'card_play',      vol:1.0  },
@@ -43,21 +47,71 @@ var SFX_FILES = {
   de_remove:      { file:'de_remove',      vol:0.75 },  // removing a card
   de_deck_saved:  { file:'de_deck_saved',  vol:0.85 },  // save & exit
   de_deadweight:  { file:'de_deadweight',  vol:0.7  },  // filler appears in deck
+  // ── Combat FX (Round 67r) ────────────────────────────────────
+  // Slash fires per impact on every dmg_* card. Pitch variation
+  // keeps the sample from feeling repetitive on rapid plays /
+  // multi-hit cards. Larger pool to absorb 3-hit and 4-hit cards
+  // without truncating earlier instances.
+  slash:          { file:'slash',          vol:0.7,  pitchVar:0.18, poolSize:5 },
+  // Status-application SFX — one per keyword we have a sound for.
+  // playSfx('weaken_on') fires inside Effects.statusApply at the
+  // moment the lingering motes spawn (= bolt impact for debuffs,
+  // immediate for self-applied buffs).
+  burn_on:        { file:'burn_on',        vol:0.8  },
+  haste_on:       { file:'haste_on',       vol:0.8  },
+  poison_on:      { file:'poison_on',      vol:0.8  },
+  stun_on:        { file:'stun_on',        vol:0.85 },
+  weaken_on:      { file:'weaken_on',      vol:0.8  },
+  slow_on:        { file:'slow_on',        vol:0.8  },
+  // DoT tick SFX — one per tick of damage. Fires from tickDoTs in
+  // game.js, keyed off the status id's first segment so 'poison',
+  // 'poison_self', 'poison_self_enemy' all share poison_tick.
+  // pitchVar keeps the repeated samples feeling natural across a
+  // long DoT duration.
+  burn_tick:      { file:'burn_tick',      vol:0.65, pitchVar:0.10 },
+  poison_tick:    { file:'poison_tick',    vol:0.65, pitchVar:0.10 },
+  // Shield form / break — fired from Effects.shield and shieldBreak.
+  shield_on:      { file:'shield_on',      vol:0.9  },
+  shield_off:     { file:'shield_off',     vol:0.9  },
+  // ── Post-combat / run-results screen (Round 67r) ─────────────
+  // rising_bubble: fires per bar segment as it animates in (XP,
+  // mastery, quest rows). Replaces the previously-unregistered
+  // 'bar_fill' key so the 3 existing call sites finally make
+  // sound. Small pitch variation keeps multi-segment XP fills
+  // from sounding identical step-to-step.
+  rising_bubble:  { file:'rising_bubble',  vol:0.75, pitchVar:0.08 },
+  // click_short: generic short UI click. Currently wired to the
+  // Continue button on the run-results overlay; can be reused
+  // anywhere a snappy click is wanted without the heavier
+  // ui_click feel.
+  click_short:    { file:'click_short',    vol:0.7  },
+  // quest_complete: chime when a quest bar finishes filling to 100%
+  // on the post-combat run-results overlay. Fires only when this
+  // animation crosses into completion (was incomplete, now complete).
+  quest_complete: { file:'quest_complete', vol:0.85 },
+  // quest_reward: fires when player CLAIMS the rewards from a
+  // complete quest — both Hall claim and side-rail claim share
+  // this cue. Distinct from quest_complete (= objective filled)
+  // and quest_notify (= mid-combat progress ding).
+  quest_reward:   { file:'quest_reward',   vol:0.9  },
 };
 
 var SFX_BASE = 'assets/audio/sfx/';
 
 // Pre-load all sfx into Audio objects so first play has no delay.
 // We keep a small pool per key to allow rapid overlapping plays
-// (e.g. card_draw firing quickly with a full hand).
+// (e.g. card_draw firing quickly with a full hand). Per-key
+// `poolSize` overrides the default for sounds that need more
+// concurrent instances (multi-hit slashes).
 var _sfxPool = {};
-var _sfxPoolSize = 3; // simultaneous instances per sound
+var _sfxPoolSize = 3; // simultaneous instances per sound (default)
 
 (function _initSfx(){
   Object.keys(SFX_FILES).forEach(function(key){
     var def = SFX_FILES[key];
+    var size = +def.poolSize || _sfxPoolSize;
     _sfxPool[key] = [];
-    for(var i = 0; i < _sfxPoolSize; i++){
+    for(var i = 0; i < size; i++){
       var a = new Audio(SFX_BASE + def.file + '.mp3');
       a.preload = 'auto';
       _sfxPool[key].push(a);
@@ -79,6 +133,17 @@ function playSfx(key){
   try{
     a.currentTime = 0;
     a.volume = Math.min(1, (SETTINGS.sfx / 100) * def.vol);
+    // Round 67r: optional pitch variation. Randomizes playbackRate
+    // in [1-pitchVar, 1+pitchVar] so rapid repeats of the same
+    // sample (e.g. slash on a 4-hit attack) don't feel mechanical.
+    // playbackRate also changes duration, so very high pitchVar
+    // values will perceptibly speed up / slow down the sample.
+    if(def.pitchVar){
+      var pv = +def.pitchVar;
+      a.playbackRate = 1 + (Math.random() * 2 - 1) * pv;
+    } else if(a.playbackRate !== 1){
+      a.playbackRate = 1;
+    }
     a.play().catch(function(){});
   } catch(e){}
 }

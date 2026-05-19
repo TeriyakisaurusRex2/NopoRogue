@@ -1790,7 +1790,11 @@ function buildCsQuestRail(railIdOpt){
   var maxActive = (typeof getMaxActiveQuests === 'function') ? getMaxActiveQuests() : 3;
   var head =
       '<div class="cs-quests-rail-title">ACTIVE QUESTS</div>'
-    + '<div class="cs-quests-rail-sub">Tracking '+active.length+' of '+maxActive+'.</div>';
+    // Round 67q: tracking line counts BOUNTY actives only. The cap is
+    // "bounty slots", story quests live outside it. Reads naturally —
+    // "Tracking 2 of 3" matches what the player understands as their
+    // quest-board capacity.
+    + '<div class="cs-quests-rail-sub">Tracking '+countNonStoryActiveQuests()+' of '+maxActive+'.</div>';
 
   if(!active.length){
     rail.innerHTML = head
@@ -1825,8 +1829,16 @@ function buildCsQuestRail(railIdOpt){
     // scale+fade-in animation. Flag is cleared shortly after by the
     // setTimeout in claimQuestFromRail.
     var chainInCls = _csQuestChainIns[a.id] ? ' cs-q-chain-in' : '';
+    // Round 67q: chain tag — small uppercase tagline above the title
+    // identifying which questchain this belongs to ("NEW BEGINNINGS",
+    // etc). Pulled via getQuestChainTitle so older saves whose stored
+    // def predates the chain field still get the live STORY_QUESTS
+    // value.
+    var chainTitle = (typeof getQuestChainTitle === 'function') ? getQuestChainTitle(def) : null;
+    var chainTag = chainTitle ? '<div class="cs-q-chain-tag">'+_csqEsc(chainTitle)+'</div>' : '';
     rows +=
         '<div class="cs-q-row'+storyCls+(complete?' cs-q-row-complete':'')+chainInCls+'" data-qid="'+_csqEsc(a.id)+'">'
+      +   chainTag
       +   '<div class="cs-q-row-head">'
       +     '<span class="cs-q-name">'+titlePrefix+_csqEsc(def.title || a.id)+'</span>'
       +     '<span class="cs-q-frac'+(complete?' complete':'')+'">'+prog+' / '+target+'</span>'
@@ -1912,7 +1924,7 @@ function _renderQuestsTab(){
   // Header strip — tracking + refresh ETA.
   var html =
       '<div class="hall-quest-header">'
-    +   '<span class="hall-quest-tracking">TRACKING: '+quests.active.length+' / '+maxActive+'</span>'
+    +   '<span class="hall-quest-tracking">TRACKING: '+countNonStoryActiveQuests()+' / '+maxActive+'</span>'
     +   '<span class="hall-quest-refresh">NEW QUESTS: '+(rh>0?rh+'h ':'')+rm+'m</span>'
     + '</div>';
 
@@ -2016,6 +2028,15 @@ function _renderQuestDetailCard(questId, quests, activeIds, maxActive){
   if(isComplete) html += '<div class="hall-quest-detail-stamp complete-stamp">COMPLETE</div>';
   else if(isActive) html += '<div class="hall-quest-detail-stamp active-stamp">ACTIVE</div>';
 
+  // Round 67q: chain title — small tagline above the quest title that
+  // tells the player "this is part of <chain>". Only renders when a
+  // chain field is present (typically story quests; random bounties
+  // don't belong to chains).
+  var chainTitle = (typeof getQuestChainTitle === 'function') ? getQuestChainTitle(q) : null;
+  if(chainTitle){
+    html += '<div class="hall-quest-detail-chain">'+_csqEsc(chainTitle)+'</div>';
+  }
+
   // Title + flavour desc.
   html += '<div class="hall-quest-detail-title">'+q.title+'</div>';
   html += '<div class="hall-quest-detail-desc">'+q.desc+'</div>';
@@ -2082,7 +2103,9 @@ function _renderQuestDetailCard(questId, quests, activeIds, maxActive){
     btn = '<button class="hall-quest-btn claim" data-action="claim" data-questid="'+q.id+'">CLAIM REWARD</button>';
   } else if(isActive){
     btn = '<button class="hall-quest-btn" data-action="abandon" data-questid="'+q.id+'" style="border-color:#5a3020;color:#8a5030;">ABANDON</button>';
-  } else if(quests.active.length < maxActive){
+  } else if(countNonStoryActiveQuests() < maxActive){
+    // Round 67q: gate the ACCEPT button on the bounty cap, not the
+    // total active count — story quests don't compete for these slots.
     // Use the offered-list index so acceptQuest(idx) still works.
     var idx = (quests.offered || []).findIndex(function(o){ return o.id === q.id; });
     btn = '<button class="hall-quest-btn" data-action="accept" data-questidx="'+idx+'">ACCEPT QUEST</button>';
@@ -2535,12 +2558,32 @@ function _generateBounties(count){
   return bounties;
 }
 
+// Round 67q: simpler pacing — one bounty slot per Hall level, capped
+// at 5 to prevent quest sprawl. Previously the formula plateaued
+// awkwardly (1/1/2/2/3/3) and topped out at 3. Story quests don't
+// count against this cap — see countNonStoryActiveQuests below.
+// Bonus slots from future upgrades stack on top of the level base.
 function getMaxActiveQuests(){
   var lvl = getBuildingLevel('adventurers_hall');
-  var base = 1;
-  if(lvl >= 5) base = 3;
-  else if(lvl >= 3) base = 2;
+  var base = Math.min(5, lvl);
   return base + (PERSIST.town.bonusQuestSlots||0);
+}
+
+// Round 67q: how many NON-story quests are currently active. The
+// quest cap is a "bounty board slots" cap — story quests aren't
+// optional jobs, they're plot, and shouldn't compete with bounties
+// for the same slots. Used by acceptQuest's gate + the rail/hall
+// tracking line.
+function countNonStoryActiveQuests(){
+  if(!PERSIST.town || !PERSIST.town.quests) return 0;
+  var active = PERSIST.town.quests.active || [];
+  var offered = PERSIST.town.quests.offered || [];
+  var n = 0;
+  for(var i = 0; i < active.length; i++){
+    var def = offered.find(function(o){ return o.id === active[i].id; });
+    if(!def || !def.isStory) n++;
+  }
+  return n;
 }
 
 function getQuestOfferedCount(){
@@ -2656,6 +2699,39 @@ function isBuildingQuestTarget(buildingId){
   return false;
 }
 
+// Round 67q: is a quest in EITHER active or completed? Used to gate UI
+// that should unlock the moment the player encounters a quest, even
+// before they claim it (e.g. EDIT DECK becomes usable as soon as
+// story_edit_deck activates, not just after claim).
+function isQuestSeen(questId){
+  if(!questId || !PERSIST.town || !PERSIST.town.quests) return false;
+  var q = PERSIST.town.quests;
+  if(Array.isArray(q.active) && q.active.some(function(a){ return a.id === questId; })) return true;
+  if(Array.isArray(q.completed) && q.completed.indexOf(questId) !== -1) return true;
+  return false;
+}
+
+// Round 67q: has a quest been CLAIMED (completed list only)? Used by
+// rails that need a quest to be FULLY done before unlocking (e.g. town
+// nav unlocks only after story_reach_lv3 is claimed, not while it's
+// still pending or claimable).
+function isQuestClaimed(questId){
+  if(!questId || !PERSIST.town || !PERSIST.town.quests) return false;
+  var c = PERSIST.town.quests.completed;
+  return Array.isArray(c) && c.indexOf(questId) !== -1;
+}
+
+// Round 67q: any pending story quest pointing at a building? Used to
+// pulse the nav-town tab so the player has a visible signal "go to
+// town for the next step" without needing to remember which building.
+function hasPendingTownQuest(){
+  var townBuildings = ['vault','forge','sanctum','market','adventurers_hall','bestiary','shard_well','arena'];
+  for(var i = 0; i < townBuildings.length; i++){
+    if(isBuildingQuestTarget(townBuildings[i])) return true;
+  }
+  return false;
+}
+
 // Advance progress on any active quest matching the given event. Called from
 // combat at three points in game.js:
 //   - on enemy kill          : checkQuestProgress('kill', {enemyId})
@@ -2721,14 +2797,39 @@ function checkQuestProgress(eventType, ctx){
     }
   });
 
-  if(anyAdvanced) savePersist();
+  if(anyAdvanced){
+    savePersist();
+    // Round 67q: repaint UI that displays quest state so an advance
+    // surfaces immediately. Bug being fixed: deck-edit advanced the
+    // quest internally but the rails painted before the next screen
+    // change still showed 0/1. Each painter no-ops when its target
+    // DOM isn't present, so calling them unconditionally is safe.
+    if(typeof buildCsQuestRail === 'function')   buildCsQuestRail();
+    if(typeof buildAreaQuestRail === 'function') buildAreaQuestRail();
+    if(typeof _renderHallContent === 'function' && document.getElementById('hall-body-inner')) _renderHallContent();
+    // Refresh nav (pulse state for town quest targets, etc).
+    if(typeof updateNavBar === 'function'){
+      var advActive = document.getElementById('nav-adventure');
+      var tab = (advActive && advActive.classList.contains('active')) ? 'adventure' : 'town';
+      updateNavBar(tab);
+    }
+    // Rebuild the champion rail if the EDIT DECK button lock/pulse
+    // state could have changed (e.g. story_edit_deck just activated
+    // or just advanced).
+    if(typeof rebuildChampGrid === 'function' && document.getElementById('select-screen') && document.getElementById('select-screen').classList.contains('active')){
+      rebuildChampGrid();
+    }
+  }
 }
 
 function acceptQuest(idx){
   var quests = PERSIST.town.quests;
   if(!quests.active) quests.active = [];
   if(!Array.isArray(quests.active)) quests.active = quests.active ? [quests.active] : [];
-  if(quests.active.length >= getMaxActiveQuests()) return;
+  // Round 67q: the cap applies to BOUNTY (non-story) actives only.
+  // Story quests live alongside but don't compete for these slots —
+  // they're plot, not jobs the player picked off the board.
+  if(countNonStoryActiveQuests() >= getMaxActiveQuests()) return;
   var q = quests.offered[idx];
   if(!q) return;
   if(quests.active.some(function(a){ return a.id === q.id; })) return;
@@ -2817,8 +2918,23 @@ function claimQuest(questId){
     }
   }
   savePersist();
+  // Round 67r: quest_reward chime — fires on every claim path
+  // (Hall and rail share this cue). Sound for "you just collected
+  // rewards." Distinct from quest_complete (objective bar fills)
+  // and quest_notify (mid-combat progress ding).
+  if(typeof playSfx === 'function') playSfx('quest_reward');
   showTownToast('Quest complete! Rewards claimed.');
   _renderHallContent();
+  // Round 67q: refresh the nav bar so a quest that just unlocked the
+  // town tab (story_reach_lv3) drops its lock state immediately, and
+  // so the town pulse-glow updates as building-target quests progress.
+  // Pass an explicit activeTab so updateNavBar re-evaluates the lock /
+  // pulse classes (it skips them when called without args).
+  if(typeof updateNavBar === 'function'){
+    var advActive = document.getElementById('nav-adventure');
+    var tab = (advActive && advActive.classList.contains('active')) ? 'adventure' : 'town';
+    updateNavBar(tab);
+  }
 }
 
 // Round 67p: rail-side claim. Animates the bar drain → row collapse →
@@ -2840,6 +2956,12 @@ function claimQuestFromRail(questId){
   // animating out (the row is still in the DOM, just collapsing).
   var existingRow = document.querySelector('.cs-q-row.cs-q-claiming[data-qid="' + (window.CSS && CSS.escape ? CSS.escape(questId) : questId) + '"]');
   if(existingRow) return;
+
+  // Round 67q/r: quest_reward plays on the rail-side claim. Same cue
+  // as the Hall-side claim in claimQuest() so both paths feel
+  // consistent. Replaces the previously-unregistered 'sonar_ping' key
+  // that was silently no-op'ing here since Round 67q.
+  if(typeof playSfx === 'function') playSfx('quest_reward');
 
   // Snapshot active quest ids BEFORE claim so we can detect anything
   // spawned by the .next chain.

@@ -141,6 +141,12 @@ function dealDamage(target, dmg, options) {
           target.statusEffects.splice(si, 1);
         }
       }
+      // Round 67r: fire the shield-break animation. Same FX for damage
+      // break, Manabound purge, and duration expiry — player learns one
+      // visual for "shield gone".
+      if (typeof _fxShieldBreakFromSide === 'function') {
+        _fxShieldBreakFromSide(target.side);
+      }
       // Shieldbreaker Charm relic: when PLAYER damage breaks ENEMY shield, draw a card.
       if (gs && gs._relicDrawOnShieldBreak && target.side === 'enemy' && !options.isThorns && !options.isDot){
         if (typeof doDraw === 'function') {

@@ -2906,7 +2906,13 @@ function buildArea(def,level){
     return {def:def,level:level,enemies:enemies};
   }
 
-  var count=def.singleEnemy ? 1 : Math.min(8, 4+Math.floor(level/2));
+  // Round 67q: lighter fight count for early areas. Previous formula
+  // started at 4 fights/level-1 area; now starts at 3 and scales the
+  // same way (+1 every 2 levels). The clear-bonus formula in
+  // doVictory was bumped in tandem so a first-area clear still puts
+  // the player across the 80-XP lv1→lv2 threshold.
+  //   Lv1: 3   Lv2: 4   Lv3: 4   Lv4: 5   Lv5: 5   ... cap 8 at lv10+
+  var count=def.singleEnemy ? 1 : Math.min(8, 3+Math.floor(level/2));
   // Dojo: cycle through pool sequentially
   var dojoOffset = 0;
   if(def.singleEnemy){
@@ -3584,15 +3590,31 @@ function buildCsChampRail(id, idPrefix, railId){
     };
   }
   if(editBtn){
-    editBtn.onclick = function(){
-      selectedChampId = id;
-      if(typeof openChampSanctum === 'function') openChampSanctum();
-    };
-    // Round 67q: pulse the EDIT DECK button while the story_edit_deck
-    // quest is pending (active AND progress < target). The pulse is a
-    // "find this button" nudge — it turns off the moment the player
-    // saves a deck change (which advances the quest to claimable).
-    // From there the rail's own claim-row pulse takes over.
+    // Round 67q: gate the EDIT DECK button until the player encounters
+    // the story_edit_deck quest. Before that point the player has no
+    // narrative reason to be poking at decks and shouldn't be exposed
+    // to the deck-builder mid-tutorial flow. Once the quest is in
+    // active OR completed, the button is permanently usable.
+    var deckUnlocked = (typeof isQuestSeen === 'function') ? isQuestSeen('story_edit_deck') : true;
+    if(deckUnlocked){
+      editBtn.onclick = function(){
+        selectedChampId = id;
+        if(typeof openChampSanctum === 'function') openChampSanctum();
+      };
+      editBtn.disabled = false;
+      editBtn.classList.remove('locked-btn');
+      editBtn.title = '';
+    } else {
+      editBtn.onclick = null;
+      editBtn.disabled = true;
+      editBtn.classList.add('locked-btn');
+      editBtn.title = 'Unlocks with a quest';
+    }
+    // Pulse the EDIT DECK button while the story_edit_deck quest is
+    // pending (active AND progress < target). The pulse is a "find
+    // this button" nudge — it turns off the moment the player saves a
+    // deck change (which advances the quest to claimable). From there
+    // the rail's own claim-row pulse takes over.
     var nudgeDeck = (typeof isQuestPending === 'function') && isQuestPending('story_edit_deck');
     editBtn.classList.toggle('quest-target-pulse', nudgeDeck);
   }
@@ -3686,8 +3708,17 @@ function updateNavBar(activeTab){
     var tt=document.getElementById('nav-town');
     if(tt){
       tt.classList.toggle('active',activeTab==='town');
-      tt.classList.remove('locked-tab');
-      tt.title='';
+      // Round 67q: town nav gated behind story_reach_lv3 being claimed.
+      // Before claim, the tab renders as locked + the click is a
+      // no-op (handled in navTo('town')). After claim, normal nav.
+      var townUnlocked = (typeof isQuestClaimed === 'function') ? isQuestClaimed('story_reach_lv3') : true;
+      tt.classList.toggle('locked-tab', !townUnlocked);
+      tt.title = townUnlocked ? '' : 'Locked — complete "Find Your Stride"';
+      // Pulse-glow on the town nav when any pending story quest
+      // points at a building inside town. Once the player finishes
+      // those quests, the nav settles back to normal.
+      var townHasPending = townUnlocked && (typeof hasPendingTownQuest === 'function') && hasPendingTownQuest();
+      tt.classList.toggle('quest-target-pulse', townHasPending);
     }
   }
   // Round 67p: keep the adventure tab label in sync with the actual
@@ -3778,6 +3809,15 @@ function navTo(tab){
     updateNavBar('adventure');
     playMusic('menu');
   } else if(tab==='town'){
+    // Round 67q: town gated behind story_reach_lv3 being claimed.
+    // Block silently with a brief toast if the player tries via the
+    // tab click, T hotkey, or any internal navTo('town') call. Once
+    // the quest is claimed, this guard falls through.
+    var townUnlocked = (typeof isQuestClaimed === 'function') ? isQuestClaimed('story_reach_lv3') : true;
+    if(!townUnlocked){
+      if(typeof showTownToast === 'function') showTownToast('The town opens after "Find Your Stride".');
+      return;
+    }
     openTown();
   }
 }
@@ -4540,6 +4580,8 @@ function checkManabound(target, mana, effects){
     }
     removeTagsByClass('player', 'shield');
     addLog('⚡ Shield purged (manabound — mana depleted).', 'sys');
+    // Round 67r: shared shield-break animation.
+    _fxShieldBreakFromSide('player');
     purged = true;
   }
   if(target === 'enemy' && (gs.enemyShell||0) > 0){
@@ -4548,6 +4590,8 @@ function checkManabound(target, mana, effects){
       if(effects[i].id === 'shield') effects.splice(i, 1);
     }
     removeTagsByClass('enemy', 'shield');
+    // Round 67r: shared shield-break animation.
+    _fxShieldBreakFromSide('enemy');
     purged = true;
   }
   // Dodge purge
@@ -4769,6 +4813,22 @@ function _enemyPlayCard(e){
   if(!gs.enemyHand.length) return;
   var toPlay = gs.enemyHand[0];
   var cardDef = toPlay.id ? CARDS[toPlay.id] : null;
+
+  // Round 67q: mirror the player-side FX hook for enemy plays. Source
+  // is the enemy sprite, target depends on card type (attack = player,
+  // defense = self).
+  if(toPlay.id && window.Effects && typeof Effects.playCardFX === 'function' && window.FX){
+    var srcElE = document.getElementById('e-icon');
+    var tgtIdE = (typeof getCardTarget === 'function' && getCardTarget(toPlay.id) === 'player')
+      ? 'e-icon'  // 'player' from enemy POV = self-buff = enemy sprite
+      : 'p-icon'; // attack target = the actual player sprite
+    var tgtElE = document.getElementById(tgtIdE);
+    if(srcElE && tgtElE){
+      try {
+        Effects.playCardFX(toPlay.id, FX.centerInStage(srcElE), FX.centerInStage(tgtElE), false);
+      } catch(fxErr){ /* never block enemy play on FX errors */ }
+    }
+  }
 
   if(gs.actors && gs.actors.enemy && cardDef && cardDef.effects && cardDef.effects.length){
     // New system
@@ -5125,6 +5185,24 @@ function playCard(idx){
     c.effects = (c.effects||[]).concat([{type:'mana_burn', value:gs._relicUniversalManaBurn}]);
   }
 
+  // Round 67q: Combat FX hook. Fires the per-card particle effect
+  // (slash / shield / projectile) in parallel with the existing emoji
+  // fly. Source = the player's combatant centre (where the card "comes
+  // from" visually); target = enemy combatant for attacks, player
+  // for self-buffs. Effects.playCardFX no-ops for unknown cards, so
+  // adding a new card without FX wiring is harmless.
+  if(window.Effects && typeof Effects.playCardFX === 'function' && window.FX){
+    var srcEl = document.getElementById('p-icon');
+    var tgtId = (typeof getCardTarget === 'function' && getCardTarget(item.id) === 'player')
+      ? 'p-icon' : 'e-icon';
+    var tgtEl = document.getElementById(tgtId);
+    if(srcEl && tgtEl){
+      try {
+        Effects.playCardFX(item.id, FX.centerInStage(srcEl), FX.centerInStage(tgtEl), true);
+      } catch(fxErr){ /* never block card play on FX errors */ }
+    }
+  }
+
   try {
   if(gs.actors && gs.actors.player && c.effects && c.effects.length > 0){
     playCardForActor(gs.actors.player, idx);
@@ -5193,6 +5271,170 @@ function applyStatus(target,cls,label,val,stat,dur,desc){
     var statusId = String(label||'').toLowerCase().split(/[\s(]/)[0];
     tutorialEvent('status_applied', { target: target, statusId: statusId });
   }
+  // Round 67q: fire the statusApply FX wherever a status actually
+  // attaches. Hooked here (not in the card-effect handler) so any
+  // path that adds a status — innate, relic, enemy AI — gets the
+  // visual without per-call-site wiring. Skip 'shield' to avoid
+  // double-up with the dedicated shield effect.
+  // Round 67r: pass cls so debuffs get the projectile-delivery look
+  // (status-coloured comet from opposite side → target) while buffs
+  // stay on the on-target lingering path.
+  _fxStatusApplyFromTarget(target, label, cls);
+}
+// Round 67q: fire the green-+-motes heal FX on the side that just
+// gained HP. Called from the heal-effect handler in card_effects.js
+// whenever a non-zero heal lands. Source-of-truth approach matches
+// _fxStatusApplyFromTarget — hooks at the moment the state actually
+// changes, so any path (card, innate, relic, future content) that
+// restores HP surfaces the visual without per-call-site wiring.
+function _fxHealFromSide(side){
+  if(!window.Effects || !Effects.heal || !window.FX) return;
+  try {
+    var el = document.getElementById(side === 'enemy' ? 'e-icon' : 'p-icon');
+    if(el) Effects.heal({ target: FX.centerInStage(el) });
+  } catch(e){}
+}
+// Round 67r: shared shield-break FX. Fired wherever a shield is
+// removed — damage absorption to 0 (combat.js dealDamage), Manabound
+// purge on mana=0 (checkManabound), and duration expiry in
+// tickStatuses. Same animation everywhere so the player learns
+// "halves falling = shield gone" once.
+function _fxShieldBreakFromSide(side){
+  if(!window.Effects || !Effects.shieldBreak || !window.FX) return;
+  try {
+    var el = document.getElementById(side === 'enemy' ? 'e-icon' : 'p-icon');
+    if(el) Effects.shieldBreak({ target: FX.centerInStage(el), color: '#d4a843' });
+  } catch(e){}
+}
+
+// Round 67q: card-zone helpers. Resolve DOM elements (hand slots,
+// deck pile, discard pile) into design-space coords for the
+// cardZonePulse primitive. Player-side only — enemy hand isn't
+// visually represented, so enemy churn / draw / conjure skip FX.
+function _fxHandSlotPos(idx){
+  if(!window.FX) return null;
+  var cards = document.querySelectorAll('#hand-cards .card');
+  if(!cards.length) return _fxHandCenterPos();
+  var i = Math.max(0, Math.min(cards.length - 1, idx|0));
+  return FX.centerInStage(cards[i]);
+}
+function _fxHandCenterPos(){
+  if(!window.FX) return null;
+  var el = document.getElementById('hand-cards');
+  if(!el) return null;
+  return FX.centerInStage(el);
+}
+function _fxDeckPilePos(){
+  if(!window.FX) return null;
+  var el = document.getElementById('deck-cnt');
+  if(!el) return null;
+  return FX.centerInStage(el);
+}
+function _fxDiscardPilePos(){
+  if(!window.FX) return null;
+  var el = document.getElementById('disc-cnt');
+  if(!el) return null;
+  return FX.centerInStage(el);
+}
+// Thin wrapper — pulse only fires for the player side and only when
+// the primitive is loaded. Bundles the safety check so call sites
+// stay one-liners.
+function _fxCardZone(action, pos){
+  if(!window.Effects || !Effects.cardZonePulse || !pos) return;
+  try { Effects.cardZonePulse(pos, action); } catch(e){}
+}
+
+// Round 67r: per-target burst sequence counters. When multiple debuff
+// bolts fire to the same target inside a tight window (e.g. Shadow
+// Step lands Weaken then Sorcery Poison on the enemy), each bolt
+// gets a stagger delay AND a different arc so they're individually
+// readable instead of merging into one blur. The counter resets
+// after BURST_RESET_MS of quiescence so the next debuff sequence
+// starts fresh.
+var _fxBoltSeq = { player: 0, enemy: 0 };
+var _fxBoltResetTimer = { player: null, enemy: null };
+var BURST_RESET_MS = 800;
+// Bolt arc heights cycled by sequence index. Mix of high / low /
+// extra-high arcs so up to four near-simultaneous bolts visually
+// fan out instead of all tracing the same up-and-over curve.
+var BURST_ARCS = [-160, -90, -210, -130];
+var BURST_STAGGER_MS = 180;
+function _fxStatusApplyFromTarget(targetStr, label, cls, sourceStr){
+  if(!window.Effects || !window.FX) return;
+  var sid = String(label||'').toLowerCase().split(/[\s(]/)[0];
+  if(!sid) return;
+  try {
+    var el = document.getElementById(targetStr === 'player' ? 'p-icon' : 'e-icon');
+    if(!el) return;
+    var pos = FX.centerInStage(el);
+    // Round 67q: shield gets its own FX (sprite-based with shine
+    // sweep) — fired here so ANY card / innate / relic that applies
+    // a shield status surfaces the same animation, not just Brace.
+    // All other statuses fall through to the keyword-based lingering
+    // particle pattern.
+    if(sid === 'shield' && Effects.shield){
+      Effects.shield({ target: pos, color: '#d4a843' });
+      return;
+    }
+    // Round 67r: debuff applications get a projectile-delivery look —
+    // a status-coloured pixel-comet flies from the OPPOSITE side to
+    // the target, then on impact the lingering motes bloom. Reads
+    // immediately as "who threw what at whom".
+    //   Source for player-applied → hand-cards centre (the card)
+    //   Source for enemy-applied  → enemy sprite (#e-icon centre)
+    // Self-applies (sourceStr === targetStr, or buffs) skip the
+    // projectile and use on-target only — there's no "from-to" to
+    // convey when you're statusing yourself.
+    var isSelfApply = (sourceStr && sourceStr === targetStr);
+    if(cls === 'debuff' && !isSelfApply && Effects.statusBolt){
+      var sourcePos = null;
+      // Resolve source side: explicit sourceStr wins, else default to
+      // opposite side. Player-applied uses hand-cards centre so the
+      // bolt reads as "from the card I played".
+      var srcSide = sourceStr || (targetStr === 'player' ? 'enemy' : 'player');
+      if(srcSide === 'enemy'){
+        var srcEl = document.getElementById('e-icon');
+        if(srcEl) sourcePos = FX.centerInStage(srcEl);
+      } else {
+        if(typeof _fxHandCenterPos === 'function') sourcePos = _fxHandCenterPos();
+        if(!sourcePos){
+          var pEl = document.getElementById('p-icon');
+          if(pEl) sourcePos = FX.centerInStage(pEl);
+        }
+      }
+      if(sourcePos){
+        // Round 67r: pick stagger + arc by burst sequence index.
+        // First bolt fires immediately on the default arc; each
+        // follow-up adds BURST_STAGGER_MS of delay and cycles to a
+        // different arc height so the bolts visually fan out.
+        var seqIdx = _fxBoltSeq[targetStr] || 0;
+        _fxBoltSeq[targetStr] = seqIdx + 1;
+        if(_fxBoltResetTimer[targetStr]) clearTimeout(_fxBoltResetTimer[targetStr]);
+        _fxBoltResetTimer[targetStr] = setTimeout((function(side){
+          return function(){ _fxBoltSeq[side] = 0; };
+        })(targetStr), BURST_RESET_MS);
+        var delay = seqIdx * BURST_STAGGER_MS;
+        var arc   = BURST_ARCS[seqIdx % BURST_ARCS.length];
+        var capturedSource = sourcePos;
+        var capturedTarget = pos;
+        var capturedSid    = sid;
+        setTimeout(function(){
+          try {
+            Effects.statusBolt({
+              source: capturedSource,
+              target: capturedTarget,
+              statusId: capturedSid,
+              arc: arc
+            });
+          } catch(boltErr){}
+        }, delay);
+        return; // bolt's onImpact triggers statusApply itself
+      }
+    }
+    if(Effects.statusApply){
+      Effects.statusApply(pos, sid);
+    }
+  } catch(e){}
 }
 function applyDoT(target,id,dpt,tickMs,dur,desc){
   var list=gs.statusEffects[target];
@@ -5200,6 +5442,12 @@ function applyDoT(target,id,dpt,tickMs,dur,desc){
   var lbl=id.replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();});
   list.push({id:id,label:lbl,cls:'debuff',stat:'dot',remaining:dur,maxRemaining:dur,dot:true,dpt:dpt,tickMs:tickMs,tickAcc:0,desc:desc||lbl});
   addTag(target,'debuff',lbl,0,'dot',desc);
+  // Round 67q: same status-FX hook as applyStatus. DoTs use the `id`
+  // (already canonical: 'burn', 'poison', 'bleed') — pass through as
+  // the label so the keyword-map lookup matches.
+  // Round 67r: DoTs are always debuffs — explicit 'debuff' triggers
+  // the projectile-delivery look in the hook.
+  _fxStatusApplyFromTarget(target, id, 'debuff');
 }
 function getStatus(target,stat){ var l=gs.statusEffects[target]; for(var i=0;i<l.length;i++) if(l[i].stat===stat) return l[i]; return null; }
 function getStatuses(target,stat){ return gs.statusEffects[target].filter(function(s){return s.stat===stat;}); }
@@ -5257,6 +5505,9 @@ function tickStatuses(ms){
           if(t==='player'){ gs.playerShield=0; if(gs.actors&&gs.actors.player) gs.actors.player.shield=0; }
           else { gs.enemyShell=0; if(gs.actors&&gs.actors.enemy) gs.actors.enemy.shield=0; }
           if(typeof onExpiry==='function') onExpiry();
+          // Round 67r: shared shield-break animation (same as damage
+          // break and Manabound purge).
+          _fxShieldBreakFromSide(t);
         }
         list.splice(i,1);
         removeTagByLabel(t,lbl);
@@ -5295,6 +5546,15 @@ function tickDoTs(ms){
         var dotDmg = s.dpt || 0;
         if(s.id==='starburn') dotDmg = (s.stacks||1)*5;
         if(dotDmg <= 0) continue;
+
+        // Round 67r: per-tick SFX. Status id normalized to its first
+        // segment so 'poison_self' / 'poison_self_enemy' share the
+        // same poison_tick.mp3 as normal poison. Unknown tick keys
+        // (starburn, etc.) no-op silently inside playSfx.
+        if(typeof playSfx === 'function' && s.id){
+          var tickKey = String(s.id).split('_')[0] + '_tick';
+          playSfx(tickKey);
+        }
 
         // Route through dealDamage if actors exist
         if(t==='enemy' && gs.actors && gs.actors.enemy){
@@ -5590,11 +5850,14 @@ function doVictory(){
   var isLast=(gs.enemyIdx+1>=gs.enemies.length);
   if(isLast){
     // Area clear — apply the accumulated XP now plus a clear bonus.
-    // The bonus guarantees a first-area clear (4 enemies × 18 XP = 72)
-    // still pushes a level-1 champion across the 80-XP threshold to
-    // level 2. Scales modestly with area level so later clears stay
-    // meaningful too.
-    var clearBonus = 15 + gs.area.level * 5;
+    // Round 67q: fight count dropped from 4 to 3 at lv1 (see buildArea).
+    // Bonus bumped from 15+lvl*5 to 30+lvl*5 so the lv1 area still
+    // pushes a fresh champion across the 80-XP lv1→lv2 threshold:
+    //   3 kills × 18 XP + 35 bonus = 89 → +9 buffer over 80.
+    // Higher-level clears stay roughly aligned with "one area = one
+    // level worth of XP" since the per-enemy XP and bonus scale up
+    // together as area level grows.
+    var clearBonus = 30 + gs.area.level * 5;
     gs._pendingXp = (gs._pendingXp || 0) + clearBonus;
     if(gs._pendingXp > 0){
       gs.xp += gs._pendingXp;
@@ -6022,6 +6285,10 @@ function _rrAnimateXpSegments(xpSegments, snap){
     void fill.offsetWidth;
     fill.style.transition = 'width .9s cubic-bezier(.3,.6,.4,1)';
     fill.style.width = seg.toPct + '%';
+    // Round 67q: bar-fill cue tracks each XP segment animating in.
+    // Round 67r: renamed key 'bar_fill' → 'rising_bubble' so it
+    // matches the actual mp3 file dropped in this round.
+    if(typeof playSfx === 'function') playSfx('rising_bubble');
 
     // Update fraction text mid-flight (rough — don't tick it precisely)
     if(fracEl) fracEl.textContent = '… filling';
@@ -6080,6 +6347,10 @@ function _rrAnimateMastery(snap, cp, gained){
   void fill.offsetWidth;
   fill.style.transition = 'width 1.1s cubic-bezier(.3,.6,.4,1)';
   fill.style.width = toPct + '%';
+  // Round 67q/r: rising-bubble cue for the mastery bar animation.
+  // Only fires if there's actually a fill happening (skip when
+  // fromPct === toPct).
+  if(toPct > fromPct && typeof playSfx === 'function') playSfx('rising_bubble');
 
   if(fracEl){
     var nextTier = ASCENSION_TIERS[cp.ascensionTier];
@@ -6125,6 +6396,20 @@ function _rrAnimateQuests(questDeltas){
       if(fill){
         void fill.offsetWidth;
         fill.style.width = toPct + '%';
+        // Round 67q/r: rising-bubble cue per quest row. Only when
+        // the bar actually advances (skip rows where from === to).
+        if(toPct > fromPct && typeof playSfx === 'function') playSfx('rising_bubble');
+        // Round 67r: quest_complete chime when THIS animation
+        // crosses into completion (was incomplete, now complete).
+        // Bar transition is .7s (style.css:1107), so the chime lands
+        // when the green-glow .complete state actually paints.
+        var wasComplete = d.from >= d.target;
+        var nowComplete = d.to   >= d.target;
+        if(!wasComplete && nowComplete){
+          _rrTimers.push(setTimeout(function(){
+            if(typeof playSfx === 'function') playSfx('quest_complete');
+          }, 700));
+        }
       }
       if(frac){
         // Tick the fraction up to the new value
@@ -6193,6 +6478,9 @@ function _rrEsc(s){
 // CONTINUE button handler — closes the overlay and runs whatever was
 // queued (showSpoilsOverlay or goToAreaSelectAfterRun).
 function _runResultsContinue(){
+  // Round 67r: short click cue when the player dismisses the
+  // post-combat results overlay.
+  if(typeof playSfx === 'function') playSfx('click_short');
   _rrClearTimers();
   var ov = document.getElementById('run-results-overlay');
   if(ov) ov.style.display = 'none';

@@ -338,6 +338,12 @@
 <!-- GAME -->
 <div id="game-screen" class="screen">
 
+  <!-- Round 67q: combat FX canvas — overlays the whole game-screen at
+       the 1920×1080 design surface size. Pointer events disabled so
+       clicks on cards/UI pass through. Engine in fx-engine.js owns
+       the rAF loop; effects fire from playCard via Effects.playCardFX. -->
+  <canvas id="fx-canvas" width="1920" height="1080" style="position:absolute;top:0;left:0;width:1920px;height:1080px;pointer-events:none;image-rendering:pixelated;z-index:50;"></canvas>
+
   <!-- TOP BAR -->
   <div class="top-bar">
     <!-- Portrait + name + level -->
@@ -913,9 +919,14 @@
 <!-- TUTORIAL OVERLAY -->
 <div id="tutorial-overlay" style="display:none;position:fixed;inset:0;z-index:600;background:rgba(0,0,0,.7);align-items:center;justify-content:center;">
   <div id="tutorial-panel" style="background:#0e0802;border:1px solid #6a4010;border-radius:12px;width:100%;max-width:800px;padding:24px 28px 24px;position:relative;animation:tut-slidein .25s ease-out;margin-bottom:10vh;">
+    <!-- Round 67q: "Disable All Tips" moved to top-right of the dialog,
+         separated from the per-tutorial Dismiss / Next actions so it
+         can't be misclicked. It's a destructive setting (silences ALL
+         future tutorials globally) and deserves to live apart. -->
+    <button onclick="dismissAllTutorials()" style="position:absolute;top:10px;right:14px;font-size:9px;padding:5px 10px;border-radius:4px;border:1px solid #2a1808;background:transparent;color:#5a4020;cursor:pointer;letter-spacing:.5px;">Disable All Tips</button>
     <div style="display:flex;align-items:flex-start;gap:16px;">
       <div id="tut-icon" style="font-size:32px;flex-shrink:0;line-height:1;"></div>
-      <div style="flex:1;min-width:0;">
+      <div style="flex:1;min-width:0;padding-right:120px;">
         <div id="tut-title" style="font-size:15px;color:#d4a843;letter-spacing:1.5px;margin-bottom:10px;"></div>
         <div id="tut-body" style="font-size:12px;color:#a08060;line-height:1.8;"></div>
       </div>
@@ -923,7 +934,6 @@
     <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end;align-items:center;">
       <span id="tut-step" style="font-size:9px;color:#4a3010;flex:1;"></span>
       <button onclick="dismissTutorial()" style="font-size:10px;padding:8px 16px;border-radius:4px;border:1px solid #3a2010;background:transparent;color:#5a4020;cursor:pointer;">Dismiss</button>
-      <button onclick="dismissAllTutorials()" style="font-size:10px;padding:8px 16px;border-radius:4px;border:1px solid #2a1808;background:transparent;color:#3a2010;cursor:pointer;">Disable All Tips</button>
       <button id="tut-next-btn" onclick="tutorialNext()" style="font-size:10px;padding:8px 20px;border-radius:4px;border:1px solid #c09030;background:rgba(30,18,4,.8);color:#d4a843;cursor:pointer;display:none;">Next →</button>
     </div>
   </div>
@@ -1339,29 +1349,31 @@
 </div><!-- /#game-root -->
 
   <!-- ── Core engine (defines all functions + empty data stubs) ── -->
-  <script src="game.js?v=2"></script>
+  <script src="fx-engine.js?v=2"></script>
+  <script src="fx-effects.js?v=15"></script>
+  <script src="game.js?v=9"></script>
 
   <!-- ── Deck builder (deck editing screen) ── -->
   <script src="deck_builder.js?v=1"></script>
 
   <!-- ── Town: buildings, NPC dialogue, bestiary, tutorials ── -->
-  <script src="town.js?v=2"></script>
+  <script src="town.js?v=3"></script>
 
   <!-- ── Data: keywords, cards, creature decks ── -->
-  <script src="data/cards.js"></script>
+  <script src="data/cards.js?v=2"></script>
 
   <!-- ── Data: card effects (executeCard, activateInnate, combat helpers) ── -->
-  <script src="data/card_effects.js"></script>
+  <script src="data/card_effects.js?v=6"></script>
 
   <!-- ── New unified combat system (symmetrical actor-based) ── -->
-  <script src="data/combat.js"></script>
+  <script src="data/combat.js?v=2"></script>
 
   <!-- ── Data: achievements ── -->
   <script src="data/achievements.js"></script>
 
   <!-- ── Data: champions & areas ── -->
   <script src="data/areas.js"></script>
-  <script src="data/relics.js"></script>
+  <script src="data/relics.js?v=2"></script>
   <script src="data/expedition.js"></script>
   <!-- quests.js removed — quest logic now lives in town.js -->
   <script src="data/vault.js"></script>
@@ -1395,7 +1407,7 @@
   <script src="data/creatures/zombie.js"></script>
 
   <!-- ── Audio system ── -->
-  <script src="audio.js"></script>
+  <script src="audio.js?v=6"></script>
 
   <!-- ── Tutorial (Round 66) — first-run wolf-vs-goblin lesson ── -->
   <script src="tutorial.js"></script>
