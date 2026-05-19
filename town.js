@@ -2935,6 +2935,37 @@ function claimQuest(questId){
     var tab = (advActive && advActive.classList.contains('active')) ? 'adventure' : 'town';
     updateNavBar(tab);
   }
+  // Round 67r: refresh the EDIT DECK button + champion info sidebar
+  // on BOTH the champion-select (cs-cr-*) and area-select (ar-cr-*)
+  // rails. Without this the button stays in its pre-claim state
+  // (e.g. locked when story_edit_deck just activated) until the
+  // player navigates somewhere that explicitly rebuilds the rail.
+  // buildCsChampRail is the shared painter — it no-ops if its
+  // target DOM isn't present, so calling it unconditionally is
+  // safe regardless of which screen is currently active.
+  if(typeof buildCsChampRail === 'function' && typeof selectedChampId !== 'undefined' && selectedChampId){
+    try { buildCsChampRail(selectedChampId); } catch(e1){}                                // cs-cr (champion-select)
+    try { buildCsChampRail(selectedChampId, 'ar-cr', 'area-champ-rail'); } catch(e2){}    // ar-cr (area-select)
+  }
+  // Also repaint the quest rails on both surfaces so the just-claimed
+  // row is gone and any chain-spawned quest appears. (rail-side claim
+  // already does this AFTER the collapse animation; Hall-side claim
+  // didn't, so quest rails could go stale until next screen change.)
+  if(typeof buildCsQuestRail === 'function')   buildCsQuestRail();
+  if(typeof buildAreaQuestRail === 'function') buildAreaQuestRail();
+  // Round 67r: town grid pulse / unlock state — chain-spawned
+  // building-target quests (story_craft_safety_net → Forge,
+  // story_equip_safety_net → Sanctum, story_meet_barau → Market,
+  // story_first_summon → Shard Well) attach a pulse via
+  // isBuildingQuestTarget(). Heavier rebuild than the rails, so
+  // gate on town-screen actually being visible — navigating to
+  // town via openTown() re-runs buildTownGrid anyway.
+  if(typeof buildTownGrid === 'function'){
+    var townScreen = document.getElementById('town-screen');
+    if(townScreen && townScreen.classList.contains('active')){
+      buildTownGrid();
+    }
+  }
 }
 
 // Round 67p: rail-side claim. Animates the bar drain → row collapse →
@@ -7217,9 +7248,9 @@ var TUTORIALS = {
     title:'Welcome to Town',
     isNpc: true,
     pages:[
-      {body:'The Town is your base between runs. Buildings provide persistent benefits: store materials, track quests, catalogue creatures, and more. Some buildings are available immediately, others unlock as you progress.',
+      {body:'The Town is your base between runs. Each building does something different: the <span style="color:#d4a843;">Adventurer\'s Hall</span> for quests, the <span style="color:#d4a843;">Forge</span> for crafting, the <span style="color:#d4a843;">Sanctum</span> for equipping relics and editing decks, the <span style="color:#d4a843;">Market</span>, the <span style="color:#d4a843;">Vault</span>, the <span style="color:#d4a843;">Shard Well</span>, and more. Most buildings unlock as you progress.',
        tip:null},
-      {body:'Gold earned during runs is banked when a run ends. Gold is spent to unlock buildings, purchase items, and claim rewards. Buildings have an XP track. They level up from area clears, unlocking new features at higher levels.',
+      {body:'Start at the <span style="color:#d4a843;">Adventurer\'s Hall</span>. Leona tracks every quest from there, including the one you\'re on right now. Gold earned in runs is banked when a run ends, and buildings level up from your area clears.',
        tip:null},
     ]
   },
@@ -7236,10 +7267,10 @@ var TUTORIALS = {
     title:'Leona (Guild Girl)',
     isNpc: true,
     pages:[
-      {body:'"Oh! You\'re here for the first time! Welcome to the Adventurer\'s Hall! This is where all the action gets... coordinated. By me. Professionally."'},
-      {body:'"The QUESTS tab has bounties pinned to the board. Pick one that matches where you\'re heading, go complete it, then come back to claim your reward. Simple! I mean... standard procedure."'},
-      {body:'"The ACHIEVEMENTS tab tracks your overall progress. Some achievements reward gold when you hit milestones. I keep very thorough records. Very thorough."'},
-      {body:'"Once the Hall levels up, I\'ll open EXPEDITIONS too. You can send your champions on timed missions for materials and experience while you focus on other things. I\'ll keep track of everything. That\'s my job. Which I love."'},
+      {body:'"Oh! You\'re here for the first time! Welcome to the Adventurer\'s Hall! This is where every quest gets tracked and managed. By me. Professionally."'},
+      {body:'"The <span style="color:#d4a843;">QUESTS</span> tab is the heart of the place. Your current questline is right there at the top, and the bounty board has rotating tasks below. Pick one, complete it, come back to claim your reward. Simple! I mean... standard procedure."'},
+      {body:'"The <span style="color:#d4a843;">ACHIEVEMENTS</span> tab tracks your overall progress. Some pay out gold at milestones. I keep very thorough records. Very thorough."'},
+      {body:'"Once the Hall levels up, <span style="color:#d4a843;">EXPEDITIONS</span> opens too. You can send your champions on timed missions for materials and experience while you focus on other things. I\'ll keep track of everything. That\'s my job. Which I love."'},
     ]
   },
   forge_intro: {

@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -c town.js)",
+      "Bash(node -c game.js)",
+      "Bash(node -c data/expedition.js)",
+      "Bash(grep -E \"^\\(##|###|\\\\*\\\\*User\\\\*\\\\*|\\\\*\\\\*Assistant\\\\*\\\\*|user:|assistant:\\)\" \"/tmp/exp_design/ui-prototyping/chats/chat1.md\" | head -40)",
+      "Bash(node -c '/c/Users/Jacob/Documents/Noporogue/data/arena.js')",
+      "Bash(node -c '/c/Users/Jacob/Documents/Noporogue/town.js')",
+      "Bash(node -c '/c/Users/Jacob/Documents/Noporogue/game.js')",
+      "Bash(cat '/tmp/design-extract/ui-prototyping/project/arena-tab-duel.jsx')",
+      "Bash(node --check game.js)",
+      "Bash(node --check town.js)",
+      "Bash(node --check init.js)",
+      "Bash(node --check audio.js)",
+      "Bash(node --check tutorial.js)",
+      "Bash(node --check data/areas.js)",
+      "Bash(node --check data/combat.js)",
+      "Bash(node --check data/expedition.js)",
+      "Bash(node --check deck_builder.js)",
+      "Bash(ls \"C:\\\\Users\\\\Jacob\\\\Documents\\\\Noporogue Additional\\\\\" 2>&1 | head -20)"
+    ]
+  }
+}

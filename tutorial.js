@@ -35,106 +35,142 @@ var _tutorial = {
   retryStartStep:null,    // Round 67j: when set, _tutorialStartFromTop uses this as the starting step (so retry skips orientation)
 };
 
-// Round 67b: rewritten for dry, factual narration with minimal flavour.
-// Mechanics are named by their actual UI labels (Health, Mana, STR/AGI/
-// WIS, Strike, Brace, Shield, Haste, Weaken) so the player can match
-// what the narrator says to what they see on screen.
+// Round 67r — full rewrite (v2). Re-designed from scratch in response
+// to the original "player doesn't know what to do" issue: combat used
+// to start ticking before any teaching landed, leaving the player
+// staring at an empty hand and a ticking draw bar.
 //
-// Beat groupings (per J's request):
-//   1-6: orientation (paused, no gaps)
-//   7  : combined Strike + Brace play (any order)
-//   8  : Shield explanation (immediately after both played)
-//   ---- combat continues, wolf_howl injected as next draw ----
-//   9  : play Howl
-//   10 : Haste / buff / duration
-//   11 : Sorcery + card modifiers (advancing this triggers goblin to
-//        play jab on its next turn for the debuff teach)
-//   ---- combat continues, goblin plays jab + Sorcery applies Weaken ----
-//   12 : Debuff explanation
-//   13 : Closer → victory
+// New shape:
+//   1. Strike is PRE-LOADED into the hand by applyTutorialOverrides.
+//      The player has a card from frame one.
+//   2. The first three dialogs run while combat is FROZEN. We explain
+//      goal + cards + how to play before anything ticks.
+//   3. The action-prompt dialogs ('Click Strike', 'Click Brace',
+//      'Click Howl') have NO NEXT button. The card click IS the
+//      advance. This kills the "click NEXT, then click the card"
+//      double-step confusion.
+//   4. After the first play, combat is unpaused and the draw bar /
+//      goblin / autoplay are taught reactively (player can see them
+//      in action).
+//   5. Each dialog teaches ONE thing. Multiple short pages, not a
+//      wall of text.
 //
-// Special wait types:
-//   'play_both:strike,brace' — wait for BOTH cards to be played
-//   'status_applied:weaken'  — wait for Weaken debuff on player
+// Beat list (9 dialogs, 6 transitional/action bridges):
+//   0   GOAL + HP BARS             paused, NEXT
+//   1   CARDS INTRO                paused, NEXT
+//   2   ↳ CLICK STRIKE (action)    NO NEXT, unpaused, wait play_card:strike
+//   3   ↳ wait for Brace draw      transitional
+//   4   DRAW MECHANIC              paused, NEXT (covers draw bar, AGI, goblin, autoplay)
+//   5   BRACE + SHIELD             paused, NEXT
+//   6   ↳ CLICK BRACE (action)     NO NEXT, unpaused, wait play_card:brace
+//   7   ↳ wait for Howl draw       transitional
+//   8   HASTE + STATUSES           paused, NEXT
+//   9   MANA + SORCERY             paused, NEXT
+//   10  ↳ CLICK HOWL (action)      NO NEXT, unpaused, wait play_card:wolf_howl
+//   11  ↳ wait for Haste applied   transitional
+//   12  INNATES                    paused, NEXT → fill_finisher_hand
+//   13  ↳ wait for victory         transitional
+//   14  CONCLUSION                 paused, NEXT → champion select
 //
-// onAdvance side-effects (fire when this step's NEXT is clicked):
-//   'inject_howl'      — replace drawPool with [wolf_howl] so the
-//                        next draw is guaranteed to be Howl
-//   'force_goblin_jab' — replace goblin's hand with [goblin_jab] +
-//                        set their mana to 35 so the Sorcery fires
 // Step fields:
-//   text       — narration (omit on transitional steps)
-//   highlight  — CSS selector for the UI element to spotlight
-//   wait       — what advances the step
-//   onAdvance  — side-effect on NEXT click (e.g. inject_howl)
-//   transitional:true — no pause, no dialog. Step exists only to
-//                       wait for an event and advance. Used to bridge
-//                       between an action and its visible result (e.g.
-//                       wait for the card to be drawn / status to apply
-//                       before painting the next narration beat).
+//   text       — dialog body (omit on transitional steps)
+//   highlight  — CSS selector(s) for the UI element(s) to spotlight
+//   wait       — what advances the step:
+//                  'click'                  manual NEXT click
+//                  'card_drawn:<id>'        wait for that card to be drawn
+//                  'play_card:<id>'         wait for that card to be played
+//                  'status_applied:<id>'    wait for that status on player
+//                  'victory'                wait for goblin to die
+//   noNext     — true: dialog has no NEXT button; the wait condition
+//                must fire to advance. Combat is UNPAUSED while dialog
+//                is up so the player can perform the action.
+//   onAdvance  — side-effect when NEXT is clicked
+//   onMatch    — side-effect when the event-wait matches (parallels
+//                onAdvance for noNext / event-driven steps)
+//   transitional:true — no pause, no dialog. Bridges an event into the
+//                       next dialog step.
 var TUTORIAL_STEPS = [
-  // ── Pre-combat orientation (paused, manual NEXT) ──
-  { text: 'Wolf. Watch and remember.',
-    highlight: null, wait: 'click' },
+  // ── 0: GOAL + HP BARS (paused, NEXT) ──
+  { text: 'You\'re the wolf on the LEFT, the goblin on the RIGHT. Bring the goblin\'s HP to zero to win.',
+    highlight: '#combatant-player .big-hp-wrap, #combatant-enemy .big-hp-wrap',
+    wait: 'click' },
 
-  { text: 'Your health. At zero, the run ends.',
-    highlight: '#combatant-player .big-hp-wrap', wait: 'click' },
+  // ── 1: CARDS INTRO (paused, NEXT) ──
+  // Strike is already in hand (pre-loaded by applyTutorialOverrides).
+  // This dialog points it out before the action prompt.
+  { text: 'You play cards from your hand to fight. You start with Strike, an attack card.',
+    highlight: '.hand-cards .card',
+    wait: 'click' },
 
-  { text: "The enemy's health. Reduce it to zero to win.",
-    highlight: '#combatant-enemy .big-hp-wrap', wait: 'click' },
+  // ── 2: ACTION — CLICK STRIKE (no NEXT, unpaused, action prompt) ──
+  // No NEXT button: the click on Strike itself advances the tutorial.
+  // Combat unpauses on entry so the click registers. onMatch injects
+  // Brace as the next draw once Strike resolves.
+  { text: 'Click Strike to attack the goblin.',
+    highlight: '.hand-cards .card',
+    wait: 'play_card:strike',
+    noNext: true,
+    onMatch: 'inject_brace' },
 
-  { text: 'Mana. Used by some abilities and effects. Regenerates over time.',
-    highlight: '#mana-bar2', wait: 'click' },
+  // ── 3: bridge — wait for Brace draw ──
+  { transitional: true, wait: 'card_drawn:brace' },
 
-  { text: "Stats. STR, AGI, WIS. They shape your champion's strengths.",
-    highlight: '.tb-stats', wait: 'click' },
+  // ── 4: DRAW MECHANIC (paused, NEXT) ──
+  // After the first play resolved and the player saw their draw bar
+  // start filling, this dialog teaches the draw mechanic with the
+  // visuals the player just witnessed. Covers: draw bar, AGI, goblin
+  // parallel, autoplay.
+  { text: 'Cards arrive when your DRAW bar fills, set by your AGI stat. The goblin draws the same way on their DRAW bar. If your hand ever fills up, the oldest card auto-plays.',
+    highlight: '#draw-bar, #e-draw-bar',
+    wait: 'click' },
 
-  { text: 'Cards draw automatically when this bar fills.',
-    highlight: '#draw-bar', wait: 'click' },
+  // ── 5: BRACE + SHIELD MECHANIC (paused, NEXT) ──
+  { text: 'Brace gives you a SHIELD that absorbs damage. Playing another Brace before it expires refreshes the timer and stacks the value.',
+    highlight: '.hand-cards .card, #p-shield-bar',
+    wait: 'click' },
 
-  // ── Combined card play ──
-  { text: 'Strike deals damage. Brace grants Shield for 5 seconds. Play one of each.',
-    highlight: '.hand-cards .card', wait: 'play_both:strike,brace' },
+  // ── 6: ACTION — CLICK BRACE (no NEXT, unpaused) ──
+  { text: 'Click Brace to shield yourself.',
+    highlight: '.hand-cards .card',
+    wait: 'play_card:brace',
+    noNext: true,
+    onMatch: 'inject_howl' },
 
-  { text: 'Shield absorbs damage. It expires after 5 seconds.',
-    highlight: '#p-shield-bar', wait: 'click', onAdvance: 'inject_howl' },
-
-  // Transitional: wait for wolf_howl to land in the player's hand
-  // before painting the Howl prompt. Without this the dialog appears
-  // before the card has been drawn (J's bug report Round 67d).
+  // ── 7: bridge — wait for Howl draw ──
   { transitional: true, wait: 'card_drawn:wolf_howl' },
 
-  // ── Howl + Haste + Sorcery ──
-  { text: 'Howl. Grants Haste, a temporary buff. Play it.',
-    highlight: '.hand-cards .card', wait: 'play_card:wolf_howl' },
+  // ── 8: HASTE + STATUSES (paused, NEXT) ──
+  { text: 'Howl applies HASTE, a buff that speeds your draws. Statuses like Haste, Shield, Poison, and Weaken all tick down to zero.',
+    highlight: '.hand-cards .card',
+    wait: 'click' },
 
-  // Transitional: play_card fires BEFORE card resolution, so Haste
-  // hasn't applied yet at this point. Wait for it to actually land
-  // before showing the Haste dialog.
+  // ── 9: MANA + SORCERY (paused, NEXT) ──
+  { text: 'Howl has a [Sorcery] effect: with 40 mana, it adds a Crit boost. Your mana fills over time.',
+    highlight: '#mana-bar2',
+    wait: 'click' },
+
+  // ── 10: ACTION — CLICK HOWL (no NEXT, unpaused) ──
+  { text: 'Click Howl to play it.',
+    highlight: '.hand-cards .card',
+    wait: 'play_card:wolf_howl',
+    noNext: true },
+
+  // ── 11: bridge — wait for Haste to land ──
   { transitional: true, wait: 'status_applied:haste' },
 
-  { text: 'Haste — a buff. It speeds your draws for 4 seconds. Buffs have a duration. When it expires, the effect ends.',
-    highlight: '#p-tags', wait: 'click' },
+  // ── 12: INNATES (paused, NEXT → fill_finisher_hand) ──
+  { text: 'Every creature has an INNATE, a unique ability. Yours is Hunter\'s Edge, an always-on passive. Some champions have ACTIVE innates that light up as a button when ready.',
+    highlight: '#innate-card',
+    wait: 'click',
+    onAdvance: 'fill_finisher_hand' },
 
-  { text: 'Howl also has a [Sorcery] effect. With 40 mana, it adds Crit to your next attack. Card modifiers like this appear as green text on cards.',
-    highlight: '#mana-bar2', wait: 'click', onAdvance: 'force_goblin_jab' },
+  // ── 13: bridge — wait for victory ──
+  { transitional: true, wait: 'victory' },
 
-  // ── Debuff (driven by goblin playing jab with Sorcery) ──
-  { text: 'Weaken — a debuff. It reduces your damage for 4 seconds. Like buffs, debuffs have a duration and expire.',
-    highlight: '#p-tags', wait: 'status_applied:weaken' },
-
-  // ── Finish ──
-  { text: 'Finish the fight.',
-    highlight: null, wait: 'victory' },
-
-  // ── Conclusion (post-victory) ──
-  // After the goblin dies, the narrator delivers a closing line and
-  // the player clicks through to the champion-select screen. The
-  // tutorial state machine drives this transition itself — no more
-  // setTimeout in checkEnd, no more split between victory-event and
-  // screen-change.
-  { text: 'It is done. Another road waits for you.',
-    highlight: null, wait: 'click' },
+  // ── 14: CONCLUSION (paused, NEXT → champion-select) ──
+  { text: 'That\'s combat. You\'ll unlock more champions as you play, each with their own cards and innates.',
+    highlight: null,
+    wait: 'click' },
 ];
 
 // ════════════════════════════════════════════════════════════════
@@ -298,12 +334,26 @@ function _tutorialEnterStep(){
   }
 
   try {
-    paused = true;
-    _tutorial.waitFor = null;
-    if(_tutorial.fallbackT){ clearTimeout(_tutorial.fallbackT); _tutorial.fallbackT = null; }
-    _tutorialShowDialog(step);
-    _tutorialApplyHighlight(step.highlight);
-    console.log('[tut] dialog shown for step', _tutorial.step);
+    // Round 67r v2: action-prompt steps (noNext:true) keep combat
+    // UNPAUSED so the highlighted card click can register and fire
+    // play_card. The dialog stays up; the click on the card itself
+    // is what advances the tutorial via the wait condition matching.
+    if(step.noNext){
+      paused = false;
+      _tutorial.waitFor = step.wait || null;
+      if(_tutorial.fallbackT){ clearTimeout(_tutorial.fallbackT); _tutorial.fallbackT = null; }
+      _tutorialShowDialog(step);
+      _tutorialApplyHighlight(step.highlight);
+      if(typeof scheduleEnemyAction === 'function') scheduleEnemyAction();
+      console.log('[tut] action-prompt dialog shown for step', _tutorial.step);
+    } else {
+      paused = true;
+      _tutorial.waitFor = null;
+      if(_tutorial.fallbackT){ clearTimeout(_tutorial.fallbackT); _tutorial.fallbackT = null; }
+      _tutorialShowDialog(step);
+      _tutorialApplyHighlight(step.highlight);
+      console.log('[tut] dialog shown for step', _tutorial.step);
+    }
   } catch(err){
     console.error('[tut] FAILED to enter step', _tutorial.step, err);
     // Defensive: don't leave combat paused if the dialog broke
@@ -313,6 +363,10 @@ function _tutorialEnterStep(){
 }
 
 // Render the dialog box. Mystery figure portrait + text + NEXT.
+// Round 67r v2: action-prompt steps (noNext:true) render without
+// the NEXT button — the wait condition (e.g. play_card:strike)
+// advances the step instead. Used for "Click Strike", "Click Brace",
+// "Click Howl" prompts so the player only has ONE click to make.
 function _tutorialShowDialog(step){
   var ov = document.getElementById('tut-combat-overlay');
   if(!ov){
@@ -321,6 +375,9 @@ function _tutorialShowDialog(step){
     ov.className = 'tut-combat-overlay';
     document.body.appendChild(ov);
   }
+  var nextBtn = step.noNext
+    ? ''
+    : '<button class="tut-combat-dialog-next" onclick="_tutorialNext()">NEXT ►</button>';
   ov.innerHTML = ''
     + '<div class="tut-combat-dialog">'
     +   '<div class="tut-combat-dialog-portrait">'
@@ -330,7 +387,7 @@ function _tutorialShowDialog(step){
     +     '<div class="tut-combat-dialog-name">???</div>'
     +     '<div class="tut-combat-dialog-text">' + step.text + '</div>'
     +   '</div>'
-    +   '<button class="tut-combat-dialog-next" onclick="_tutorialNext()">NEXT ►</button>'
+    +   nextBtn
     + '</div>';
   ov.classList.add('show');
 }
@@ -478,6 +535,21 @@ function tutorialEvent(type, payload){
         }
       }
     }
+    // Round 67r v2: dismiss the current dialog + clear its highlight
+    // before advancing. For NEXT-driven advances this already happens
+    // in _tutorialNext; event-driven (noNext action prompts, plain
+    // transitional waits) need explicit cleanup here so the dialog
+    // doesn't linger across the next step's entry.
+    _tutorialClearHighlight();
+    var ovMatched = document.getElementById('tut-combat-overlay');
+    if(ovMatched) ovMatched.classList.remove('show');
+    // Round 67r v2: fire onMatch side-effect (parallels onAdvance for
+    // event-driven steps without a NEXT button — e.g. action prompts
+    // that need to inject the next card AFTER the player plays one).
+    var matchedStep = TUTORIAL_STEPS[_tutorial.step];
+    if(matchedStep && matchedStep.onMatch && typeof _tutorialSideEffect === 'function'){
+      _tutorialSideEffect(matchedStep.onMatch);
+    }
     _tutorial.step += 1;
     if(_tutorial.step >= TUTORIAL_STEPS.length){
       _tutorialEnd();
@@ -503,35 +575,38 @@ function _tutorialSideEffect(kind){
     // gs.drawPool, but defensive re-link is cheap.
     if(gs.actors && gs.actors.player) gs.actors.player.drawPool = gs.drawPool;
   }
-  else if(kind === 'force_goblin_jab'){
-    // Replace goblin's hand with [goblin_jab] and ensure they have
-    // enough mana for the Sorcery (35) so Weaken lands on the player.
-    // Their AI plays the only card they have on the next enemy turn.
-    if(gs.enemyHand){
-      gs.enemyHand.length = 0;
-      gs.enemyHand.push({ id: 'goblin_jab', ghost: false });
-    }
-    gs.enemyMana = Math.max(gs.enemyMana || 0, 40);
-    if(gs.actors && gs.actors.enemy){
-      gs.actors.enemy.hand = gs.enemyHand;
-      gs.actors.enemy.mana = gs.enemyMana;
-    }
-    // Safety fallback: if the goblin somehow doesn't apply Weaken
-    // within 8 seconds (AI stuck, hand override didn't take, etc.),
-    // force-apply it via applyStatus so the tutorial doesn't soft-lock.
-    if(_tutorial.fallbackT){ clearTimeout(_tutorial.fallbackT); }
-    _tutorial.fallbackT = setTimeout(function(){
-      if(!_tutorial.active || _tutorial.waitFor !== 'status_applied:weaken') return;
-      if(typeof applyStatus === 'function'){
-        applyStatus('player','debuff','Weaken',1,'dmg',4000,'Weaken: -1 damage for 4s.');
-        // applyStatus doesn't fire the tutorial event directly — the
-        // hook in game.js handles that on its next call. Trigger
-        // manually here too in case applyStatus was called without
-        // hitting that hook.
-        tutorialEvent('status_applied', { target:'player', statusId:'weaken' });
-      }
-      _tutorial.fallbackT = null;
-    }, 8000);
+  else if(kind === 'inject_brace'){
+    // Round 67r: same shape as inject_howl. After Strike is played,
+    // replace the (now-empty) draw pool with [brace] so the next
+    // draw is guaranteed Brace for the Shield lesson.
+    if(!gs.drawPool || !Array.isArray(gs.drawPool)) return;
+    gs.drawPool.length = 0;
+    gs.drawPool.push('brace');
+    if(gs.actors && gs.actors.player) gs.actors.player.drawPool = gs.drawPool;
+  }
+  else if(kind === 'fill_finisher_hand'){
+    // Round 67r: top up the player's hand to a clean finisher kit
+    // (4 Strike + 1 Brace) after the innates dialog so they have
+    // plenty of damage to wrap the fight without a long drip-feed
+    // from the reshuffled discard pile.
+    // v2: use real doDraw() calls with overrideId + 200ms stagger so
+    // each card flies in from the deck pile with the normal draw
+    // animation and SFX. Reads as "Kaine just handed you a stack
+    // of cards" rather than cards silently materialising in hand.
+    if(!gs || !Array.isArray(gs.hand)) return;
+    var finisherCards = ['strike','strike','strike','strike','brace'];
+    var HAND_MAX = (typeof HAND_SIZE !== 'undefined' && HAND_SIZE) || 7;
+    // Clamp to available slots — if the player has cards already in
+    // hand we only draw up to the cap, not past it (autoplay would
+    // otherwise consume our first finisher cards before the player
+    // sees them).
+    var slotsAvailable = Math.max(0, HAND_MAX - gs.hand.length);
+    var toDraw = finisherCards.slice(0, slotsAvailable);
+    toDraw.forEach(function(cardId, idx){
+      setTimeout(function(){
+        if(typeof doDraw === 'function') doDraw(cardId);
+      }, idx * 200);
+    });
   }
 }
 
@@ -607,17 +682,20 @@ function _tutorialShowDefeat(){
 // Restart the tutorial fight from scratch. Wipes the current gs,
 // rebuilds the run via startRun (which fires applyTutorialOverrides
 // again to give a fresh dire-wolf-vs-goblin setup), and arms
-// retryStartStep so _tutorialStartFromTop drops the player at the
-// combined-play beat (skipping the orientation dialogs they've
-// already seen).
+// retryStartStep so _tutorialStartFromTop skips past the orientation
+// paragraph the player already saw and starts at the first event-
+// driven bridge (waiting for the first card to be drawn).
 function _tutorialRetry(){
   // Hide the defeat dialog
   var ov = document.getElementById('tut-combat-overlay');
   if(ov) ov.classList.remove('show');
   _tutorialClearHighlight();
 
-  // Restart from the combined-play beat. Index 6 in TUTORIAL_STEPS.
-  _tutorial.retryStartStep = 6;
+  // Round 67r v2: restart from the click-Strike action prompt (step 2),
+  // skipping the goal + cards-intro dialogs the player already saw.
+  // Strike is pre-loaded in hand by applyTutorialOverrides, so the
+  // action prompt has something to point at.
+  _tutorial.retryStartStep = 2;
   _tutorial.active = true;
 
   // Reset transient run state
@@ -657,14 +735,15 @@ function applyTutorialOverrides(gs){
   gs.maxMana     = Math.max(gs.maxMana, 100);
   gs.manaRegen   = (gs.manaRegen || 4) * 1.5;
 
-  // Force the player's draw pile to ONLY the starter teaching cards.
-  // Strike teaches damage; Brace teaches Shield. The opening hand
-  // (3 draws against a 3-card pool) is guaranteed to be exactly
-  // [strike, strike, brace] in some order. wolf_howl is injected
-  // later via the 'inject_howl' side-effect on step 8's NEXT.
-  gs.drawPool = ['strike','strike','brace'];
+  // Round 67r v2: PRE-LOAD Strike directly into the hand so the
+  // player has something to act on from frame one. drawPool starts
+  // empty; cards get injected as the tutorial advances:
+  //   step 2 onMatch (after Strike played) → inject_brace
+  //   step 6 onMatch (after Brace played)  → inject_howl
+  //   step 10 (Howl played) → discard reshuffles naturally
+  gs.drawPool = [];
   gs.discardPile = [];
-  gs.hand = [];
+  gs.hand = [{ id: 'strike', ghost: false }];
 
   // The enemy was already pre-built as a goblin via buildArea on
   // a goblin-only enemyPool (set up in _tutorialBegin). Trim to a
@@ -794,32 +873,58 @@ var STORY_QUESTS = {
   story_reach_lv3: {
     id:           'story_reach_lv3',
     title:        'Find Your Stride',
-    desc:         'Reach level 3. Steadier ground. Heavier weight.',
+    desc:         'Reach level 3. The town opens to you.',
     type:         'reach_level',
     targetLevel:  3,
     target:       1,
     isStory:      true,
-    // Round 67q: rewards rebalanced. Gold removed; instead the player
-    // gets the Forge opening up + the exact mats for the Safety Net
-    // recipe (2x Ancient Bark — Pale Road rare drop, themed for
-    // "woven fibre / cord / catch-rope"). The recipe is updated to
-    // match (see data/relics.js), so claiming this quest hands the
-    // player everything they need to walk into the Forge and craft.
-    // Sanctum unlock has been moved to story_craft_safety_net's
-    // onClaim — Kaine opens his door when there's something to slot.
+    // Round 67r: Forge unlock moved to story_visit_hall — claiming
+    // this quest now unlocks the TOWN (via the nav-tab gate that
+    // checks isQuestClaimed('story_reach_lv3')) but NOT the Forge.
+    // The player goes town → Hall → craft, not town → craft directly.
+    // Material reward (ancient_bark x2) stays here so it's in hand
+    // by the time the player reaches the Forge step.
     rewards:      [
-      {type:'unlock',   icon:'🔓', label:'The Forge'},
+      {type:'unlock',   icon:'🔓', label:'The Town'},
       {type:'material', icon:'🌳', id:'ancient_bark', amount:2, label:'Ancient Bark'},
     ],
     issuer:       '???',
-    next:         'story_craft_safety_net',
+    next:         'story_visit_hall',
     onClaim: function(){
-      // Material reward (ancient_bark x2) is granted by claimQuest's
-      // reward loop based on the rewards array above — don't re-add
-      // it here. Only the building unlock needs a side-effect hook.
+      // Town gate is purely derived from isQuestClaimed; no flag to
+      // flip here. Just announce the unlock.
+      if(typeof showTownToast === 'function') showTownToast('✦ The town gates open to you.');
+    },
+  },
+
+  story_visit_hall: {
+    id:               'story_visit_hall',
+    title:            'Find the Hall',
+    desc:             "Visit the Adventurer's Hall. Leona has work for you.",
+    type:             'visit_building',
+    targetBuildingId: 'adventurers_hall',
+    target:           1,
+    isStory:          true,
+    // Round 67r: bridging step between town unlock and the Forge
+    // run. Sends the player to the Hall so they see the full quest
+    // UI (story quests + bounty board) before being pointed at any
+    // specific building. The Hall itself is unlocked by default
+    // (game.js:842), so this is a pure "go see it" beat.
+    rewards:          [
+      {type:'gold',   icon:'✦', amount:30, label:'Gold'},
+      {type:'unlock', icon:'🔓', label:'The Forge'},
+    ],
+    issuer:           'Leona',
+    next:             'story_craft_safety_net',
+    onClaim: function(){
+      // Forge unlock moved here from story_reach_lv3 — opens when
+      // Leona hands the player off to M'bur. Toast doubles as the
+      // narrative handoff.
       if(PERSIST && PERSIST.town && PERSIST.town.buildings && PERSIST.town.buildings.forge){
         PERSIST.town.buildings.forge.unlocked = true;
-        if(typeof showTownToast === 'function') showTownToast('✦ The Forge opens its doors.');
+        if(typeof showTownToast === 'function'){
+          showTownToast("Leona: \"M'bur's at the Forge. He could use a hand.\"");
+        }
       }
     },
   },

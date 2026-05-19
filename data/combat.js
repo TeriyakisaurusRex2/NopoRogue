@@ -379,6 +379,12 @@ function actorDraw(actor, overrideId, silent) {
       var oc = CARDS[actor.hand[0].id];
       addLog('Auto-played ' + (oc ? oc.name : actor.hand[0].id) + '.', 'draw');
     }
+    // Round 67r: tutorial hook — fire BEFORE the autoplay resolves so
+    // the tutorial state machine can pause on the next frame and the
+    // dialog lands on a visibly settled hand state.
+    if (actor.side === 'player' && typeof tutorialEvent === 'function') {
+      try { tutorialEvent('card_autoplayed', actor.hand[0].id); } catch(e){}
+    }
     playCardForActor(actor, 0);
     if (!gs || !gs.running) return null;
   }
