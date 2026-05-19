@@ -1156,13 +1156,13 @@ function _checkStoryQuestAlreadyMet(def){
   if(def.type === 'visit_building'){
     var bid = def.targetBuildingId;
     if(!bid) return false;
-    // Unlocking the target building proves the player visited it
-    // (every unlock path goes through openBuilding → the unlock UI).
-    // Strict "have they OPENED it" requires a flag we don't track yet;
-    // unlocked-state is the strongest proxy and only matters on the
-    // resume-after-reload edge case.
+    // Round 67r: openBuilding() now stamps b.visited=true when the
+    // player actually opens a panel. Use that instead of b.unlocked,
+    // which was returning true for default-unlocked buildings like
+    // the Hall (game.js:842) and auto-completing story_visit_hall on
+    // activation.
     var b = PERSIST.town && PERSIST.town.buildings && PERSIST.town.buildings[bid];
-    return !!(b && b.unlocked);
+    return !!(b && b.visited);
   }
   if(def.type === 'summon_complete'){
     // Any champion unlock beyond the starter trio (druid/paladin/thief)

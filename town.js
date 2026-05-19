@@ -2966,6 +2966,16 @@ function claimQuest(questId){
       buildTownGrid();
     }
   }
+  // Round 67r: area-screen pulse for clear-area quests
+  // (story_clear_pale_road → Pale Road via isAreaQuestTarget).
+  // Same shape as the town grid — gate on screen active since
+  // confirmChampion / navigation re-runs buildAreaScreen anyway.
+  if(typeof buildAreaScreen === 'function'){
+    var areaScreen = document.getElementById('area-screen');
+    if(areaScreen && areaScreen.classList.contains('active')){
+      buildAreaScreen();
+    }
+  }
 }
 
 // Round 67p: rail-side claim. Animates the bar drain → row collapse →
@@ -3067,20 +3077,37 @@ function openBuilding(id){
   // and shouldn't count as a "visit". The vault and hall paths short-
   // circuit above with their own helpers, so check unlock-state for
   // each before firing.
+  // Round 67r: also stamp `visited:true` so the story-quest already-met
+  // check can distinguish "unlocked by default" (Hall) from "actually
+  // opened by the player". Previously the check used `unlocked` as a
+  // proxy, which auto-completed story_visit_hall on activation because
+  // the Hall starts unlocked.
   if(id==='vault'){
     var vb = PERSIST.town && PERSIST.town.buildings && PERSIST.town.buildings.vault;
-    if(vb && vb.unlocked && typeof checkQuestProgress === 'function') checkQuestProgress('visit_building', {buildingId:id});
+    if(vb && vb.unlocked){
+      vb.visited = true;
+      if(typeof checkQuestProgress === 'function') checkQuestProgress('visit_building', {buildingId:id});
+      if(typeof savePersist === 'function') savePersist();
+    }
     openVaultPanel(); showTutorial('vault_intro'); return;
   }
   if(id==='adventurers_hall'){
     var ahb = PERSIST.town && PERSIST.town.buildings && PERSIST.town.buildings.adventurers_hall;
-    if(ahb && ahb.unlocked && typeof checkQuestProgress === 'function') checkQuestProgress('visit_building', {buildingId:id});
+    if(ahb && ahb.unlocked){
+      ahb.visited = true;
+      if(typeof checkQuestProgress === 'function') checkQuestProgress('visit_building', {buildingId:id});
+      if(typeof savePersist === 'function') savePersist();
+    }
     openAdventurersHall(); showTutorial('adventurers_hall_intro'); return;
   }
   var panelBg=document.getElementById(id+'-panel-bg');
   if(!panelBg) return;
   var bb = PERSIST.town && PERSIST.town.buildings && PERSIST.town.buildings[id];
-  if(bb && bb.unlocked && typeof checkQuestProgress === 'function') checkQuestProgress('visit_building', {buildingId:id});
+  if(bb && bb.unlocked){
+    bb.visited = true;
+    if(typeof checkQuestProgress === 'function') checkQuestProgress('visit_building', {buildingId:id});
+    if(typeof savePersist === 'function') savePersist();
+  }
   panelBg.classList.add('show');
   refreshBuildingPanel(id);
   showTutorial(id+'_intro');
@@ -5592,14 +5619,20 @@ function _forgeRenderQueue(){
     }
     var job = queue[i] || null;
     if(!job){
-      // Empty slot — clickable to drop the currently-selected recipe in
+      // Empty slot — clickable to drop the currently-selected recipe in.
+      // Round 67r: slot clicks now route through _forgeConfirmSlotCraft so
+      // the player gets a "begin forging?" prompt before materials are
+      // consumed. The dedicated BEGIN FORGING button on the inspector
+      // panel (right side) remains the unconfirmed direct path — players
+      // who click that explicitly meant to start. The slot click is
+      // easier to do by accident.
       var sel = _forgeSelectedRecipe;
       var canStart = sel && _forgeCanAfford(sel);
       var hint = sel
-        ? (canStart ? 'click to start: ' + (RELICS[sel]?RELICS[sel].name:sel) : 'select a recipe with enough materials')
+        ? (canStart ? 'click to begin: ' + (RELICS[sel]?RELICS[sel].name:sel) : 'select a recipe with enough materials')
         : 'select a recipe to forge';
       html += '<div class="forge-slot forge-slot-empty'+(canStart?' forge-slot-ready-empty':'')+'" '
-        + (canStart?'onclick="startForgeCraft(\''+sel+'\')"':'')+'>'
+        + (canStart?'onclick="_forgeConfirmSlotCraft(\''+sel+'\')"':'')+'>'
         + '<div class="forge-slot-plus">+</div>'
         + '<div class="forge-slot-empty-label">OPEN SLOT</div>'
         + '<div class="forge-slot-empty-hint">'+hint+'</div>'
@@ -5988,6 +6021,62 @@ var FORGE_CANCEL_LINES = [
   "Fire doesn't take back what it ate."
 ];
 
+// Round 67r: M'bur start-craft lines — confirmation when the player
+// drops a recipe into a forge slot. Same gruff voice as the cancel
+// pool. Shown by _forgeConfirmSlotCraft below.
+var FORGE_START_LINES = [
+  "Materials in. No going back. Confirm.",
+  "Fire's hot. Say the word and we begin.",
+  "Once I start, those mats are gone. Ready?",
+  "Anvil's clear. Your move.",
+  "Speak and I light the forge."
+];
+
+// Round 67r: confirmation wrapper for the slot-click craft path. The
+// dedicated BEGIN FORGING button on the inspector panel remains a
+// direct call to startForgeCraft (explicit action button). The slot
+// click is easier to do by accident — dropping a relic into a slot
+// and consuming materials instantly read as a surprise to J in
+// testing. Same M'bur dialog primitive as the cancel-craft confirm.
+function _forgeConfirmSlotCraft(relicId){
+  if(!relicId) return;
+  // Re-run all the guards startForgeCraft would; on failure surface
+  // the same toasts and skip the dialog entirely.
+  var b = PERSIST.town && PERSIST.town.buildings && PERSIST.town.buildings.forge;
+  if(!b || !b.unlocked) return;
+  if(!RELIC_RECIPES[relicId] || !RELICS[relicId]){ showTownToast('Unknown recipe.'); return; }
+  if(b.queue && b.queue.length >= getForgeSlotCount()){ showTownToast('All forge slots are busy.'); return; }
+  if(!_forgeCanAfford(relicId)){ showTownToast('Not enough materials.'); return; }
+
+  var recipe = RELIC_RECIPES[relicId];
+  var relic  = RELICS[relicId];
+  // Materials list — same format the cancel-confirm uses.
+  var matsHtml = Object.keys(recipe.mats).map(function(k){
+    var m = (typeof MATERIALS !== 'undefined') ? MATERIALS[k] : null;
+    var icon = m ? m.icon : '?';
+    var name = m ? m.name : k;
+    return icon + ' ' + recipe.mats[k] + '× ' + name;
+  }).join(' · ');
+  // Craft time — reuse the panel's existing formatter for consistency.
+  var totalMs = ((RELIC_CRAFT_TIMES && RELIC_CRAFT_TIMES[recipe.tier]) || 600) * 1000;
+  var timeStr = (typeof _forgeTimeFmt === 'function') ? _forgeTimeFmt(totalMs) : (Math.round(totalMs/1000) + 's');
+
+  var line = FORGE_START_LINES[Math.floor(Math.random() * FORGE_START_LINES.length)];
+  _forgeShowMburConfirm({
+    title: 'BEGIN FORGING?',
+    line:  line,
+    body:  '<div class="forge-mbur-row"><span class="forge-mbur-label">FORGING</span> <span class="forge-mbur-val">' + relic.name + '</span></div>'
+         + '<div class="forge-mbur-row"><span class="forge-mbur-label">MATERIALS</span> <span class="forge-mbur-val">' + matsHtml + '</span></div>'
+         + '<div class="forge-mbur-row"><span class="forge-mbur-label">CRAFT TIME</span> <span class="forge-mbur-val">' + timeStr + '</span></div>',
+    confirmLabel: '⚒ BEGIN FORGING',
+    cancelLabel:  'NOT YET',
+    confirmDestructive: false,
+    onConfirm: function(){
+      startForgeCraft(relicId);
+    }
+  });
+}
+
 function cancelForgeCraft(slotIdx){
   var b = PERSIST.town.buildings.forge;
   if(!b || !b.queue || !b.queue[slotIdx]) return;
@@ -6052,7 +6141,7 @@ function _forgeShowMburConfirm(opts){
     '</div>' +
     (opts.body ? '<div class="forge-mbur-body">' + opts.body + '</div>' : '') +
     '<div class="forge-mbur-btns">' +
-      '<button class="forge-mbur-btn" id="forge-mbur-cancel">KEEP CRAFTING</button>' +
+      '<button class="forge-mbur-btn" id="forge-mbur-cancel">' + (opts.cancelLabel || 'KEEP CRAFTING') + '</button>' +
       '<button class="' + confirmCls + '" id="forge-mbur-confirm">' + (opts.confirmLabel || 'CONFIRM') + '</button>' +
     '</div>';
 
