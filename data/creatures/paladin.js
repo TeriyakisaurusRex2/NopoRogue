@@ -12,6 +12,11 @@ CREATURES.paladin = {
   baseStats: { str:20, agi:12, wis:16 },
   growth:    { str:3,  agi:1,  wis:2  },
 
+	altSprites: ['_alt_1'],
+		spriteWeights: [
+		  { sprite: 'default', weight: 98 },
+		  { sprite: '_alt_1',  weight: 2 }
+		],
   innate: {
     id:       'cursed_retribution',
     name:     'Cursed Retribution',

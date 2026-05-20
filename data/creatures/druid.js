@@ -12,6 +12,11 @@ CREATURES.druid = {
   baseStats: { str:12, agi:16, wis:20 },
   growth:    { str:1,  agi:2,  wis:3  },
 
+	altSprites: ['_alt_1'],
+			spriteWeights: [
+			  { sprite: 'default', weight: 98 },
+			  { sprite: '_alt_1',  weight: 2 }
+			],
   innate: {
     id:       'starfall',
     name:     'Starfall',

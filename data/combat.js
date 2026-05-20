@@ -296,17 +296,26 @@ function actorApplyStatus(actor, statusDef) {
 
 function actorDraw(actor, overrideId, silent) {
   // ── Reshuffle if draw pool empty ──
+  // Round 67r: MUTATE IN PLACE. The original code reassigned
+  // actor.drawPool = actor.discardPile.slice() and actor.discardPile = [],
+  // which broke the shared reference with gs.drawPool / gs.discardPile
+  // (set at actor creation). After the first reshuffle, renderPiles
+  // (which reads from gs) showed stale counts — looked like the deck
+  // had emptied and the player wasn't drawing anymore. In-place
+  // push + length-zero keeps the references aligned.
   if (actor.drawPool.length === 0) {
     if (actor.discardPile.length === 0) return null;
-    actor.drawPool = actor.discardPile.slice();
-    // Shuffle (Fisher-Yates)
+    for (var pi = 0; pi < actor.discardPile.length; pi++){
+      actor.drawPool.push(actor.discardPile[pi]);
+    }
+    // Shuffle (Fisher-Yates) in place
     for (var si = actor.drawPool.length - 1; si > 0; si--) {
       var sj = Math.floor(Math.random() * (si + 1));
       var tmp = actor.drawPool[si];
       actor.drawPool[si] = actor.drawPool[sj];
       actor.drawPool[sj] = tmp;
     }
-    actor.discardPile = [];
+    actor.discardPile.length = 0;
     if (!silent) {
       addLog(actor.creature.name + '\'s deck reshuffles.', 'draw');
       if (actor.side === 'player' && typeof playCardShuffleSfx === 'function') playCardShuffleSfx();

@@ -16,8 +16,14 @@ var _imgCache = {}; // 'id' → true (exists) | false (missing) | undefined (unt
 // directly with no opacity dance — cached images appear instantly, network
 // loads paint when ready (browser default). Keeps the no-flash-of-emoji
 // fix without depending on onload firing.
-function creatureImgHTML(id, emoji, size, cls){
-  var src = CREATURE_IMG_PATH + id + CREATURE_IMG_EXT;
+function creatureImgHTML(id, emoji, size, cls, variant){
+  // Round 67r: optional 5th `variant` arg — suffix string like '_alt_1'
+  // that gets appended to the creature id when resolving the asset path.
+  // Used by the alt-sprite system. When the variant is omitted, null, or
+  // empty string, the default '<id>.png' is loaded. Variant assets live
+  // alongside defaults: assets/creatures/<id><variant>.png.
+  var spriteId = (variant && typeof variant === 'string') ? (id + variant) : id;
+  var src = CREATURE_IMG_PATH + spriteId + CREATURE_IMG_EXT;
   var sz  = size || '64px';
   var c   = cls  || '';
   return '<span class="creature-img-wrap '+c+'" style="width:'+sz+';height:'+sz+';display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;">'
@@ -28,10 +34,104 @@ function creatureImgHTML(id, emoji, size, cls){
     + '</span>';
 }
 
+// Round 67r: alt-sprite roll. Given a creature id, returns the variant
+// suffix to use ('', '_alt_1', etc.) based on the creature's optional
+// spriteWeights field. Returns '' (default) when:
+//   - the creature has no spriteWeights field, OR
+//   - the weighted roll lands on the default entry.
+// Otherwise returns the variant string for the rolled alt sprite.
+function rollCreatureSprite(creatureId){
+  var ch = (typeof CREATURES !== 'undefined') ? CREATURES[creatureId] : null;
+  if(!ch || !Array.isArray(ch.spriteWeights) || !ch.spriteWeights.length) return '';
+  var total = 0;
+  for(var i = 0; i < ch.spriteWeights.length; i++){
+    total += (+ch.spriteWeights[i].weight || 0);
+  }
+  if(total <= 0) return '';
+  var r = Math.random() * total;
+  for(var j = 0; j < ch.spriteWeights.length; j++){
+    var w = (+ch.spriteWeights[j].weight || 0);
+    if(r < w){
+      var sprite = ch.spriteWeights[j].sprite;
+      return (sprite && sprite !== 'default') ? sprite : '';
+    }
+    r -= w;
+  }
+  return '';
+}
+
+// Round 67r: the variant string to use when rendering a CHAMPION
+// (player-owned creature). Reads PERSIST.champions[id].selectedSprite.
+// Falls back to '' (default sprite) if no selection / no PERSIST.
+function getChampionSelectedSprite(champId){
+  if(!PERSIST.champions || !PERSIST.champions[champId]) return '';
+  var sel = PERSIST.champions[champId].selectedSprite;
+  return (sel && typeof sel === 'string') ? sel : '';
+}
+
+// Round 67r: try to unlock an alt sprite on the given champion. Rolls
+// against the creature's spriteWeights; on a non-default result, adds
+// the variant to unlockedSprites (idempotent — duplicates skipped)
+// and SELECTS it so the player immediately sees what they got.
+// Returns { variant, wasNew } so callers can differentiate a fresh
+// unlock from a re-roll of an already-known variant.
+function rollChampionSpriteUnlock(champId){
+  var cp = getChampPersist(champId);
+  if(!cp) return { variant: '', wasNew: false };
+  var variant = rollCreatureSprite(champId);
+  if(!variant) return { variant: '', wasNew: false };
+  if(!Array.isArray(cp.unlockedSprites)) cp.unlockedSprites = [];
+  var wasNew = cp.unlockedSprites.indexOf(variant) === -1;
+  if(wasNew) cp.unlockedSprites.push(variant);
+  cp.selectedSprite = variant;
+  if(typeof savePersist === 'function') savePersist();
+  return { variant: variant, wasNew: wasNew };
+}
+
+// Round 67r: shared helper called by the shard-well pull path (and
+// the Topaz auto-unlock for "guaranteed" alts). Rolls for an alt
+// sprite at the creature's defined rarity. ONLY announces (toast +
+// log + SFX) when the variant is NEW — re-rolling a known variant
+// from a dupe pull silently re-selects it without spamming the
+// player. Returns the rolled variant string ('' on default / no alts).
+// FX intentionally NOT fired here because the shard-well reveal
+// flow lives outside combat (no FX canvas); the toast carries it.
+function _championUnlockShinyRoll(champId){
+  if(typeof rollChampionSpriteUnlock !== 'function') return '';
+  var result = rollChampionSpriteUnlock(champId);
+  if(!result.variant) return '';
+  if(!result.wasNew) return result.variant; // already owned — silent
+  var ch = (typeof CREATURES !== 'undefined') ? CREATURES[champId] : null;
+  var name = (ch && ch.name) || champId;
+  if(typeof playSfx === 'function') playSfx('shiny_encounter');
+  if(typeof addLog === 'function') addLog('✦ Rare ' + name + ' variant unlocked!', 'sys');
+  if(typeof showTownToast === 'function') showTownToast('✦ Rare ' + name + ' variant unlocked!');
+  return result.variant;
+}
+
+// Round 67r: unlock ALL alt sprites for a champion. Called at Topaz
+// ascension (and any future "guarantee all alts" unlock path). Pushes
+// each entry from CREATURES[id].altSprites into unlockedSprites,
+// skipping duplicates. Does NOT change selectedSprite — player keeps
+// whatever they had selected before.
+function unlockAllChampionSprites(champId){
+  var ch = (typeof CREATURES !== 'undefined') ? CREATURES[champId] : null;
+  var cp = getChampPersist(champId);
+  if(!ch || !cp || !Array.isArray(ch.altSprites)) return;
+  if(!Array.isArray(cp.unlockedSprites)) cp.unlockedSprites = [];
+  for(var i = 0; i < ch.altSprites.length; i++){
+    var v = ch.altSprites[i];
+    if(v && cp.unlockedSprites.indexOf(v) === -1) cp.unlockedSprites.push(v);
+  }
+  if(typeof savePersist === 'function') savePersist();
+}
+
 // Set a DOM element's content to a creature image (for elements set via textContent/innerHTML)
-function setCreatureImg(el, id, emoji, size){
+// Round 67r: optional 5th `variant` arg threads through to creatureImgHTML
+// for the alt-sprite system. Existing call sites pass no variant → default.
+function setCreatureImg(el, id, emoji, size, variant){
   if(!el) return;
-  el.innerHTML = creatureImgHTML(id, emoji, size);
+  el.innerHTML = creatureImgHTML(id, emoji, size, '', variant);
 }
 
 // Building icon — uses assets/icons/buildings/{id}.png, falls back to emoji.
@@ -913,6 +1013,14 @@ function champPersistDefault(champId){
     lockedArena:null,      // slot index (0/1/2) if sparring at the arena, else null
     ascensionTier:0,       // 0=base, 1=ruby, 2=emerald, etc.
     masteryXp:0,           // progress toward next ascension
+    // Round 67r: alt-sprite system (shiny-style). unlockedSprites is
+    // an array of variant suffix strings (e.g. ['_alt_1']) the player
+    // has earned for THIS champion. selectedSprite is the variant
+    // currently displayed in combat / UI ('' or null = default).
+    // Migration: existing saves get [] / null on first access via
+    // the migration block in getChampPersist.
+    unlockedSprites:[],
+    selectedSprite:null,
   };
 }
 function getChampPersist(champId){
@@ -922,6 +1030,9 @@ function getChampPersist(champId){
   if(cp && cp.lockedForge     === undefined) cp.lockedForge     = null;
   if(cp && cp.lockedShardWell === undefined) cp.lockedShardWell = null;
   if(cp && cp.lockedArena     === undefined) cp.lockedArena     = null;
+  // Round 67r: alt-sprite migration. Older saves lack these fields.
+  if(cp && !Array.isArray(cp.unlockedSprites)) cp.unlockedSprites = [];
+  if(cp && cp.selectedSprite === undefined)    cp.selectedSprite  = null;
   return cp;
 }
 
@@ -1367,6 +1478,17 @@ function ascendChampion(champId){
   cp.stats.str = ch.baseStats.str + tier.baseBonus * (level + 1);
   cp.stats.agi = ch.baseStats.agi + tier.baseBonus * (level + 1);
   cp.stats.wis = ch.baseStats.wis + tier.baseBonus * (level + 1);
+
+  // Round 67r: at Topaz ascension, every alt sprite for this champion
+  // auto-unlocks (the "guaranteed" tier in the shiny system). Skips
+  // gracefully when the creature has no altSprites defined.
+  if(tier.tier === 'topaz' && typeof unlockAllChampionSprites === 'function'){
+    unlockAllChampionSprites(champId);
+    if(Array.isArray(ch.altSprites) && ch.altSprites.length){
+      showTownToast('✦ All ' + ch.name + ' variant sprites unlocked!');
+      if(typeof playSfx === 'function') playSfx('shiny_encounter');
+    }
+  }
 
   savePersist();
   showTownToast(ch.name + ' ascended to ' + tier.tier.charAt(0).toUpperCase() + tier.tier.slice(1) + '!');
@@ -1844,6 +1966,10 @@ function buildLoginScreen(){
   var verEl = document.getElementById('login-version');
   if(verEl) verEl.textContent = (typeof GAME_VERSION === 'string' ? GAME_VERSION : '');
   refreshLoginMuteIcons();
+  // Round 67r: NEW dot on the changelog button if the player has not
+  // opened the latest entry yet. Cheap localStorage read; safe to
+  // call on every login-screen rebuild.
+  if(typeof refreshChangelogBadge === 'function') refreshChangelogBadge();
 
   var saves = listSaves();
   var activeId = getActiveSaveId();
@@ -4278,10 +4404,13 @@ function startRun(champId,area){
   gs._snapshot = _captureRunSnapshot(champId);
   paused=false;
   var ch=CREATURES[champId];
-  setCreatureImg(document.getElementById('top-portrait'), champId, ch.icon, '32px');
+  // Round 67r: read the player's selected sprite variant for this
+  // champion (alt-sprite system). Default sprite when nothing selected.
+  var champVariant = (typeof getChampionSelectedSprite === 'function') ? getChampionSelectedSprite(champId) : '';
+  setCreatureImg(document.getElementById('top-portrait'), champId, ch.icon, '32px', champVariant);
   document.getElementById('top-name').textContent=ch.name;
   document.getElementById('p-name').textContent=ch.name;
-  setCreatureImg(document.getElementById('p-icon'), champId, ch.icon, '320px');
+  setCreatureImg(document.getElementById('p-icon'), champId, ch.icon, '320px', champVariant);
   document.getElementById('p-icon').classList.add('flip-x');
   // Equipped relics strip — hover for tooltip
   var pRelics = document.getElementById('p-relics');
@@ -4353,7 +4482,30 @@ function setEnemyUI(idx){
   var ctr=document.getElementById('battle-counter');
   if(ctr) ctr.textContent='Battle '+(idx+1)+' of '+total;
   document.getElementById('e-name').textContent=e.name;
-  setCreatureImg(document.getElementById('e-icon'), e.id, e.icon, '320px');
+  // Round 67r: roll the alt-sprite variant for this encounter. Stored
+  // on the enemy entry so subsequent re-renders (e.g. after a resize)
+  // use the same sprite without re-rolling. Reset to '' on each
+  // setupEnemy call so battle-to-battle gets a fresh roll.
+  if(typeof rollCreatureSprite === 'function'){
+    e._spriteVariant = rollCreatureSprite(e.id);
+  } else {
+    e._spriteVariant = '';
+  }
+  setCreatureImg(document.getElementById('e-icon'), e.id, e.icon, '320px', e._spriteVariant);
+  // Round 67r: shiny encounter — non-default sprite rolled, celebrate.
+  // Slight delay so the sprite element exists and the combat screen
+  // has painted by the time the burst fires.
+  if(e._spriteVariant && window.FX && window.Effects && Effects.shinyReveal){
+    setTimeout(function(){
+      try {
+        var el = document.getElementById('e-icon');
+        if(!el) return;
+        Effects.shinyReveal({ target: FX.centerInStage(el) });
+        if(typeof playSfx === 'function') playSfx('shiny_encounter');
+        addLog('✦ A rare '+e.name+' appears!','sys');
+      } catch(shinyErr){}
+    }, 350);
+  }
   document.getElementById('e-hp-bar').style.width='100%';
   document.getElementById('e-hp-txt').textContent=e.baseHp+'/'+e.baseHp;
   document.getElementById('e-tags').innerHTML='';
@@ -5374,6 +5526,14 @@ function _fxStatusApplyFromTarget(targetStr, label, cls, sourceStr){
     // particle pattern.
     if(sid === 'shield' && Effects.shield){
       Effects.shield({ target: pos, color: '#d4a843' });
+      return;
+    }
+    // Round 67r: thorns gets a dedicated drawn-shape primitive — a
+    // six-pointed star of wedge spikes that stab outward, hold ~1s,
+    // then fade. The generic particle starburst doesn't read as a
+    // defensive armament; the wedges do.
+    if(sid === 'thorns' && Effects.thornsBurst){
+      Effects.thornsBurst({ target: pos });
       return;
     }
     // Round 67r: debuff applications get a projectile-delivery look —
@@ -7504,11 +7664,15 @@ function renderHand(){
     //
     // Rotation + drop stay normalised on t so the arc curvature looks
     // the same regardless of count (just stretches out wider).
+    // Round 67r: card width bumped 200 → 240 (+20%); TARGET_SPACING
+    // scaled proportionally (175 → 210) so the visual overlap stays
+    // about the same per-card. CARD_W must stay in sync with .card
+    // width in style.css.
     var mid    = (total-1)/2;
     var t      = total>1 ? (i-mid)/mid : 0;
-    var TARGET_SPACING = 175;      // ideal distance between adjacent card centers
+    var TARGET_SPACING = 210;      // ideal distance between adjacent card centers
     var MAX_FAN_WIDTH  = 1456;     // usable width inside .hand-cards at design size
-    var CARD_W         = 200;      // matches .card width — keep in sync
+    var CARD_W         = 240;      // matches .card width — keep in sync
     var spacing = TARGET_SPACING;
     if(total > 1){
       var maxSpacing = (MAX_FAN_WIDTH - CARD_W) / (total - 1);
@@ -7846,8 +8010,20 @@ function addLog(msg,cls){
 function togglePause(){
   if(!gs||!gs.running) return;
   paused=!paused;
+  // Top-bar button (legacy minimal version)
   var btn=document.getElementById('btn-pause');
   if(btn) btn.textContent=paused?'RESUME':'PAUSE';
+  // Round 67r: prominent pile-style pause button next to the hand.
+  // Swap the icon (⏸ ↔ ▶) and toggle the .paused class so the
+  // border + text turn green while paused.
+  var handBtn = document.getElementById('hand-pause-btn');
+  var handIcon = document.getElementById('hand-pause-icon');
+  if(handBtn) handBtn.classList.toggle('paused', paused);
+  if(handIcon) handIcon.textContent = paused ? '▶' : '⏸';
+  if(handBtn){
+    var lbl = handBtn.querySelector('.pile-lbl');
+    if(lbl) lbl.textContent = paused ? 'RESUME' : 'PAUSE';
+  }
   if(!paused) scheduleEnemyAction();
 }
 

@@ -922,7 +922,7 @@
     haste:     { color:'#9adc7e', tint:'#fff7d6', motion:'rise', count:14, speed:[80, 130], life:[500, 800] },
     frenzy:    { color:'#ff7a40', tint:'#ffe19a', motion:'radiate', count:14, speed:[120, 180], life:[300, 500] },
     shield:    { color:'#d4a843', tint:'#fff7d6', motion:'rise', count:12, speed:[40, 80],  life:[600, 900] },
-    thorns:    { color:'#c0a060', tint:'#e8d090', motion:'spike', count:10, speed:[140, 220], life:[280, 460] },
+    thorns:    { color:'#c0a060', tint:'#e8d090', motion:'spike', count:14, speed:[180, 300], life:[360, 560], burst:true },
     dodge:     { color:'#9adc7e', tint:'#cfeef5', motion:'rise', count:10, speed:[60, 100], life:[500, 800] },
     mana_burn: { color:'#5a8be0', tint:'#9ad8e8', motion:'crackle', count:14, speed:[160, 280], life:[180, 320] }
   };
@@ -983,15 +983,28 @@
           vx = Math.cos(a3) * spd; vy = Math.sin(a3) * spd;
           break;
         case 'spike':
-          var a4 = F.rand(0, Math.PI * 2);
-          vx = Math.cos(a4) * spd; vy = Math.sin(a4) * spd; ay = 100;
+          // Round 67r: evenly-distributed angles (using spawnedTotal as
+          // the index) so the spikes form a proper starburst around the
+          // target instead of clustering randomly. Particles originate
+          // at a small radius offset along their travel direction —
+          // they look like spikes appearing AT the edge and shooting
+          // outward, not at the center and fanning out.
+          var idx  = spawnedTotal % def.count;
+          var a4   = (idx / def.count) * Math.PI * 2 + F.rand(-0.12, 0.12);
+          ox = Math.cos(a4) * F.rand(22, 32);
+          oy = Math.sin(a4) * F.rand(22, 32);
+          vx = Math.cos(a4) * spd;
+          vy = Math.sin(a4) * spd;
+          ay = 80;
           break;
       }
       e.particles.push(new F.Particle({
         x: cx + ox, y: cy + oy,
         vx: vx, vy: vy,
         ax: ax, ay: ay,
-        size: Math.random() < 0.4 ? 3 : 2,
+        // Round 67r: spike (thorns) gets bigger particles so the
+        // starburst reads from across the screen.
+        size: def.motion === 'spike' ? (Math.random() < 0.5 ? 4 : 3) : (Math.random() < 0.4 ? 3 : 2),
         color: c,
         life: lifeBase,
         fade: 'step3'
@@ -1001,6 +1014,17 @@
     e.tick = function(dt, now){
       var age = now - this.born;
       if(age > DUR && this.particles.length === 0){ this.done = true; return; }
+      // Round 67r: burst-flagged statuses spawn ALL particles at t=0
+      // instead of trickling over the spawn window. Right for short
+      // impact moments (thorns) where the "all at once" starburst
+      // reads better than a slow drip.
+      if(def.burst && spawnedTotal === 0){
+        while(spawnedTotal < def.count){
+          spawnOne();
+          spawnedTotal++;
+        }
+        return;
+      }
       if(age <= DUR && now - lastSpawn >= SPAWN_GAP){
         lastSpawn = now;
         for(var i = 0; i < batch && spawnedTotal < def.count; i++){
@@ -1052,6 +1076,304 @@
     setTimeout(function(){
       statusApply(opts.target, sid);
     }, 450);
+  }
+
+  // ===================================================================
+  // CATEGORY 3c — THORNS BURST (Round 67r)
+  // -------------------------------------------------------------------
+  // Six-pointed star of wedge spikes radiating from the target.
+  // Animation: each wedge stabs OUTWARD from a small inner hub
+  // (grows 0 → full length over STAB_MS), HOLDS at full length for
+  // HOLD_MS, then fades out over FADE_MS. Each wedge is thick at the
+  // base and tapered to a near-point at the tip. Two-tone fill: an
+  // outline (dark) backing the wedge body (gold) with a thin lighter
+  // highlight stripe down the middle.
+  //
+  // Triggered exclusively for thorns status applications — bypasses
+  // the generic statusApply particle path because a drawn-shape
+  // animation reads better than scattered sparks for a defensive
+  // armament look. Hooked at _fxStatusApplyFromTarget in game.js.
+  // ===================================================================
+  function thornsBurst(opts){
+    opts = opts || {};
+    var target = opts.target || { x: 0, y: 0 };
+    var color  = opts.color   || '#c0a060'; // wedge body
+    var tint   = opts.tint    || '#e8d090'; // inner highlight
+    var outline= opts.outline || '#5a3818'; // outline behind wedge
+
+    var e = new F.Effect();
+    var cx = target.x, cy = target.y;
+
+    var SPIKE_COUNT = 6;
+    var STAB_MS    = 120;   // grow-out animation
+    var HOLD_MS    = 500;   // full-extension hold
+    var FADE_MS    = 220;   // fade-out
+    var TOTAL_MS   = STAB_MS + HOLD_MS + FADE_MS;
+
+    var SPIKE_LEN  = 78;    // length from hub edge to tip
+    var BASE_HALF  = 8;     // half-width at the base
+    var TIP_HALF   = 1;     // half-width at the tip (tiny — looks pointed)
+    var HUB_R      = 10;    // inner radius — base starts at this distance from centre
+
+    e.tick = function(dt, now){
+      if(now - this.born > TOTAL_MS) this.done = true;
+    };
+
+    e.drawExtra = function(ctx){
+      var age = performance.now() - this.born;
+      if(age > TOTAL_MS) return;
+
+      // Length factor: grows during STAB, full during HOLD + FADE.
+      var lenT;
+      if(age < STAB_MS) lenT = F.ease.outQuad(age / STAB_MS);
+      else              lenT = 1;
+
+      // Alpha: full during STAB + HOLD, fades during FADE.
+      var alpha;
+      if(age < STAB_MS + HOLD_MS) alpha = 1;
+      else alpha = Math.max(0, 1 - F.ease.outQuad((age - STAB_MS - HOLD_MS) / FADE_MS));
+
+      var tipX = HUB_R + SPIKE_LEN * lenT;
+
+      ctx.globalAlpha = alpha;
+      for(var i = 0; i < SPIKE_COUNT; i++){
+        // Rotate so the top spike points straight up.
+        var angle = (i / SPIKE_COUNT) * Math.PI * 2 - Math.PI / 2;
+        ctx.save();
+        ctx.translate(Math.floor(cx), Math.floor(cy));
+        ctx.rotate(angle);
+
+        // Outline (drawn first, slightly inflated polygon behind the body).
+        ctx.fillStyle = outline;
+        ctx.beginPath();
+        ctx.moveTo(HUB_R - 1,       -(BASE_HALF + 1));
+        ctx.lineTo(HUB_R - 1,        (BASE_HALF + 1));
+        ctx.lineTo(tipX + 1,         (TIP_HALF + 1));
+        ctx.lineTo(tipX + 1,        -(TIP_HALF + 1));
+        ctx.closePath();
+        ctx.fill();
+
+        // Body (gold wedge).
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(HUB_R,  -BASE_HALF);
+        ctx.lineTo(HUB_R,   BASE_HALF);
+        ctx.lineTo(tipX,    TIP_HALF);
+        ctx.lineTo(tipX,   -TIP_HALF);
+        ctx.closePath();
+        ctx.fill();
+
+        // Inner highlight (thinner lighter wedge, centred).
+        ctx.fillStyle = tint;
+        ctx.beginPath();
+        ctx.moveTo(HUB_R,  -BASE_HALF * 0.45);
+        ctx.lineTo(HUB_R,   BASE_HALF * 0.45);
+        ctx.lineTo(tipX,    0);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.restore();
+      }
+      ctx.globalAlpha = 1;
+    };
+
+    F.add(e);
+    return e;
+  }
+
+  // ===================================================================
+  // CATEGORY 4 — QUEST POINTER (Round 67r)
+  // -------------------------------------------------------------------
+  // Cyan particle-with-tail that flies from the quest rail row to
+  // the UI element the quest is pointing at. Paints on the UI fx
+  // canvas (#ui-fx-canvas at game-root level) so it draws across any
+  // screen — champion-select, area-select, town. Same arc + tail
+  // shape as the combat projectile but tuned for UI flair: cyan
+  // accent, slightly longer travel, no impact burst (the target's
+  // cyan pulse glow is what carries the "landed" beat).
+  //
+  // Triggered by _fxQuestPointer(questId) in game.js, which resolves
+  // the source rail row + the target UI element and fires this.
+  // ===================================================================
+  function questPointer(opts){
+    opts = opts || {};
+    var source = opts.source;
+    var target = opts.target;
+    if(!source || !target) return null;
+    var e = new F.Effect();
+    var DUR = 600; // a little slower than combat projectiles so the eye can track it
+    var ARC = -140;
+
+    var head = { x: source.x, y: source.y };
+    var lastSpawn = 0;
+    var done = false;
+
+    function spawnTrail(now){
+      if(now - lastSpawn < 14) return;
+      lastSpawn = now;
+      for(var i = 0; i < 2; i++){
+        var white = Math.random() < 0.35;
+        e.particles.push(new F.Particle({
+          x: head.x + F.rand(-2, 2),
+          y: head.y + F.rand(-2, 2),
+          vx: F.rand(-10, 10),
+          vy: F.rand(-10, 10),
+          size: white ? 2 : 3,
+          color: white ? '#ffffff' : (Math.random() < 0.5 ? '#9ad8e8' : '#36707f'),
+          life: F.rand(220, 340),
+          fade: 'step3'
+        }));
+      }
+    }
+
+    function impactSparkle(x, y){
+      // Small cyan sparkle on landing. Restrained — the target's
+      // cyan pulse takes over from here.
+      for(var i = 0; i < 8; i++){
+        var ang = (Math.PI * 2 * i / 8) + F.rand(-0.15, 0.15);
+        var spd = F.rand(80, 160);
+        e.particles.push(new F.Particle({
+          x: x, y: y,
+          vx: Math.cos(ang) * spd,
+          vy: Math.sin(ang) * spd,
+          size: i % 2 === 0 ? 3 : 2,
+          color: i % 2 === 0 ? '#9ad8e8' : '#ffffff',
+          life: F.rand(260, 420),
+          fade: 'step3'
+        }));
+      }
+    }
+
+    e.tick = function(dt, now){
+      var age = now - this.born;
+      var t = Math.min(1, age / DUR);
+      head.x = F.lerp(source.x, target.x, t);
+      head.y = F.lerp(source.y, target.y, t) + ARC * Math.sin(t * Math.PI);
+      if(!done && t < 1){
+        spawnTrail(now);
+      }
+      if(t >= 1 && !done){
+        done = true;
+        impactSparkle(target.x, target.y);
+        this.done = true;
+      }
+    };
+
+    e.drawExtra = function(ctx){
+      if(done) return;
+      var now = performance.now();
+      var t = Math.min(1, (now - this.born) / DUR);
+
+      var TAIL_MS = 130;
+      var N = 14;
+      function snap(v){ return Math.floor(v / 2) * 2; }
+
+      for(var i = N - 1; i >= 0; i--){
+        var frac = i / (N - 1);
+        var tBack = Math.max(0, t - (TAIL_MS / DUR) * frac);
+        var x = F.lerp(source.x, target.x, tBack);
+        var y = F.lerp(source.y, target.y, tBack) + ARC * Math.sin(tBack * Math.PI);
+        var sx_ = snap(x), sy_ = snap(y);
+        var size = Math.max(2, Math.round(F.lerp(10, 2, frac)));
+        var half = Math.floor(size / 2);
+        ctx.globalAlpha = (1 - frac) * 0.85;
+        ctx.fillStyle = '#9ad8e8'; // cyan halo
+        ctx.fillRect(sx_ - half - 1, sy_ - half - 1, size + 2, size + 2);
+        ctx.globalAlpha = (1 - frac);
+        ctx.fillStyle = '#ffffff'; // white core
+        ctx.fillRect(sx_ - half, sy_ - half, size, size);
+      }
+
+      ctx.globalAlpha = 1;
+      var hx = snap(head.x), hy = snap(head.y);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(hx - 7, hy - 2, 14, 4);
+      ctx.fillRect(hx - 2, hy - 7, 4, 14);
+      ctx.fillStyle = '#9ad8e8';
+      ctx.fillRect(hx - 3, hy - 3, 6, 6);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(hx - 2, hy - 2, 4, 4);
+    };
+
+    // Render on the UI layer (cross-screen), not the combat layer.
+    if(typeof F.addUi === 'function') F.addUi(e);
+    else F.add(e);
+    return e;
+  }
+
+  // ===================================================================
+  // CATEGORY 3d — SHINY REVEAL (Round 67r)
+  // -------------------------------------------------------------------
+  // Small celebratory burst when an alt-sprite ("shiny") encounter
+  // rolls or the player unlocks a new variant on one of their
+  // champions. Reads as a brief sparkle ring + outward burst — not
+  // big enough to interrupt combat, but obvious enough to notice.
+  // Cyan + gold palette to feel rare without aping the existing crit
+  // gold burst.
+  // ===================================================================
+  function shinyReveal(opts){
+    opts = opts || {};
+    var target = opts.target || { x: 0, y: 0 };
+    var cx = target.x, cy = target.y;
+
+    var e = new F.Effect();
+    var DUR_MS = 900;
+
+    // Outward burst — gold + cyan particles in a quick ring.
+    for(var i = 0; i < 22; i++){
+      var ang = (Math.PI * 2 * i / 22) + F.rand(-0.1, 0.1);
+      var spd = F.rand(180, 340);
+      e.particles.push(new F.Particle({
+        x: cx, y: cy,
+        vx: Math.cos(ang) * spd,
+        vy: Math.sin(ang) * spd - 40,
+        ay: 240,
+        size: i % 3 === 0 ? 4 : 3,
+        color: i % 2 === 0 ? '#ffe19a' : '#9ad8e8',
+        life: F.rand(360, 620),
+        fade: 'step3'
+      }));
+    }
+    // Slow drifters — twinkling sparkles that linger longer.
+    for(var k = 0; k < 8; k++){
+      var ang2 = (Math.PI * 2 * k / 8) + F.rand(-0.3, 0.3);
+      var spd2 = F.rand(40, 80);
+      e.particles.push(new F.Particle({
+        x: cx + F.rand(-12, 12),
+        y: cy + F.rand(-12, 12),
+        vx: Math.cos(ang2) * spd2,
+        vy: Math.sin(ang2) * spd2 - 30,
+        ay: 80,
+        size: 2,
+        color: '#ffffff',
+        life: F.rand(600, 900),
+        fade: 'quad'
+      }));
+    }
+
+    e.tick = function(dt, now){
+      if(now - this.born > DUR_MS && this.particles.length === 0) this.done = true;
+    };
+
+    // Quick expanding ring overlay (gold → cyan → fade).
+    e.drawExtra = function(ctx){
+      var age = performance.now() - this.born;
+      var t = age / 350;
+      if(t > 1) return;
+      var R = Math.round(F.lerp(10, 70, t));
+      var alpha = 1 - t;
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = t < 0.5 ? '#ffe19a' : '#9ad8e8';
+      // Pixel-square ring
+      ctx.fillRect(Math.floor(cx) - R,     Math.floor(cy) - R,     R * 2, 3);
+      ctx.fillRect(Math.floor(cx) - R,     Math.floor(cy) + R - 3, R * 2, 3);
+      ctx.fillRect(Math.floor(cx) - R,     Math.floor(cy) - R,     3,     R * 2);
+      ctx.fillRect(Math.floor(cx) + R - 3, Math.floor(cy) - R,     3,     R * 2);
+      ctx.globalAlpha = 1;
+    };
+
+    F.add(e);
+    return e;
   }
 
   // ===================================================================
@@ -1733,6 +2055,9 @@
     slash: slash,
     statusApply: statusApply,
     statusBolt: statusBolt,
+    thornsBurst: thornsBurst,
+    shinyReveal: shinyReveal,
+    questPointer: questPointer,
     critFlash: critFlash,
     heal: heal,
     buff: buff,

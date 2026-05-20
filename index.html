@@ -24,6 +24,12 @@
      descendants — so modals/overlays/tooltips inside scale and position
      correctly even though they use position:fixed. -->
 <div id="game-root">
+<!-- Round 67r: UI FX canvas — viewport-anchored at game-root level so
+     it draws across ALL screens (champ-select, area-select, town,
+     combat). Distinct from #fx-canvas (which lives inside #game-screen
+     and only renders during combat). Used by the quest pointer system
+     to fly a cyan particle from the quest rail to UI targets. -->
+<canvas id="ui-fx-canvas" width="1920" height="1080" style="position:absolute;top:0;left:0;width:1920px;height:1080px;pointer-events:none;image-rendering:pixelated;z-index:1500;"></canvas>
 <div id="kw-tooltip"></div>
 
 <!-- NAV BAR — sibling of root, always at top of page.
@@ -96,6 +102,12 @@
        Music has its own dedicated icon (note glyph) so it visually
        distinguishes from the speaker SFX button. Updated by
        refreshLoginMuteIcons() on render and on every applySetting. -->
+  <!-- Round 67r: changelog moved to its own top-left anchor so it
+       lives separately from the sound / settings controls on the right.
+       The NEW dot is the focal point — don't bury it next to mute. -->
+  <div class="login-top-left">
+    <button class="login-mute-btn" id="login-changelog-btn" onclick="showChangelog()" title="What's new">📜</button>
+  </div>
   <div class="login-top-right">
     <button class="login-mute-btn" id="login-music-mute" onclick="toggleMute('music');refreshLoginMuteIcons();" title="Mute / unmute music">♪</button>
     <button class="login-mute-btn" id="login-sfx-mute"   onclick="toggleMute('sfx');refreshLoginMuteIcons();"   title="Mute / unmute sound effects">🔊</button>
@@ -492,8 +504,16 @@
         <div class="hand-cards" id="hand-cards"></div>
       </div>
 
-      <!-- Deck pile -->
+      <!-- Pause + Deck + Discard piles -->
+      <!-- Round 67r: prominent pause button next to the hand, bigger and
+           closer to the player's hand than the small top-bar one.
+           Encourages pausing to read hand / status chips mid-fight. -->
       <div style="display:flex;flex-direction:column;gap:6px;align-items:center;">
+        <div class="pile pile-pause" id="hand-pause-btn" onclick="togglePause()" title="Pause / resume (press P)">
+          <div class="pile-pause-icon" id="hand-pause-icon">⏸</div>
+          <div class="pile-lbl">PAUSE</div>
+          <div class="pile-hint">P</div>
+        </div>
         <div class="pile" onclick="openPilePopup('deck')">
           <div class="pile-lbl">DECK</div>
           <div class="pile-cnt" id="deck-cnt">0</div>
@@ -1349,15 +1369,15 @@
 </div><!-- /#game-root -->
 
   <!-- ── Core engine (defines all functions + empty data stubs) ── -->
-  <script src="fx-engine.js?v=2"></script>
-  <script src="fx-effects.js?v=15"></script>
-  <script src="game.js?v=9"></script>
+  <script src="fx-engine.js?v=3"></script>
+  <script src="fx-effects.js?v=20"></script>
+  <script src="game.js?v=16"></script>
 
   <!-- ── Deck builder (deck editing screen) ── -->
   <script src="deck_builder.js?v=1"></script>
 
   <!-- ── Town: buildings, NPC dialogue, bestiary, tutorials ── -->
-  <script src="town.js?v=10"></script>
+  <script src="town.js?v=13"></script>
 
   <!-- ── Data: keywords, cards, creature decks ── -->
   <script src="data/cards.js?v=2"></script>
@@ -1366,7 +1386,7 @@
   <script src="data/card_effects.js?v=6"></script>
 
   <!-- ── New unified combat system (symmetrical actor-based) ── -->
-  <script src="data/combat.js?v=3"></script>
+  <script src="data/combat.js?v=4"></script>
 
   <!-- ── Data: achievements ── -->
   <script src="data/achievements.js"></script>
@@ -1407,10 +1427,13 @@
   <script src="data/creatures/zombie.js"></script>
 
   <!-- ── Audio system ── -->
-  <script src="audio.js?v=6"></script>
+  <script src="audio.js?v=7"></script>
+
+  <!-- ── Changelog (Round 67r) ── -->
+  <script src="changelog.js?v=1"></script>
 
   <!-- ── Tutorial (Round 66) — first-run wolf-vs-goblin lesson ── -->
-  <script src="tutorial.js?v=11"></script>
+  <script src="tutorial.js?v=13"></script>
 
   <!-- ── Boot: runs after all data is loaded ── -->
   <script src="init.js"></script>

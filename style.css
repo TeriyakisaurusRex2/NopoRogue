@@ -181,15 +181,22 @@ button, input, select, textarea{font-family:inherit;}
 .cs-q-action{font-size:10px;color:#a08858;line-height:1.5;margin:4px 0 6px;letter-spacing:.2px;}
 /* Story-quest frame — distinct gold-on-black border so chained
    quests read as different from random bounties. */
-.cs-q-row.cs-q-row-story{padding:10px 12px;background:linear-gradient(180deg,rgba(212,168,67,.06),rgba(0,0,0,0));border:1px solid #5a3a18;border-radius:4px;margin-bottom:14px;border-bottom:1px solid #5a3a18;}
-.cs-q-row.cs-q-row-story .cs-q-name{color:#e8d7a8;}
-.cs-q-row.cs-q-row-story .cs-q-bar-fill{background:linear-gradient(90deg,#5a4018,#c09030,#f0a53a);}
+/* Round 67r: story quest rows recoloured from gold → dark blue so
+   they stand out from bounty rows (which keep the parchment palette).
+   Pairs with the cyan target pulse + cyan pointer particle — the
+   blue/cyan family becomes the "this is your current quest" visual
+   language. Bar fill stays cyan-tinted to match the pointer accent.
+   Cursor:pointer signals re-clicking re-fires the pointer. */
+.cs-q-row.cs-q-row-story{padding:10px 12px;background:linear-gradient(180deg,rgba(60,100,140,.18),rgba(20,40,70,.08));border:1px solid #36707f;border-radius:4px;margin-bottom:14px;border-bottom:1px solid #36707f;cursor:pointer;transition:background .15s,border-color .15s;}
+.cs-q-row.cs-q-row-story:hover{background:linear-gradient(180deg,rgba(80,140,180,.22),rgba(20,40,70,.12));border-color:#9ad8e8;}
+.cs-q-row.cs-q-row-story .cs-q-name{color:#cfeef5;}
+.cs-q-row.cs-q-row-story .cs-q-bar-fill{background:linear-gradient(90deg,#36707f,#9ad8e8,#cfeef5);}
 .cs-q-star{color:#f0a53a;text-shadow:0 0 6px rgba(240,165,58,.6);margin-right:4px;}
 /* Round 67q: chain title tag — tiny uppercase line above the quest
    title saying which questchain this is part of ("NEW BEGINNINGS"
    etc). Subtle gold accent; non-decorative chains can repurpose it. */
 .cs-q-chain-tag{font-size:8px;color:#9a7030;letter-spacing:2px;text-transform:uppercase;margin-bottom:3px;opacity:.85;}
-.cs-q-row.cs-q-row-story .cs-q-chain-tag{color:#d4a843;}
+.cs-q-row.cs-q-row-story .cs-q-chain-tag{color:#9ad8e8;}
 /* Round 67p: rail-side CLAIM button so early-game story quests are
    claimable without entering town.
    Round 67q: complete rows pulse a green glow so the player notices
@@ -364,7 +371,11 @@ button.locked-btn:hover{background:rgba(20,12,4,.6)!important;transform:none!imp
    the computed height. Fixed dimensions remove the ambiguity. */
 /* Round 67o: forced 4-column grid filling the centre column. Cards
    grow with the canvas now that the screen has no max-width cap. */
-.champ-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;padding:14px 18px;overflow-y:auto;flex:1;scrollbar-width:thin;scrollbar-color:#2a1808 transparent;align-content:start;}
+.champ-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;padding:14px 18px;overflow-y:auto;flex:1;min-height:0;scrollbar-width:thin;scrollbar-color:#5a3a18 transparent;align-content:start;}
+.champ-grid::-webkit-scrollbar{width:8px;}
+.champ-grid::-webkit-scrollbar-track{background:transparent;}
+.champ-grid::-webkit-scrollbar-thumb{background:#5a3a18;border-radius:4px;}
+.champ-grid::-webkit-scrollbar-thumb:hover{background:#7a4a18;}
 /* Reserved-slot containers on champion cards. Each slot is always
    emitted by the renderer; CSS holds vertical space when empty so
    names, stats, and innate boxes line up across the grid regardless
@@ -393,8 +404,14 @@ button.locked-btn:hover{background:rgba(20,12,4,.6)!important;transform:none!imp
    ambiguity entirely. */
 /* Round 67o: dropped fixed width/height — width:100% fills the 1fr
    grid column; aspect-ratio:5/7 preserves the playing-card shape so
-   height scales with width. Padding bumped to match the bigger card. */
-.champ-card{width:100%;aspect-ratio:5/7;display:flex;flex-direction:column;background:linear-gradient(170deg,#1e1005,#120a02);border:1px solid #4a2f10;border-radius:8px;padding:18px 16px;cursor:pointer;transition:border-color .2s,transform .2s;position:relative;overflow:hidden;}
+   height scales with width. Padding bumped to match the bigger card.
+   Round 67r: aspect-ratio dropped in favour of min-height. The 5/7
+   shape collapsed cards to <content height when the grid had narrow
+   columns (4-col layout with many champs), causing content to spill
+   into the row below visually (FALLEN badges floating between cells).
+   Min-height keeps every card uniformly tall while letting content
+   drive the actual height when it needs more room. */
+.champ-card{width:100%;min-height:400px;display:flex;flex-direction:column;background:linear-gradient(170deg,#1e1005,#120a02);border:1px solid #4a2f10;border-radius:8px;padding:18px 16px;cursor:pointer;transition:border-color .2s,transform .2s;position:relative;overflow:hidden;}
 /* Round 62: favorite star (top-right). Click toggles
    PERSIST.favoriteChamps[id]. Active state is gold + filled glyph. */
 .champ-card-fav{position:absolute;top:6px;right:8px;background:transparent;border:none;font-size:22px;line-height:1;padding:2px 6px;cursor:pointer;z-index:2;transition:color .15s,transform .15s,text-shadow .15s;font-family:inherit;}
@@ -485,7 +502,11 @@ button.locked-btn:hover{background:rgba(20,12,4,.6)!important;transform:none!imp
 #area-screen{padding:0;}
 /* Round 67p: area-grid scaled up to match the bumped HUD. Wider
    cards (min 240) with more breathing room between them. */
-.area-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:18px;padding:16px 22px;overflow-y:auto;flex:1;scrollbar-width:thin;scrollbar-color:#2a1808 transparent;align-content:start;}
+.area-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:18px;padding:16px 22px;overflow-y:auto;flex:1;min-height:0;scrollbar-width:thin;scrollbar-color:#5a3a18 transparent;align-content:start;}
+.area-grid::-webkit-scrollbar{width:8px;}
+.area-grid::-webkit-scrollbar-track{background:transparent;}
+.area-grid::-webkit-scrollbar-thumb{background:#5a3a18;border-radius:4px;}
+.area-grid::-webkit-scrollbar-thumb:hover{background:#7a4a18;}
 /* Round 67p: card content uses flex-column so the FIGHTS row at the
    bottom can be pinned via margin-top:auto. Combined with min-height
    reservations on the variable-content rows (.area-warning, .area-theme)
@@ -630,7 +651,7 @@ button.locked-btn:hover{background:rgba(20,12,4,.6)!important;transform:none!imp
 /* Round 67p: card size bumped 158×220 → 200×280 (proportional ~5:7
    aspect). Pairs with the bumped hand-cards container height (260→340)
    and the fan-spacing bump in game.js (xOffset 150→175). */
-.card{width:200px;height:280px;background:linear-gradient(170deg,#251508,#140b02);border:1px solid #6a3f18;border-radius:9px;display:flex;flex-direction:column;cursor:pointer;user-select:none;transition:border-color .15s,box-shadow .2s ease,transform .25s ease-out,opacity .2s ease;transform-origin:bottom center;position:absolute;bottom:14px;left:50%;overflow:hidden;}
+.card{width:240px;height:336px;background:linear-gradient(170deg,#251508,#140b02);border:1px solid #6a3f18;border-radius:9px;display:flex;flex-direction:column;cursor:pointer;user-select:none;transition:border-color .15s,box-shadow .2s ease,transform .25s ease-out,opacity .2s ease;transform-origin:bottom center;position:absolute;bottom:14px;left:50%;overflow:hidden;}
 .card:hover{border-color:#d4a843;box-shadow:0 -12px 32px rgba(200,150,40,.3);}
 .card-arriving{opacity:0;pointer-events:none;transition:none;}
 .card.card-fadein{animation:cardFadeIn 0.25s ease-out forwards;}
@@ -921,6 +942,16 @@ button.locked-btn:hover{background:rgba(20,12,4,.6)!important;transform:none!imp
 .pile-cnt{font-size:36px;color:#d4a843;font-weight:600;line-height:1;}
 .pile-lbl{font-size:12px;color:#4a3010;letter-spacing:2px;}
 .pile-hint{font-size:8px;color:#2a1808;letter-spacing:.5px;}
+/* Round 67r: pause button shaped as a pile (matches deck/discard
+   sizing) sitting next to them on the right of the hand. Bigger
+   icon + slightly warmer border so it pops as the action target. */
+.pile-pause{border-color:#5a3a18;background:linear-gradient(170deg,#1f1206,#100702);}
+.pile-pause:hover{border-color:#c09030;transform:translateY(-2px);box-shadow:0 0 14px rgba(212,168,67,.25);}
+.pile-pause .pile-lbl{color:#7a5828;}
+.pile-pause-icon{font-size:48px;color:#d4a843;line-height:1;}
+.pile-pause.paused{border-color:#9adc7e;background:linear-gradient(170deg,#0e1c08,#040a02);}
+.pile-pause.paused .pile-pause-icon{color:#9adc7e;}
+.pile-pause.paused .pile-lbl{color:#3a7a2a;}
 .pile-stack{display:none;}
 .pile-card{display:none;}
 .discard-top{display:none;}
@@ -1762,6 +1793,16 @@ button.locked-btn:hover{background:rgba(20,12,4,.6)!important;transform:none!imp
 .snc-roster-row:hover{background:rgba(212,168,67,.04);}
 .snc-roster-row.selected{background:rgba(212,168,67,.08);border-left-color:#d4a843;}
 .snc-roster-portrait{width:48px;height:48px;border:1px solid #3a2818;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative;flex-shrink:0;}
+/* Round 67r: sprite picker below the Sanctum overview portrait. Only
+   renders when the creature has at least one alt sprite declared. */
+.snc-sprite-picker{width:180px;padding:8px;background:rgba(10,6,1,.4);border:1px solid #2a1808;border-radius:6px;box-sizing:border-box;}
+.snc-sprite-picker-label{font-size:8px;letter-spacing:2px;color:#7a6030;text-align:center;margin-bottom:6px;}
+.snc-sprite-picker-grid{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;}
+.snc-sprite-thumb{width:48px;height:48px;display:flex;align-items:center;justify-content:center;background:#1a0e04;border:1px solid #3a2010;border-radius:4px;cursor:pointer;transition:border-color .15s,transform .15s,box-shadow .15s;}
+.snc-sprite-thumb:hover{border-color:#c09030;transform:translateY(-2px);}
+.snc-sprite-thumb.selected{border-color:#d4a843;background:rgba(212,168,67,.08);box-shadow:0 0 8px rgba(212,168,67,.35);}
+.snc-sprite-thumb.locked{cursor:default;opacity:.45;}
+.snc-sprite-thumb.locked:hover{border-color:#3a2010;transform:none;}
 .snc-roster-info{flex:1;min-width:0;}
 .snc-roster-name{font-size:11px;color:#c0a060;letter-spacing:.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .snc-roster-sub{font-size:8px;color:#5a4020;margin-top:2px;}
@@ -1923,9 +1964,13 @@ button.locked-btn:hover{background:rgba(20,12,4,.6)!important;transform:none!imp
    it (e.g. EDIT DECK button while story_edit_deck is active). Brighter
    and chunkier than claimPulse so it reads as a tutorial nudge rather
    than a passive idle state. JS adds/removes via classList.toggle. */
+/* Round 67r: recoloured from gold → cyan. Gold-on-gold UI didn't
+   read as a clear "look here" signal; cyan pops against the warm
+   parchment palette. Pairs with the cyan quest-pointer particle
+   that flies from the rail to the target. */
 @keyframes questTargetPulse {
-  0%,100% { box-shadow: 0 0 8px rgba(212,168,67,.35), 0 0 0 1px rgba(212,168,67,.4); }
-  50%     { box-shadow: 0 0 22px rgba(240,200,90,.85), 0 0 0 2px rgba(240,200,90,.75); }
+  0%,100% { box-shadow: 0 0 8px rgba(154,216,232,.45), 0 0 0 1px rgba(154,216,232,.55); }
+  50%     { box-shadow: 0 0 24px rgba(154,216,232,.95), 0 0 0 2px rgba(154,216,232,.85); }
 }
 .quest-target-pulse { animation: questTargetPulse 1.4s ease-in-out infinite; }
 
@@ -2912,10 +2957,55 @@ body.tut-dim-mode #game-screen{
 
 /* Top-right cluster: mute buttons + settings cog. Round 65. */
 .login-top-right{position:absolute;top:18px;right:22px;z-index:5;display:flex;align-items:center;gap:6px;}
-.login-settings-btn{font-size:22px;padding:6px 12px;}
-.login-mute-btn{background:none;border:1px solid transparent;border-radius:4px;color:#d4a843;opacity:.65;font-size:18px;line-height:1;cursor:pointer;padding:6px 10px;transition:opacity .15s,color .15s,background .15s;font-family:inherit;}
+/* Round 67r: top-left anchor for the changelog button. Symmetric to
+   .login-top-right so the layout reads balanced. */
+.login-top-left{position:absolute;top:18px;left:22px;z-index:5;display:flex;align-items:center;gap:6px;}
+/* Round 67r: bumped font-size 22 → 30 to match the larger mute icons. */
+.login-settings-btn{font-size:30px;padding:10px 16px;}
+/* Round 67r: bumped font-size 18 → 26 + padding 6/10 → 10/14 so the
+   top-corner controls (music, sfx, changelog) are easier to spot
+   and click. Was reading as tiny against the wordmark. */
+.login-mute-btn{background:none;border:1px solid transparent;border-radius:4px;color:#d4a843;opacity:.65;font-size:26px;line-height:1;cursor:pointer;padding:10px 14px;transition:opacity .15s,color .15s,background .15s;font-family:inherit;}
+/* Round 67r: music + sfx icons doubled in size relative to the
+   default mute-btn baseline. Settings + changelog stay at the
+   smaller size to keep the top corners visually balanced. */
+#login-music-mute, #login-sfx-mute{font-size:52px;padding:14px 18px;}
 .login-mute-btn:hover{opacity:1;background:rgba(212,168,67,.08);}
 .login-mute-btn.muted{opacity:1;color:#a06040;}
+/* Round 67r: changelog button on the login top-right. Reuses
+   .login-mute-btn sizing; the NEW dot is an absolute child anchored
+   top-right of the button. */
+#login-changelog-btn{position:relative;}
+#login-changelog-btn.has-new::after{
+  content:'';
+  position:absolute;
+  top:6px; right:6px;
+  width:11px; height:11px;
+  background:#e88060;
+  border:1px solid #1a0e04;
+  border-radius:50%;
+  box-shadow:0 0 8px rgba(232,128,96,.75);
+  pointer-events:none;
+}
+/* Changelog modal overlay — pixel-art-friendly panel, scrollable list,
+   click outside to dismiss. */
+.changelog-overlay{position:fixed;inset:0;background:rgba(8,4,2,.78);display:none;align-items:center;justify-content:center;z-index:2200;padding:32px;}
+.changelog-overlay.show{display:flex;}
+.changelog-card{background:linear-gradient(180deg,#1a1208 0%,#120802 100%);border:1px solid #5a3a18;border-top:2px solid #c09030;border-radius:8px;width:min(720px,94vw);max-height:80vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,.7);}
+.changelog-header{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #3a2010;flex-shrink:0;}
+.changelog-title{font-family:'Cinzel',serif;font-size:18px;letter-spacing:3px;color:#d4a843;}
+.changelog-close{background:none;border:1px solid #3a2010;border-radius:4px;color:#c0a060;font-size:22px;line-height:1;width:32px;height:32px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s,border-color .15s;}
+.changelog-close:hover{background:rgba(212,168,67,.1);border-color:#c09030;}
+.changelog-body{padding:14px 18px;overflow-y:auto;flex:1;}
+.changelog-entry{padding:14px 0;border-bottom:1px dashed #2a1808;}
+.changelog-entry:last-child{border-bottom:none;}
+.changelog-entry-head{display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap;}
+.changelog-entry-version{font-size:13px;letter-spacing:1.5px;color:#e8d7a8;font-weight:600;}
+.changelog-entry-date{font-size:10px;letter-spacing:1px;color:#6a4818;}
+.changelog-new-badge{font-size:9px;letter-spacing:2px;padding:2px 8px;background:#7a2200;color:#ffb070;border:1px solid #c14040;border-radius:3px;text-shadow:0 0 4px rgba(232,128,96,.5);}
+.changelog-entry-list{margin:0;padding-left:18px;color:#c0a060;font-family:'Crimson Text',serif;font-size:13px;line-height:1.55;}
+.changelog-entry-list li{margin-bottom:5px;}
+.changelog-entry-list li:last-child{margin-bottom:0;}
 /* Music note variant uses a slightly larger glyph since ♪ renders smaller
    than emoji speakers. SFX button keeps the speaker emoji native size. */
 #login-music-mute{font-size:22px;}

@@ -1836,8 +1836,15 @@ function buildCsQuestRail(railIdOpt){
     // value.
     var chainTitle = (typeof getQuestChainTitle === 'function') ? getQuestChainTitle(def) : null;
     var chainTag = chainTitle ? '<div class="cs-q-chain-tag">'+_csqEsc(chainTitle)+'</div>' : '';
+    // Round 67r: clicking a quest row re-fires the cyan pointer
+    // particle so the player can re-locate the target. Only attach
+    // the handler to story rows — bounty rows don't have a single
+    // UI target (yet). The data-qid is already on the row.
+    var rowClick = (def.isStory)
+      ? ' onclick="_fxQuestPointer(this.dataset.qid)"'
+      : '';
     rows +=
-        '<div class="cs-q-row'+storyCls+(complete?' cs-q-row-complete':'')+chainInCls+'" data-qid="'+_csqEsc(a.id)+'">'
+        '<div class="cs-q-row'+storyCls+(complete?' cs-q-row-complete':'')+chainInCls+'" data-qid="'+_csqEsc(a.id)+'"'+rowClick+'>'
       +   chainTag
       +   '<div class="cs-q-row-head">'
       +     '<span class="cs-q-name">'+titlePrefix+_csqEsc(def.title || a.id)+'</span>'
@@ -2665,6 +2672,64 @@ function isQuestPending(questId){
 // returns true if any of them targets the given area / building.
 // Generic so future story quests automatically pulse the right UI
 // without further plumbing.
+// Round 67r: quest → target-selector resolver. Returns the CSS
+// selector (or multi-selector) of the UI element this quest is
+// pointing the player at, so the quest-pointer particle knows
+// where to fly. Returns null for quests that have no UI target
+// (e.g. reach_level quests — the answer is "play more combat").
+//
+// Multi-selectors are honoured: when both champion-select and
+// area-select rails are mounted simultaneously, the resolver
+// returns both selectors and the firing code picks the visible
+// one.
+function _questTargetSelector(questId){
+  if(!questId) return null;
+  // Story quest IDs — match against the data, not magic strings.
+  if(questId === 'story_edit_deck') return '#cs-cr-edit-deck, #ar-cr-edit-deck';
+  if(questId === 'story_visit_hall') return '[data-bid="adventurers_hall"]';
+  if(questId === 'story_craft_safety_net') return '[data-bid="forge"]';
+  if(questId === 'story_equip_safety_net') return '[data-bid="sanctum"]';
+  if(questId === 'story_clear_pale_road') return '.area-card.quest-target-pulse';
+  if(questId === 'story_meet_barau') return '[data-bid="market"]';
+  if(questId === 'story_first_summon') return '[data-bid="shard_well"]';
+  return null;
+}
+
+// Round 67r: fire the cyan quest-pointer particle from this quest's
+// rail row to the UI element it's pointing at. Picks whichever rail
+// is visible (cs-quests-rail or ar-quests-rail) for the source, and
+// whichever target element is visible from the resolver's selector.
+// No-op if either end can't resolve (e.g. player is on a screen
+// where the rail isn't mounted, or the target's screen isn't open).
+function _fxQuestPointer(questId){
+  if(!window.FX || !window.Effects || !Effects.questPointer) return;
+  var sel = _questTargetSelector(questId);
+  if(!sel) return;
+  // Source: the rail row matching this quest id. Prefer whichever
+  // rail row is currently visible (offsetParent !== null).
+  var qrSelector = '.cs-q-row[data-qid="' + (window.CSS && CSS.escape ? CSS.escape(questId) : questId) + '"]';
+  var rows = document.querySelectorAll(qrSelector);
+  var srcEl = null;
+  for(var i = 0; i < rows.length; i++){
+    if(rows[i].offsetParent !== null){ srcEl = rows[i]; break; }
+  }
+  if(!srcEl && rows.length) srcEl = rows[0];
+  if(!srcEl) return;
+  // Target: first visible element matching the selector.
+  var targets = document.querySelectorAll(sel);
+  var tgtEl = null;
+  for(var j = 0; j < targets.length; j++){
+    if(targets[j].offsetParent !== null){ tgtEl = targets[j]; break; }
+  }
+  if(!tgtEl && targets.length) tgtEl = targets[0];
+  if(!tgtEl) return;
+  try {
+    var src = FX.centerInStage(srcEl);
+    var tgt = FX.centerInStage(tgtEl);
+    Effects.questPointer({ source: src, target: tgt });
+  } catch(e){}
+}
+
 function isAreaQuestTarget(areaId){
   if(!areaId || !PERSIST.town || !PERSIST.town.quests) return false;
   var active = PERSIST.town.quests.active || [];
@@ -3283,6 +3348,10 @@ function buildTownGrid(){
     // the player at this building (visit / craft / equip / summon).
     var isQuestTarget = (typeof isBuildingQuestTarget === 'function') && isBuildingQuestTarget(bdef.id);
     card.className='building-card'+(unlocked&&statusCls==='active'?' active':'')+(unlocked?'':' locked')+(isQuestTarget?' quest-target-pulse':'');
+    // Round 67r: data-bid attribute lets the quest-pointer particle
+    // system find the right building card to fly TO. Selector pattern:
+    // `[data-bid="forge"]` etc, resolved in _questTargetSelector.
+    card.setAttribute('data-bid', bdef.id);
 
     // All buildings are clickable (locked ones open with lock message)
     card.onclick=function(){ openBuilding(bdef.id); };
@@ -4227,7 +4296,15 @@ function buildSanctumRelicsPane(){
   var cp = getChampPersist(champId);
   var ch = CREATURES[champId];
   var ascLevel = cp.ascensionTier || 0;
-  var totalSlots = ascLevel; // 0 at base, +1 per tier
+  // Round 67r: use getRelicSlotCount, not ascLevel. The slot rule
+  // (game.js:1245) is:
+  //   ascension 0 (base)  → 1 slot, base-tier relics only
+  //   ascension 1 (Ruby)  → 1 slot, all tiers
+  //   ascension N (N >= 2)→ N slots, all tiers
+  // The pane previously used `ascLevel` directly, so unascended
+  // champs saw "NO RELIC SLOTS" and couldn't equip the story-quest
+  // Safety Net relic (base-tier — eligible for them by design).
+  var totalSlots = (typeof getRelicSlotCount === 'function') ? getRelicSlotCount(champId) : ascLevel;
   var equipped = getEquippedRelics(champId);
   var relicInv = PERSIST.town.relics || {};
 
@@ -4240,8 +4317,19 @@ function buildSanctumRelicsPane(){
       +'<div style="font-size:9px;color:#4a3010;font-style:italic;margin-top:6px;">Ascend this champion to unlock the first relic slot.</div>'
       +'</div>';
   } else {
-    // Equipped slots
-    html += '<div style="font-size:10px;letter-spacing:2px;color:#d4a843;margin-bottom:8px;">EQUIPPED · '+equipped.length+' / '+totalSlots+'</div>'
+    // Round 67r: tier-restriction hint sits above the equipped slot
+    // grid. Unascended champs only get base-tier; Ruby+ unlocks all
+    // tiers; each ascension after that grants an additional slot.
+    var tierHintText;
+    if(ascLevel === 0){
+      tierHintText = totalSlots + ' slot · base-tier relics only · ascend to unlock more slots and higher tiers';
+    } else if(ascLevel === 1){
+      tierHintText = totalSlots + ' slot · all tiers permitted · further ascensions add more slots';
+    } else {
+      tierHintText = totalSlots + ' slots · all tiers permitted';
+    }
+    html += '<div style="font-size:10px;letter-spacing:2px;color:#d4a843;margin-bottom:4px;">EQUIPPED · '+equipped.length+' / '+totalSlots+'</div>'
+      +'<div style="font-size:9px;color:#7a6030;font-style:italic;margin-bottom:8px;">'+tierHintText+'</div>'
       +'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin-bottom:16px;">';
     var hasBackpack = !!(PERSIST.town && PERSIST.town.hasBackpack);
     for(var i=0;i<totalSlots;i++){
@@ -4293,14 +4381,26 @@ function buildSanctumRelicsPane(){
     } else {
       ownedIds.forEach(function(relicId){
         var r = RELICS[relicId];
-        var canEquip = equipped.length < totalSlots && equipped.indexOf(relicId) === -1;
+        // Round 67r: gate the EQUIP button on tier eligibility too,
+        // not just slot capacity. For incompatible tiers, surface a
+        // small "Ascend to equip" label so the player knows why the
+        // option is hidden.
+        var slotFree = equipped.length < totalSlots && equipped.indexOf(relicId) === -1;
+        var tierOk = (typeof canEquipRelicTier === 'function') ? canEquipRelicTier(champId, r.tier || 'base') : true;
+        var canEquip = slotFree && tierOk;
+        var rightSide = '';
+        if(canEquip){
+          rightSide = '<button class="market-buy-btn" style="padding:6px 14px;font-size:9px;" onclick="srEquipRelic(\''+champId+'\',\''+relicId+'\')">EQUIP</button>';
+        } else if(slotFree && !tierOk){
+          rightSide = '<span style="font-size:8px;color:#7a4020;font-style:italic;letter-spacing:.5px;text-align:right;">'+(r.tier?r.tier.charAt(0).toUpperCase()+r.tier.slice(1):'higher')+'-tier · ascend to Ruby</span>';
+        }
         html += '<div style="padding:10px 12px;background:#1a1208;border:1px solid #2a1808;border-left:3px solid #5a3a1a;border-radius:4px;margin-bottom:6px;display:grid;grid-template-columns:56px 1fr auto;gap:10px;align-items:center;">'
           +'<div style="width:56px;height:56px;display:flex;align-items:center;justify-content:center;background:rgba(212,168,67,.06);border:1px solid #3a2818;border-radius:4px;">'+relicImgHTML(relicId,'48px')+'</div>'
           +'<div>'
           +'<div style="font-size:11px;color:#c0a060;">'+r.name+'</div>'
           +'<div style="font-size:8px;color:#5a4020;margin-top:2px;">'+r.desc+'</div>'
           +'</div>'
-          +(canEquip?'<button class="market-buy-btn" style="padding:6px 14px;font-size:9px;" onclick="srEquipRelic(\''+champId+'\',\''+relicId+'\')">EQUIP</button>':'')
+          +rightSide
           +'</div>';
       });
     }
@@ -4368,6 +4468,24 @@ function srUnhoverBonus(){
 
 
 // ── OVERVIEW PANE ──────────────────────────────────────────────────
+// Round 67r: invoked by clicking a sprite thumbnail in the Sanctum
+// overview picker. Sets the champion's selected sprite variant
+// (empty string = default), saves, and repaints the panel so the
+// portrait and selection highlight update immediately.
+function _setChampionSprite(champId, variant){
+  var cp = (typeof getChampPersist === 'function') ? getChampPersist(champId) : null;
+  if(!cp) return;
+  // Guard: don't let the player select a variant they haven't unlocked.
+  if(variant){
+    var unlocked = Array.isArray(cp.unlockedSprites) && cp.unlockedSprites.indexOf(variant) !== -1;
+    if(!unlocked) return;
+  }
+  cp.selectedSprite = variant || null;
+  if(typeof savePersist === 'function') savePersist();
+  if(typeof playSelectSfx === 'function') playSelectSfx();
+  refreshSanctumPanel();
+}
+
 function buildSanctumOverviewPane(){
   var el=document.getElementById('sanctum-overview-pane');
   if(!el) return;
@@ -4382,11 +4500,53 @@ function buildSanctumOverviewPane(){
 
   var html='<div style="display:grid;grid-template-columns:auto 1fr;gap:24px;margin-bottom:20px;">';
 
-  // Portrait with tier treatment
-  html+='<div class="'+ascCls+'" style="position:relative;width:180px;height:180px;border:2px solid #3a2818;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:6px;">'
-    +creatureImgHTML(champId, ch.icon, '128px', 'flip-x')
+  // Round 67r: render portrait with the currently-selected sprite
+  // variant (alt-sprite system). Default sprite when none selected.
+  var selectedVariant = (typeof getChampionSelectedSprite === 'function') ? getChampionSelectedSprite(champId) : '';
+
+  // Portrait + sprite picker (left column).
+  html+='<div style="display:flex;flex-direction:column;align-items:center;gap:10px;">'
+    +'<div class="'+ascCls+'" style="position:relative;width:180px;height:180px;border:2px solid #3a2818;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:6px;">'
+    +creatureImgHTML(champId, ch.icon, '128px', 'flip-x', selectedVariant)
     +(ascLevel>0?'<div style="position:absolute;bottom:6px;left:6px;">'+ascChip+'</div>':'')
     +'</div>';
+
+  // Round 67r: sprite picker below the portrait. Only renders when the
+  // creature has at least one alt sprite declared (ch.altSprites).
+  // Default sprite is always available; alts show as locked-? until
+  // unlocked (rolled at encounter / champion unlock / Topaz ascension).
+  if(Array.isArray(ch.altSprites) && ch.altSprites.length){
+    var unlockedSet = (cp.unlockedSprites && Array.isArray(cp.unlockedSprites)) ? cp.unlockedSprites : [];
+    html += '<div class="snc-sprite-picker">'
+      +   '<div class="snc-sprite-picker-label">SPRITES</div>'
+      +   '<div class="snc-sprite-picker-grid">';
+    // Default sprite — always available.
+    var defSelected = !selectedVariant;
+    html += '<div class="snc-sprite-thumb'+(defSelected?' selected':'')+'" '
+      + 'onclick="_setChampionSprite(\''+champId+'\', \'\')" '
+      + 'title="Default sprite">'
+      + creatureImgHTML(champId, ch.icon, '48px', '', '')
+      + '</div>';
+    // Alt sprites — locked until rolled / Topaz.
+    ch.altSprites.forEach(function(variant){
+      var unlocked = unlockedSet.indexOf(variant) !== -1;
+      var selected = unlocked && (variant === selectedVariant);
+      if(unlocked){
+        html += '<div class="snc-sprite-thumb'+(selected?' selected':'')+'" '
+          + 'onclick="_setChampionSprite(\''+champId+'\', \''+variant+'\')" '
+          + 'title="Variant '+variant+'">'
+          + creatureImgHTML(champId, ch.icon, '48px', '', variant)
+          + '</div>';
+      } else {
+        html += '<div class="snc-sprite-thumb locked" title="Locked — encounter or ascend to Topaz to unlock">'
+          + '<span style="font-size:24px;color:#3a2010;">?</span>'
+          + '</div>';
+      }
+    });
+    html += '</div></div>';
+  }
+
+  html += '</div>';
 
   // Name + stats + level
   html+='<div style="display:flex;flex-direction:column;">'
@@ -7049,8 +7209,19 @@ function doEternalPull(count){
     if(!rPool.length) rPool=pool;
     var picked=rPool[Math.floor(Math.random()*rPool.length)];
     var isNew=!PERSIST.unlockedChamps||!PERSIST.unlockedChamps.includes(picked.id);
-    if(isNew){ if(!PERSIST.unlockedChamps) PERSIST.unlockedChamps=[]; PERSIST.unlockedChamps.push(picked.id); }
+    if(isNew){
+      if(!PERSIST.unlockedChamps) PERSIST.unlockedChamps=[];
+      PERSIST.unlockedChamps.push(picked.id);
+    }
     else{ PERSIST.champDupes=PERSIST.champDupes||{}; PERSIST.champDupes[picked.id]=(PERSIST.champDupes[picked.id]||0)+1; }
+    // Round 67r: every shard-well pull rolls for an alt sprite at the
+    // creature's defined rarity, whether or not the pull was a new
+    // unlock. Dupes are still "rerolls" — players might pull the same
+    // creature a dozen times before they finally roll a rare variant.
+    // This is the ONLY routine alt-sprite unlock path (alongside the
+    // 100% Topaz-ascension guarantee). Other paths (achievement,
+    // gold buy, kill-unlock) intentionally don't roll.
+    if(typeof _championUnlockShinyRoll === 'function') _championUnlockShinyRoll(picked.id);
     _gachaResults.push({c:CREATURES[picked.id],rarity:rarity,isNew:isNew,dupes:(PERSIST.champDupes&&PERSIST.champDupes[picked.id])||0,id:picked.id});
   }
   savePersist();

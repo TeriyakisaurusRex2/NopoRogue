@@ -94,6 +94,10 @@ var SFX_FILES = {
   // this cue. Distinct from quest_complete (= objective filled)
   // and quest_notify (= mid-combat progress ding).
   quest_reward:   { file:'quest_reward',   vol:0.9  },
+  // shiny_encounter: fires when an alt-sprite ("shiny") rolls on an
+  // encounter or champion unlock. Placeholder — silent until the
+  // mp3 lands. playSfx no-ops for unknown keys, so safe pre-asset.
+  shiny_encounter:{ file:'shiny_encounter',vol:0.95 },
 };
 
 var SFX_BASE = 'assets/audio/sfx/';

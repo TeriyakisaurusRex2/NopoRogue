@@ -32,6 +32,21 @@
     return canvas;
   }
 
+  // Round 67r: parallel UI canvas at game-root level. Cross-screen
+  // surface for the quest-pointer system (cyan projectile flying
+  // from rail to target). Combat FX stay on #fx-canvas; UI FX live
+  // here so they paint regardless of which screen is active.
+  var uiCanvas = null;
+  var uiCtx = null;
+  function ensureUiCanvas(){
+    if(uiCanvas) return uiCanvas;
+    uiCanvas = document.getElementById('ui-fx-canvas');
+    if(!uiCanvas) return null;
+    uiCtx = uiCanvas.getContext('2d');
+    uiCtx.imageSmoothingEnabled = false;
+    return uiCanvas;
+  }
+
   // ---------- sprite cache ----------
   // Round 67q: lazy-loaded Image objects, keyed by short id. Effects
   // request a sprite via getSprite(id); the first call kicks off the
@@ -63,6 +78,13 @@
   // ---------- effects list ----------
   var effects = [];
   function add(effect){ effects.push(effect); return effect; }
+  // Round 67r: parallel UI-layer effects pool. Effects added via addUi
+  // render to the cross-screen #ui-fx-canvas instead of the combat-
+  // only #fx-canvas. Use for non-combat UI flair (quest pointers,
+  // future overlays). Same Particle/Effect classes — only the render
+  // target differs.
+  var uiEffects = [];
+  function addUi(effect){ uiEffects.push(effect); return effect; }
 
   // ---------- particle ----------
   function Particle(opts){
@@ -167,6 +189,7 @@
     var dt = Math.min(0.05, (now - last) / 1000);
     last = now;
 
+    // Combat layer — paints to #fx-canvas inside #game-screen.
     var c = ensureCanvas();
     if(c){
       ctx.clearRect(0, 0, STAGE_W, STAGE_H);
@@ -186,6 +209,24 @@
       }
     }
 
+    // Round 67r: UI layer — paints to #ui-fx-canvas at game-root level
+    // (cross-screen). Same tick + cull logic as the combat layer.
+    var uc = ensureUiCanvas();
+    if(uc){
+      uiCtx.clearRect(0, 0, STAGE_W, STAGE_H);
+      for(var k = uiEffects.length - 1; k >= 0; k--){
+        var ue = uiEffects[k];
+        var aliveU = ue.update(dt, now);
+        ue.draw(uiCtx);
+        if(!aliveU) uiEffects.splice(k, 1);
+      }
+    } else {
+      for(var k2 = uiEffects.length - 1; k2 >= 0; k2--){
+        var ue2 = uiEffects[k2];
+        if(!ue2.update(dt, now)) uiEffects.splice(k2, 1);
+      }
+    }
+
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
@@ -193,7 +234,9 @@
   // ---------- export ----------
   window.FX = {
     add: add,
+    addUi: addUi,
     effects: effects,
+    uiEffects: uiEffects,
     Particle: Particle,
     Effect: Effect,
     rand: rand, pick: pick, lerp: lerp, ease: ease,

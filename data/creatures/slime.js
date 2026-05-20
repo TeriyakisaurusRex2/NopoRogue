@@ -12,6 +12,16 @@ CREATURES.slime = {
   baseStats: { str:11, agi:11, wis:13 },
   growth:    { str:1,  agi:2, wis:1 },
 
+	altSprites: ['_alt_1', '_alt_2', '_alt_3', '_alt_4'],
+	spriteWeights: [
+	  { sprite: 'default', weight: 60 },
+	  { sprite: '_alt_1',  weight: 10 },
+	  { sprite: '_alt_2',  weight: 10 },
+	  { sprite: '_alt_3',  weight: 10 },
+	  { sprite: '_alt_4',  weight: 10 },
+	  
+	],
+
   innate: {
     id:       'absorb',
     name:     'Absorb',

@@ -55,7 +55,7 @@ var _tutorial = {
 //   5. Each dialog teaches ONE thing. Multiple short pages, not a
 //      wall of text.
 //
-// Beat list (9 dialogs, 6 transitional/action bridges):
+// Beat list (10 dialogs, 6 transitional/action bridges):
 //   0   GOAL + HP BARS             paused, NEXT
 //   1   CARDS INTRO                paused, NEXT
 //   2   ↳ CLICK STRIKE (action)    NO NEXT, unpaused, wait play_card:strike
@@ -68,9 +68,10 @@ var _tutorial = {
 //   9   MANA + SORCERY             paused, NEXT
 //   10  ↳ CLICK HOWL (action)      NO NEXT, unpaused, wait play_card:wolf_howl
 //   11  ↳ wait for Haste applied   transitional
-//   12  INNATES                    paused, NEXT → fill_finisher_hand
-//   13  ↳ wait for victory         transitional
-//   14  CONCLUSION                 paused, NEXT → champion select
+//   12  INNATES                    paused, NEXT
+//   13  PAUSE + DISCARD CYCLE      paused, NEXT → fill_finisher_hand
+//   14  ↳ wait for victory         transitional
+//   15  CONCLUSION                 paused, NEXT → champion select
 //
 // Step fields:
 //   text       — dialog body (omit on transitional steps)
@@ -158,16 +159,28 @@ var TUTORIAL_STEPS = [
   // ── 11: bridge — wait for Haste to land ──
   { transitional: true, wait: 'status_applied:haste' },
 
-  // ── 12: INNATES (paused, NEXT → fill_finisher_hand) ──
+  // ── 12: INNATES (paused, NEXT) ──
   { text: 'Every creature has an INNATE, a unique ability. Yours is Hunter\'s Edge, an always-on passive. Some champions have ACTIVE innates that light up as a button when ready.',
     highlight: '#innate-card',
+    wait: 'click' },
+
+  // ── 13: PAUSE + DISCARD CYCLE (paused, NEXT → fill_finisher_hand) ──
+  // Round 67r: covers the last two pieces of teaching before combat
+  // wraps. Highlights the new big pause button next to the hand, tells
+  // the player they can pause to read cards and status chips, and
+  // explains the deck → discard → shuffle cycle so they don't get
+  // confused when their deck empties. fill_finisher_hand fires here
+  // (moved from the innates step) so the finisher cards arrive RIGHT
+  // when the player is told they can pause to read them.
+  { text: 'Click the PAUSE button beside your hand anytime to freeze combat. Use it to read your cards and the status chips on yourself and the goblin. Cards you play go to your discard pile, then shuffle back into your deck when it empties.',
+    highlight: '#hand-pause-btn',
     wait: 'click',
     onAdvance: 'fill_finisher_hand' },
 
-  // ── 13: bridge — wait for victory ──
+  // ── 14: bridge — wait for victory ──
   { transitional: true, wait: 'victory' },
 
-  // ── 14: CONCLUSION (paused, NEXT → champion-select) ──
+  // ── 15: CONCLUSION (paused, NEXT → champion-select) ──
   { text: 'That\'s combat. You\'ll unlock more champions as you play, each with their own cards and innates.',
     highlight: null,
     wait: 'click' },
@@ -1114,6 +1127,13 @@ function _activateStoryQuest(def){
     showTownToast(prefix + (def.title || 'New task'));
   }
   if(def.isStory && typeof playQuestNotifySfx === 'function') playQuestNotifySfx();
+  // Round 67r: fire the cyan quest-pointer particle from the new
+  // quest's rail row to its UI target. Delayed so the rail has
+  // time to repaint with the new row mounted. _fxQuestPointer
+  // no-ops gracefully if the row / target isn't visible yet.
+  if(def.isStory && typeof _fxQuestPointer === 'function'){
+    setTimeout(function(){ _fxQuestPointer(def.id); }, 900);
+  }
 }
 
 // Check whether the player has already met the quest's goal at the

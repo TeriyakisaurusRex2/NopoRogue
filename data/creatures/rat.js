@@ -12,6 +12,11 @@ CREATURES.rat = {
   baseStats: { str:10, agi:15, wis:8 },
   growth:    { str:1,  agi:2,  wis:1 },
 
+	altSprites: ['_alt_1'],
+	spriteWeights: [
+	  { sprite: 'default', weight: 95 },
+	  { sprite: '_alt_1',  weight: 5 }
+	],
   innate: {
     id:       'frenzied',
     name:     'Frenzied',
