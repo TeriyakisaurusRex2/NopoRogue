@@ -433,8 +433,18 @@ function _vaultInvBuildAll(){
     var qty = items[iid] || 0; if(qty<=0) return;
     var def = (typeof LOOT_DEFS !== 'undefined' && LOOT_DEFS[iid]) || null;
     var t = def?def.type:'misc';
-    var cat = (t==='chest') ? 'chests' : (t==='key') ? 'keys' : 'misc';
-    var catLabel = (cat==='chests')?'CHEST':(cat==='keys')?'KEY':'OTHER';
+    // Round 67r: consumables (Cracked Hourglass and future tiers)
+    // grouped under the existing "consumables" category alongside
+    // soul shards and lures, so the player sees all "usable" items
+    // in one place.
+    var cat = (t==='chest') ? 'chests'
+            : (t==='key') ? 'keys'
+            : (t==='consumable') ? 'consumables'
+            : 'misc';
+    var catLabel = (cat==='chests')?'CHEST'
+                 :(cat==='keys')?'KEY'
+                 :(cat==='consumables')?'CONSUMABLE'
+                 :'OTHER';
     all.push({key:t+':'+iid, id:iid, qty:qty, name:def?def.name:iid, icon:def?def.icon:'❓', type:t, cat:cat, catLabel:catLabel, def:def});
   });
   return all;
@@ -628,6 +638,12 @@ function _renderInvInspectorHTML(){
     } else {
       actionsHtml += '<div class="vault-inv-act-locked">Need '+_biomeHint(item.id)+' key to open</div>';
     }
+  }
+  // Round 67r: USE button for consumables (Cracked Hourglass and
+  // future tiers). Routes through useConsumableItem in town.js,
+  // which handles the confirm dialog + time advance + UI refresh.
+  if(item.type==='consumable'){
+    actionsHtml += '<button class="vault-inv-act go" onclick="useConsumableItem(\''+item.id+'\')">USE</button>';
   }
 
   var inspIconHtml;

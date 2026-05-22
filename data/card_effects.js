@@ -331,7 +331,10 @@ function dealCardDamage(d, ctx){
   } else if(ctx.isEnemy) {
     dealDamageToPlayer(d);
   } else {
-    dealCardDamage(d, ctx);
+    // Legacy fallback (no actors system): player effect hits the enemy.
+    // Bugfix: this branch used to call dealCardDamage(d, ctx) — itself —
+    // which is infinite recursion. It must route to dealDamageToEnemy.
+    dealDamageToEnemy(d);
   }
 }
 
@@ -346,6 +349,49 @@ function getTargetSide(ctx){
 function getSelfSide(ctx){
   if(ctx.actor) return ctx.actor.side;
   return ctx.isEnemy ? 'enemy' : 'player';
+}
+
+// Find a card's printed [Crit] %, scanning its effects for a crit field.
+function _cardPrintedCrit(card){
+  if(!card || !card.effects) return 0;
+  for(var i=0;i<card.effects.length;i++){
+    var e = card.effects[i];
+    if(e && +e.crit) return +e.crit;
+  }
+  return 0;
+}
+
+// [Accrue] — a card with an `accrue:{trigger,target,per}` property grows
+// a per-hand-item counter (item._accrue) each time its trigger keyword
+// fires anywhere in the battle. Scans BOTH hands so e.g. an opponent's
+// burn still feeds a held card. Per-item, so it resets on a zone change
+// (played / discarded -> the item is gone; a fresh draw starts at 0).
+function _accrueBump(triggerKw){
+  if(typeof gs === 'undefined' || !gs || !gs.actors) return;
+  ['player','enemy'].forEach(function(side){
+    var act = gs.actors[side];
+    if(!act || !act.hand) return;
+    var bumped = false;
+    act.hand.forEach(function(it){
+      var c = CARDS[it.id];
+      if(c && c.accrue && c.accrue.trigger === triggerKw && +c.accrue.per){
+        it._accrue = (it._accrue || 0) + (+c.accrue.per);
+        bumped = true;
+      }
+    });
+    if(bumped && side === 'player' && typeof renderHand === 'function') renderHand();
+  });
+}
+
+// Called once per card play when a crit resolves (from dmg_conditional and
+// from apply_status's generalised [Crit]). Powers the [Crit]-triggered
+// [Accrue] (Insurance) and on_crit innate triggers (Markup).
+function _markupOnCrit(ctx){
+  if(!ctx || !ctx.actor) return;
+  _accrueBump('crit');
+  if(typeof fireInnateTriggers === 'function'){
+    fireInnateTriggers(ctx.actor, 'on_crit', ctx);
+  }
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -426,7 +472,7 @@ function _applyAura(actor, auraDef){
   // (base + card modifiers + attackCritBonus) so the doubling counts
   // every crit source the card receives.
   var modKeys = ['debuffDurMult','poisonTickMult','poisonDurMult','burnDurMult',
-                 'shieldMult','healMult','critDmgMult','attackCritBonus','attackCritMult'];
+                 'shieldMult','healMult','critDmgMult','attackCritBonus','attackCritMult','bleedStrDiv'];
   modKeys.forEach(function(key){
     if(eff[key] !== undefined) actor.auras[key] = eff[key];
   });
@@ -449,7 +495,7 @@ function _removeAura(actor, auraDef){
   // (base + card modifiers + attackCritBonus) so the doubling counts
   // every crit source the card receives.
   var modKeys = ['debuffDurMult','poisonTickMult','poisonDurMult','burnDurMult',
-                 'shieldMult','healMult','critDmgMult','attackCritBonus','attackCritMult'];
+                 'shieldMult','healMult','critDmgMult','attackCritBonus','attackCritMult','bleedStrDiv'];
   modKeys.forEach(function(key){
     if(eff[key] !== undefined) delete actor.auras[key];
   });
@@ -516,7 +562,7 @@ function resolveCardEffects(actor, cardId, item){
   var card = CARDS[cardId];
   if(!card) return {effects:[], crit:0, appendedEffects:[], modifiedFields:{}};
   var mods = getCardMods(actor, cardId);
-  var hasItemMods = item && (item._sorceryMult !== undefined);
+  var hasItemMods = item && (item._sorceryMult !== undefined || item._dmgBuff || item._accrue);
   if(mods.length === 0 && !hasItemMods) return {effects:card.effects||[], crit:0, appendedEffects:[], modifiedFields:{}};
 
   var resolved = JSON.parse(JSON.stringify(card.effects || []));
@@ -579,6 +625,37 @@ function resolveCardEffects(actor, cardId, item){
       }
     }
   }
+  // M'bur's Whetstone: per-item flat damage buff, consumed when the card
+  // is played (the hand item is destroyed on play). Bumps the first
+  // dmg_conditional's base.
+  if(item && item._dmgBuff){
+    for(var bi = 0; bi < resolved.length; bi++){
+      if(resolved[bi].type === 'dmg_conditional' && resolved[bi].base !== undefined){
+        resolved[bi].base = (+resolved[bi].base) + (+item._dmgBuff);
+        modifiedFields['effects['+bi+'].base'] = true;
+        break;
+      }
+    }
+  }
+  // [Accrue] — per-item value accumulated while the card sat in hand.
+  // accrue.target picks where it lands: 'shield' -> the shield value
+  // (Insurance), 'crit' -> the dmg_conditional crit % (Smite).
+  if(item && item._accrue){
+    var accCard = CARDS[cardId];
+    var accTarget = (accCard && accCard.accrue && accCard.accrue.target) || 'shield';
+    for(var ci2 = 0; ci2 < resolved.length; ci2++){
+      if(accTarget === 'shield' && resolved[ci2].type === 'apply_status' && resolved[ci2].status === 'shield' && resolved[ci2].value !== undefined){
+        resolved[ci2].value = (+resolved[ci2].value) + (+item._accrue);
+        modifiedFields['effects['+ci2+'].value'] = true;
+        break;
+      }
+      if(accTarget === 'crit' && resolved[ci2].type === 'dmg_conditional'){
+        resolved[ci2].crit = (+resolved[ci2].crit || 0) + (+item._accrue);
+        modifiedFields['effects['+ci2+'].crit'] = true;
+        break;
+      }
+    }
+  }
   return {effects: resolved, crit: totalCrit, appendedEffects: appended, modifiedFields: modifiedFields};
 }
 
@@ -636,30 +713,74 @@ var EFFECT_DISPLAY = {
   convert_oldest_to:{cat:'card_act',order:5},
   sorcery:         {cat:'keyword',  order:11},
   hellbent:        {cat:'keyword',  order:10},
+  gain_mana:       {cat:'status',   order:3},
+  compound_advance:{cat:'keyword',  order:8},
+  compound_hand:   {cat:'card_create',order:6},
+  vault_hoard:     {cat:'card_create',order:6},
+  buff_hand_attacks:{cat:'modifier',  order:7},
+  temper_universals:{cat:'modifier',  order:7},
+  markup_conjure:  {cat:'card_create',order:6},
+  dmg_self:        {cat:'damage',     order:0},
+  create_card_in_deck:{cat:'card_create',order:6},
+  churn_both:      {cat:'card_act',   order:5},
+  bonus_hits:      {cat:'damage',     order:0},
   // echo:         {cat:'keyword',  order:9},  // future
 };
 
-// Generate a single effect's display text with live values
-function _effectLiveText(eff, actor, opponent){
+// Generate a single effect's display text with live values.
+// extraCrit (optional) is folded into a dmg_conditional's [Crit] line so
+// the card shows ONE merged crit total — base + mods + item.critBonus +
+// auras — rendered green when there is any bonus.
+// compoundN: this card's live Compound count (actor._compound[cardId]).
+// Folded into the displayed payoff so a compounded card visibly shows
+// its grown value (e.g. after Hoot's Research Grant).
+function _effectLiveText(eff, actor, opponent, extraCrit, compoundN){
   if(!eff || !eff.type) return '';
+  compoundN = +compoundN || 0;
   var sv = function(v){ return '<span class="stat-val">'+v+'</span>'; };
+  // Round 67r (bundled task B): a computed value carrying a formula
+  // breakdown — dotted underline; hovering it (while paused) shows the
+  // breakdown via the keyword-tooltip system. Flat values use plain sv.
+  var svf = function(v, formula){
+    if(!formula) return sv(v);
+    return '<span class="stat-val stat-formula" data-formula="'+String(formula).replace(/"/g,'&quot;')+'">'+v+'</span>';
+  };
 
   switch(eff.type){
     case 'dmg_conditional': {
       var base = +eff.base || 0;
+      var dmgFbase = base, dmgFparts = [];
       if(eff.stat && actor){
         var statVal = actor[eff.stat] || 0;
-        base += Math.floor(statVal / (+eff.stat_div || 1));
+        var dadd = Math.floor(statVal / (+eff.stat_div || 1));
+        base += dadd;
+        dmgFparts.push(eff.stat.toUpperCase()+' '+statVal+' ÷ '+(+eff.stat_div||1)+' = +'+dadd);
       }
       if(eff.stat2 && actor){
         var statVal2 = actor[eff.stat2] || 0;
-        base += Math.floor(statVal2 / (+eff.stat2_div || 1));
+        var dadd2 = Math.floor(statVal2 / (+eff.stat2_div || 1));
+        base += dadd2;
+        dmgFparts.push(eff.stat2.toUpperCase()+' '+statVal2+' ÷ '+(+eff.stat2_div||1)+' = +'+dadd2);
       }
+      // [Compound] damage scaling — fold the live count into the preview.
+      if(compoundN && +eff.compoundDmg){
+        var _cDmg = (+eff.compoundDmg) * compoundN;
+        base += _cDmg;
+        dmgFparts.push('[Compound] ×'+compoundN+' = +'+_cDmg);
+      }
+      var dmgFormula = dmgFparts.length ? (dmgFbase+' base   '+dmgFparts.join('   ')+'   →   '+base) : null;
       var hits = +eff.hits || 1;
-      var txt = 'Deal '+sv(base)+' damage';
+      if(compoundN && +eff.compoundHits) hits += (+eff.compoundHits) * compoundN;
+      var txt = 'Deal '+svf(base, dmgFormula)+' damage';
       if(hits > 1) txt += ' × '+sv(hits)+' hits';
-      // Base crit (flat chance on this card, not from conditions)
-      if(+eff.crit > 0) txt += '. [Crit]: '+sv(+eff.crit)+'%';
+      // Base crit — merge the printed % with any external bonus (mods,
+      // item.critBonus from Markup copies, auras) into one [Crit] total.
+      var _dispCrit = (+eff.crit || 0) + (+extraCrit || 0);
+      if(_dispCrit > 0){
+        txt += (+extraCrit > 0)
+          ? '. <span class="card-mod-text">[Crit]: '+sv(_dispCrit)+'%</span>'
+          : '. [Crit]: '+sv(_dispCrit)+'%';
+      }
       // Condition text
       if(eff.condition){
         var condMet = false;
@@ -724,7 +845,8 @@ function _effectLiveText(eff, actor, opponent){
         }
       }
       var total = base + (sourceVal * mult);
-      return 'Deal '+sv(total)+' damage.';
+      var scaleFormula = sourceLabel ? (base+' base   +   '+sourceVal+' '+sourceLabel+' × '+mult+'   →   '+total) : null;
+      return 'Deal '+svf(total, scaleFormula)+' damage.';
     }
 
     case 'mana_burn': {
@@ -737,14 +859,24 @@ function _effectLiveText(eff, actor, opponent){
 
     case 'apply_status': {
       var val = +eff.value || 0;
+      var valFormula = null;
+      // [Compound] value scaling — fold the live count into the preview.
+      var _cVal = (compoundN && +eff.compoundVal) ? (+eff.compoundVal)*compoundN : 0;
+      val += _cVal;
       if(eff.stat && actor){
-        val += Math.floor((actor[eff.stat]||0) / (+eff.stat_div||1));
+        var vbase = val;
+        var vadd = Math.floor((actor[eff.stat]||0) / (+eff.stat_div||1));
+        val += vadd;
+        valFormula = vbase+' base   '+eff.stat.toUpperCase()+' '+(actor[eff.stat]||0)+' ÷ '+(+eff.stat_div||1)+' = +'+vadd+'   →   '+val;
       }
       var status = eff.status || '';
       var durSec = eff.dur || 0;
       var isDebuff = ['poison','burn','weaken','slow','bleed'].indexOf(status) !== -1;
       var durModified = false;
       var valModified = false;
+      // Hemorrhage aura (Kaine) — preview the STR-scaled Bleed value.
+      var _bleedDiv = (status === 'bleed' && actor) ? (getAura(actor,'bleedStrDiv')||0) : 0;
+      var _bleedHem = _bleedDiv ? Math.floor((actor.str||0)/_bleedDiv) : 0;
 
       // Aura: debuff duration multiplier
       if(isDebuff && actor){
@@ -760,15 +892,20 @@ function _effectLiveText(eff, actor, opponent){
       var dur = durSec ? ' '+durSec+'s' : '';
       if(durModified) dur = ' <span class="card-mod-text">'+durSec+'s</span>';
 
-      // Format based on status type
-      if(status === 'shield') return 'Gain '+(valModified?'<span class="card-mod-text">'+sv(val)+'</span>':sv(val))+' [Shield]'+dur+'.';
-      if(status === 'haste') return '[Haste] '+sv(Math.round((+eff.value||0)*100))+'%'+dur+'.';
-      if(status === 'poison') return 'Apply '+sv(val)+' [Poison]'+dur+'.';
+      // Format based on status type. Round 67r: all statuses keyword-first
+      // — Shield and Poison flipped to "Gain [Shield] X" / "Apply [Poison] X".
+      if(status === 'shield') return 'Gain [Shield] '+(valModified?'<span class="card-mod-text">'+sv(val)+'</span>':svf(val,valFormula))+dur+'.';
+      if(status === 'haste') return '[Haste] '+sv(Math.round(((+eff.value||0)+_cVal)*100))+'%'+(eff.target==='both'?' to both':'')+dur+'.'+(+eff.crit?' [Crit]: '+sv(+eff.crit)+'%':'');
+      if(status === 'poison') return 'Apply [Poison] '+svf(val,valFormula)+dur+'.';
       if(status === 'burn') return 'Apply [Burn]'+dur+'.';
       if(status === 'weaken') return '[Weaken]'+dur+'.';
       if(status === 'slow') return '[Slow] '+sv(Math.round((+eff.value||0.5)*100))+'%'+dur+'.';
       if(status === 'stun') return '[Stun] 1s.';
-      if(status === 'bleed') return 'Apply [Bleed]'+dur+'.';
+      if(status === 'bleed'){
+        var _bv = val + _bleedHem;
+        var _bf = _bleedHem ? (val+' base   STR '+(actor.str||0)+' ÷ '+_bleedDiv+' = +'+_bleedHem+'   →   '+_bv) : null;
+        return 'Apply [Bleed] '+svf(_bv,_bf)+dur+'.';
+      }
       if(status === 'thorns') return '[Thorns] '+sv(val)+dur+'.';
       if(status === 'dodge') return '[Dodge]'+dur+'.';
       if(status === 'frenzy') return '[Frenzy] '+sv(val)+dur+'.';
@@ -783,10 +920,14 @@ function _effectLiveText(eff, actor, opponent){
 
     case 'heal': {
       var healVal = +eff.amt || 0;
+      var healFormula = null;
       if(eff.stat && eff.stat !== 'none' && actor){
-        healVal += Math.floor((actor[eff.stat] || 0) / (+eff.stat_div || 4));
+        var hbase = healVal;
+        var hadd = Math.floor((actor[eff.stat] || 0) / (+eff.stat_div || 4));
+        healVal += hadd;
+        healFormula = hbase+' base   '+eff.stat.toUpperCase()+' '+(actor[eff.stat]||0)+' ÷ '+(+eff.stat_div||4)+' = +'+hadd+'   →   '+healVal;
       }
-      return 'Heal '+sv(healVal)+' HP.';
+      return 'Heal '+svf(healVal, healFormula)+' HP.';
     }
 
     case 'churn': return '[Churn] '+sv(+eff.count||1)+'.';
@@ -807,11 +948,31 @@ function _effectLiveText(eff, actor, opponent){
 
     case 'draw_cards': return 'Draw '+sv(+eff.count||1)+'.';
 
+    case 'gain_mana': return 'Gain '+sv(+eff.amt||0)+' mana.';
+    case 'frenzy': { var fn=+eff.stacks||1; return 'Gain '+sv(fn)+' [Frenzy] stack'+(fn>1?'s':'')+'.'; }
+    case 'compound_advance': return '[Compound] '+(eff.show||'')+(compoundN>0?' <span class="card-mod-text">×'+compoundN+'</span>':'');
+    case 'compound_hand': return '[Compound] all cards in hand.';
+    case 'buff_hand_attacks': return 'Attack cards in hand: +'+sv(+eff.amt||0)+' damage (next play).';
+    case 'temper_universals': return 'Universal cards gain [Sorcery] [10]: Draw 1.';
+    case 'markup_conjure': return 'On [Crit]: conjure a [Banish] copy.';
+    case 'dmg_self': return 'Deal '+sv(+eff.amt||0)+' damage to self.';
+    case 'create_card_in_deck': {
+      var cdc = CARDS[eff.cardId];
+      var cdCnt = +eff.count||1;
+      var cdTok = cdc ? '{{'+eff.cardId+'}}' : (eff.cardId||'a card');
+      return 'Create '+sv(cdCnt)+' '+cdTok+(cdCnt>1?'s':'')+' in '+(eff.target==='self'?'your':'the opponent\'s')+' deck.';
+    }
+    case 'churn_both': return 'Both creatures [Churn] '+sv(+eff.count||4)+'.';
+    case 'bonus_hits': { var bn=+eff.amount||1; return '+'+sv(bn)+' hit'+(bn!==1?'s':''); }
+
     case 'create_card_in_hand': {
       var card = CARDS[eff.cardId];
-      var name = card ? card.name : eff.cardId;
-      var tgt = eff.target === 'opponent' ? 'opponent\'s hand' : 'hand';
-      return 'Create '+(eff.ghost?'[Ethereal] ':'')+name+' in '+tgt+'.';
+      var nameTok = card ? '{{'+eff.cardId+'}}' : (eff.cardId||'a card');
+      var ccnt = Math.max(1, +eff.count || 1);
+      var ccBody = (ccnt>1?ccnt+' ':'')+(eff.ghost?'[Ethereal] ':'')+nameTok+(ccnt>1?'s':'');
+      // [Gift] = lands in the opponent's hand. Self-target creation
+      // just says "Create" — your own hand is the default.
+      return (eff.target === 'opponent' ? '[Gift] ' : 'Create ') + ccBody + '.';
     }
 
     case 'conjure_copy': return '[Conjured]: copy this card.';
@@ -840,8 +1001,8 @@ function _effectLiveText(eff, actor, opponent){
 
     case 'sorcery': {
       var inner = '';
-      if(eff.effect) inner = _effectLiveText(eff.effect, actor, opponent);
-      if(eff.effects) inner = eff.effects.map(function(e){ return _effectLiveText(e, actor, opponent); }).join(' ');
+      if(eff.effect) inner = _effectLiveText(eff.effect, actor, opponent, 0, compoundN);
+      if(eff.effects) inner = eff.effects.map(function(e){ return _effectLiveText(e, actor, opponent, 0, compoundN); }).join(' ');
       var costDisplay = eff.cost === 'all' ? 'all mana' : sv(+eff.cost||0);
       var canAfford = true;
       if(actor){
@@ -871,6 +1032,8 @@ function generateCardText(actor, cardId, item){
   var resolved = resolveCardEffects(actor, cardId, item);
   var allEffects = resolved.effects.concat(resolved.appendedEffects);
   var opponent = actor ? getOpponent(actor) : null;
+  // Live [Compound] count for this card (per-card-id, on the actor).
+  var compoundN = (actor && actor._compound && cardId && actor._compound[cardId]) || 0;
 
   // Separate effects into layers
   var layers = {
@@ -922,15 +1085,13 @@ function generateCardText(actor, cardId, item){
     }
     var hasDmg = layers.normal.some(function(e){ return e.type==='dmg_conditional'||e.type==='dmg_scaling'||e.type==='churn_all_damage'; });
 
+    // Pass critDelta so a dmg_conditional renders ONE merged [Crit]
+    // total (base + mods + item.critBonus + auras) instead of the card
+    // showing its printed crit and the bonus as separate segments.
     layers.normal.forEach(function(eff){
-      var txt = _effectLiveText(eff, actor, opponent);
+      var txt = _effectLiveText(eff, actor, opponent, critDelta, compoundN);
       if(txt) lines.push(txt);
     });
-
-    // Append crit to damage line (inline) — green if from mod
-    if(critDelta > 0 && hasDmg && lines.length > 0){
-      lines[0] = lines[0].replace(/\.$/, '') + ' <span class="card-mod-text">[Crit]: <span class="stat-val">'+critDelta+'%</span></span>.';
-    }
     sections.push({layer:'normal', html:lines.join('<br>')});
   }
 
@@ -946,6 +1107,16 @@ function generateCardText(actor, cardId, item){
     }
   }
 
+  // [Drawn] layer — a card's onDraw trigger (Leona's Retainer Fee).
+  if(card && card.onDraw && card.onDraw.length){
+    var drawnLines = card.onDraw.map(function(eff){
+      return _effectLiveText(eff, actor, opponent);
+    }).filter(Boolean);
+    if(drawnLines.length){
+      sections.push({layer:'drawn', html:'[Drawn]: '+drawnLines.join(' ')});
+    }
+  }
+
   // Hellbent layer
   if(layers.hellbent.length){
     var hLines = layers.hellbent.map(function(eff){
@@ -957,7 +1128,7 @@ function generateCardText(actor, cardId, item){
   // Sorcery layer(s)
   if(layers.sorcery.length){
     var sLines = layers.sorcery.map(function(eff){
-      return _effectLiveText(eff, actor, opponent);
+      return _effectLiveText(eff, actor, opponent, 0, compoundN);
     }).filter(Boolean);
     if(sLines.length) sections.push({layer:'sorcery', html:sLines.join('<br>')});
   }
@@ -970,6 +1141,23 @@ function generateCardText(actor, cardId, item){
     if(modLines.length){
       sections.push({layer:'mod', html:modLines.join('<br>')});
     }
+  }
+
+  // [Accrue] is a card-level property, not an effect — surface the growth
+  // rule on the card face ("[Accrue] [trigger]: +effect"). The accrued
+  // total is folded live into the target value by resolveCardEffects.
+  if(card && card.accrue && +card.accrue.per){
+    var _ac = card.accrue;
+    var _trig = (_ac.trigger === 'burn') ? 'Burn' : 'Crit';
+    var _eff = (_ac.target === 'crit') ? ('+[Crit] '+(+_ac.per)+'%') : ('+[Shield] '+(+_ac.per));
+    sections.push({layer:'accrue', html:'[Accrue] ['+_trig+']: '+_eff});
+  }
+
+  // [Banish] is a hand-item flag (Markup's conjured copies), not card
+  // text — surface it on the card face so the player can identify a
+  // conjured copy and knows it is one-play-then-gone.
+  if(item && item._banish){
+    sections.push({layer:'banish', html:'[Banish]'});
   }
 
   return sections;
@@ -1043,6 +1231,13 @@ var EFFECT_TYPES = {
     run: function(v,ctx){
       var hits = +v.hits || 1;
       var baseDmg = +v.base || +v.dmg || 0;
+      // Compound: extra hits per Compound count (only when this play was
+      // Compounded — via a paid [Compound] Sorcery or an Ethereal copy flag).
+      if(ctx._compounded && +v.compoundHits){
+        hits += (+v.compoundHits) * (+ctx._compoundCount || 0);
+      }
+      // Bonus hits from a Sorcery rider (the bonus_hits effect).
+      if(ctx._bonusHits){ hits += ctx._bonusHits; }
       // Stat scaling (primary)
       if (v.stat && v.stat !== 'none') {
         var statSource = ctx.actor || ctx;
@@ -1052,6 +1247,10 @@ var EFFECT_TYPES = {
       if (v.stat2 && v.stat2 !== 'none') {
         var statSource2 = ctx.actor || ctx;
         baseDmg += Math.floor((statSource2[v.stat2] || 0) / (+v.stat2_div || 4));
+      }
+      // Compound: extra damage per Compound count.
+      if(ctx._compounded && +v.compoundDmg){
+        baseDmg += (+v.compoundDmg) * (+ctx._compoundCount || 0);
       }
       // Check condition
       var checkTarget;
@@ -1121,6 +1320,8 @@ var EFFECT_TYPES = {
         if (!isCrit && condMet && v.on_true === 'crit') isCrit = Math.random() < (+v.on_true_val / 100);
         if (isCrit) {
           d = Math.round(d * 2); crits++;
+          // Fire crit-driven card mechanics once per play (Accrue, on_crit).
+          if(!ctx._critFired){ ctx._critFired = true; _markupOnCrit(ctx); }
           // Round 67q: fire the FX crit overlay on the impacted target.
           // playCardFX already fired the base slash from playCard, but
           // crit isn't known until the damage roll resolves — so we
@@ -1308,9 +1509,16 @@ var EFFECT_TYPES = {
       {id:'cardId', label:'Card ID', type:'text', default:''},
       {id:'target', label:'Target', type:'select', default:'self', options:['self','opponent']},
       {id:'ghost', label:'Ethereal', type:'bool', default:true},
+      {id:'count', label:'Count', type:'number', default:1, min:1},
       {id:'mana_cost', label:'Mana cost', type:'number', default:0, min:0, max:100}
     ],
-    effectText: function(v){ return (v.mana_cost ? '['+v.mana_cost+' mana] ' : '') + 'Create '+(v.ghost?'Ethereal ':'')+' card in '+(v.target||'self')+'\'s hand.'; },
+    effectText: function(v){
+      var hasCard = (typeof CARDS!=='undefined' && CARDS[v.cardId]);
+      var nm = hasCard ? '{{'+v.cardId+'}}' : (v.cardId || 'a card');
+      var n = Math.max(1,+v.count||1);
+      var body = (n>1?n+' ':'')+(v.ghost?'[Ethereal] ':'')+nm+(n>1?'s':'');
+      return (v.mana_cost ? '['+v.mana_cost+' mana] ' : '') + (v.target==='opponent'?'[Gift] ':'Create ') + body + '.';
+    },
     typeHint:'utility',
     run: function(v,ctx){
       var cardId = v.cardId;
@@ -1325,10 +1533,12 @@ var EFFECT_TYPES = {
       }
       var tgt = (v.target === 'opponent') ? ctx.opponent : actor;
       if(!tgt) return;
-      var newItem = { id: cardId, ghost: !!v.ghost, _new: true, _newDraw: true };
-      tgt.hand.push(newItem);
+      var ccount = Math.max(1, +v.count || 1);
+      for(var cn = 0; cn < ccount; cn++){
+        tgt.hand.push({ id: cardId, ghost: !!v.ghost, _new: true, _newDraw: true });
+      }
       var c = CARDS[cardId];
-      addLog((c.name||cardId)+' added to '+(tgt === actor ? 'hand' : tgt.creature.name+'\'s hand')+'.', 'draw');
+      addLog((c.name||cardId)+(ccount>1?' x'+ccount:'')+' added to '+(tgt === actor ? 'hand' : tgt.creature.name+'\'s hand')+'.', 'draw');
       // Round 67q: conjure pulse on the player's hand when a card
       // appears. Deferred a frame so the new DOM card exists for
       // accurate slot positioning.
@@ -1529,7 +1739,7 @@ var EFFECT_TYPES = {
         valStr = (v.value ? v.value + ' + ' : '') + v.stat.toUpperCase() + ' ÷ ' + (v.stat_div || 4);
       }
       var statusMap = {
-        poison: targetStr + ' ' + valStr + ' [Poison] for ' + v.dur + 's.',
+        poison: targetStr + ' [Poison] ' + valStr + ' for ' + v.dur + 's.',
         burn:   targetStr + ' ' + valStr + ' [Burn] for ' + v.dur + 's.',
         weaken: targetStr + ' [Weaken] for ' + v.dur + 's.',
         slow:   targetStr + ' [Slow] for ' + v.dur + 's.',
@@ -1542,14 +1752,38 @@ var EFFECT_TYPES = {
     },
     typeHint: function(v){ return v.target === 'self' ? 'utility' : 'debuff'; },
     run: function(v,ctx){
+      // target:'both' — apply to self AND opponent (Leona's Retainer Fee).
+      if(v.target === 'both'){
+        var vSelf = {}, vOpp = {};
+        for(var k in v){ vSelf[k] = v[k]; vOpp[k] = v[k]; }
+        vSelf.target = 'self'; vOpp.target = 'opponent';
+        EFFECT_TYPES.apply_status.run(vSelf, ctx);
+        EFFECT_TYPES.apply_status.run(vOpp, ctx);
+        return;
+      }
       var targetActor = (v.target === 'self') ? ctx.actor : ctx.opponent;
       var targetSide = (v.target === 'self') ? getSelfSide(ctx) : getTargetSide(ctx);
       var dur = (+v.dur || 8) * 1000;
       var val = +v.value || 0;
+      // Generalised [Crit]: a crit on a no-damage status card doubles the
+      // status duration instead of damage (Merchant's Rush Order).
+      if(+v.crit){
+        var apCrit = (+v.crit) + (+ctx.critBonus || 0);
+        if(ctx.markedCrit || (apCrit > 0 && Math.random()*100 < apCrit)){
+          dur = dur * 2;
+          if(typeof spawnFloatNum === 'function') spawnFloatNum(getSelfSide(ctx), 'CRIT!', false, 'crit-num');
+          if(!ctx._critFired){ ctx._critFired = true; _markupOnCrit(ctx); }
+        }
+      }
       // Stat scaling
       if (v.stat && v.stat !== 'none') {
         var statSource = ctx.actor || ctx;
         val += Math.floor((statSource[v.stat] || 0) / (+v.stat_div || 4));
+      }
+      // Compound: scale the applied value per Compound count (Shield amount,
+      // Haste %, etc) — only when this play was Compounded.
+      if(ctx._compounded && +v.compoundVal){
+        val += (+v.compoundVal) * (+ctx._compoundCount || 0);
       }
       val = Math.max(val, 0);
 
@@ -1563,6 +1797,11 @@ var EFFECT_TYPES = {
       if(v.status === 'shield' && ctx.actor){
         var sMult = getAura(ctx.actor, 'shieldMult');
         if(sMult) val = Math.round(val * sMult);
+      }
+      // Hemorrhage aura (Kaine) — Bleed he applies scales with STR.
+      if(v.status === 'bleed' && ctx.actor){
+        var bleedDiv = getAura(ctx.actor, 'bleedStrDiv');
+        if(bleedDiv) val += Math.floor((ctx.actor.str||0) / bleedDiv);
       }
 
       switch (v.status) {
@@ -1581,6 +1820,9 @@ var EFFECT_TYPES = {
         case 'burn':
           _applyBurn(val, dur);
           addLog(ctx.cardName + '! Burn +' + val + '/s.', 'debuff');
+          // [Accrue] hook — any Burn application (from any source) feeds
+          // burn-triggered accrue cards held in either hand (e.g. Smite).
+          if(typeof _accrueBump === 'function') _accrueBump('burn');
           break;
 
         case 'weaken':
@@ -2170,7 +2412,42 @@ var EFFECT_TYPES = {
 
   // ── Shield / Damage utility effects ──────────────────────────
 
-  // Gain Shield equal to a percentage of current HP (Hunker)
+  // Gain Shield equal to a percentage of current HP (Hunker — Drain
+  // Lurker innate). Routes through apply_status so the shield pool,
+  // status, tag and FX all resolve through the one shield path.
+  shield_pct_hp: {
+    label:'Shield % of HP', cat:'utility',
+    desc:'Gain Shield equal to a percentage of current HP.',
+    fields:[
+      {id:'pct', label:'% of current HP', type:'number', default:20},
+      {id:'dur', label:'Dur (s)',         type:'number', default:6}
+    ],
+    effectText: function(v){ return 'Gain [Shield] '+(+v.pct||20)+'% current HP for '+(+v.dur||6)+'s.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      var actor = ctx.actor;
+      if(!actor) return;
+      var amt = Math.floor((actor.hp||0) * (+v.pct||20) / 100);
+      if(amt <= 0) return;
+      EFFECT_TYPES.apply_status.run({status:'shield', target:'self', value:amt, dur:(+v.dur||6)}, ctx);
+    }
+  },
+
+  // Gain stacking Frenzy (Rat innate; usable by any card or trigger).
+  // Side-aware — _applyFrenzy resolves the player vs enemy draw knob.
+  frenzy: {
+    label:'Frenzy', cat:'status',
+    desc:'Gain stacking Frenzy — a manabound draw-speed buff.',
+    fields:[{id:'stacks', label:'Stacks', type:'number', default:1}],
+    effectText: function(v){ var n=+v.stacks||1; return 'Gain '+n+' [Frenzy] stack'+(n>1?'s':'')+'.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      var actor = ctx.actor;
+      if(!actor || typeof _applyFrenzy !== 'function') return;
+      var side = actor.side || (ctx.isEnemy ? 'enemy' : 'player');
+      _applyFrenzy(side, Math.max(1, +v.stacks || 1));
+    }
+  },
 
   // Destroy own Shield and deal the destroyed amount as damage (Crush Sorcery)
 
@@ -2489,10 +2766,290 @@ var EFFECT_TYPES = {
 
   // ── Drain a percentage of own max mana ──
 
-  // ── Gain mana ──
+  // ── Gain mana (Appraise, etc) ──
+  gain_mana: {
+    label:'Gain Mana', cat:'utility',
+    desc:'Restore mana to the caster.',
+    fields:[{id:'amt',label:'Amount',type:'number',default:20}],
+    effectText: function(v){ return 'Gain '+(+v.amt||0)+' mana.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      var amt = +v.amt || 0;
+      if(ctx.actor){
+        ctx.actor.mana = Math.min(ctx.actor.maxMana||9999, (ctx.actor.mana||0) + amt);
+      } else if(ctx.isEnemy){
+        gs.enemyMana = Math.min(gs.enemyMaxMana||9999, (gs.enemyMana||0) + amt);
+      } else {
+        gs.mana = Math.min(gs.maxMana||9999, (gs.mana||0) + amt);
+      }
+      addLog(ctx.cardName + '! +' + amt + ' mana.', 'mana');
+      if(typeof updateAll === 'function') updateAll();
+    }
+  },
+
+  // ── Compound — advance this card's per-fight count (Sorcery sub-effect) ──
+  // The scaled payoff lives on the card's MAIN effect via the compoundDmg /
+  // compoundHits / compoundVal fields (dmg_conditional, apply_status), which
+  // read ctx._compounded + ctx._compoundCount. The count is per-card-id, on
+  // the actor (actor._compound), and resets each fight (fresh actor).
+  compound_advance: {
+    label:'[Compound]', cat:'keyword',
+    desc:'Advance this card\'s per-fight Compound count; the card\'s effect scales with it.',
+    fields:[{id:'show',label:'Display bonus',type:'text',default:''}],
+    effectText: function(v){ return '[Compound] '+(v.show||''); },
+    typeHint:'utility',
+    run: function(v,ctx){
+      var actor = ctx.actor, cid = ctx.cardId;
+      if(!actor || !cid) return;
+      if(!actor._compound) actor._compound = {};
+      actor._compound[cid] = (actor._compound[cid] || 0) + 1;
+      ctx._compounded = true;
+      ctx._compoundCount = actor._compound[cid];
+    }
+  },
+
+  // ── Compound Hand (Hoot's Research Grant) — advance the Compound
+  //    count of every card in hand (once per copy held). Does not make
+  //    those cards "compounded" — they still scale only when played
+  //    with their [Compound] Sorcery paid; this just pre-loads counts. ──
+  compound_hand: {
+    label:'[Compound] Hand', cat:'card_create',
+    desc:'Advance the Compound count of every card in hand.',
+    fields:[],
+    effectText: function(v){ return '[Compound] all cards in hand.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      var actor = ctx.actor;
+      if(!actor || !actor.hand) return;
+      if(!actor._compound) actor._compound = {};
+      actor.hand.forEach(function(it){
+        if(!it || !it.id) return;
+        actor._compound[it.id] = (actor._compound[it.id] || 0) + 1;
+      });
+    }
+  },
+
+  // ── Vault Hoard (Shtole innate) — discard hand, fill with Ethereal
+  //    Compounded copies of Shtole's Treasure ──
+  vault_hoard: {
+    label:'Vault Hoard', cat:'card_create',
+    desc:'Discard the hand; fill it with Ethereal Compounded Treasures.',
+    fields:[],
+    effectText: function(v){ return 'Discard hand. Fill with [Ethereal] Treasures.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      var actor = ctx.actor;
+      if(!actor || !actor.hand) return;
+      // Discard the entire hand (ghosts vanish; real cards to the discard pile)
+      while(actor.hand.length){
+        var it = actor.hand.pop();
+        if(it && !it.ghost && actor.discardPile) actor.discardPile.push(it.id);
+      }
+      // Fill the hand with Ethereal, Compounded Treasures
+      var cap = (typeof HAND_SIZE === 'number') ? HAND_SIZE : 7;
+      for(var i=0;i<cap;i++){
+        actor.hand.push({ id:'vault_keeper_treasure', ghost:true, _new:true, _compounded:true });
+      }
+      if(actor.side === 'player'){
+        if(typeof renderHand === 'function') renderHand();
+        if(typeof renderPiles === 'function') renderPiles();
+      }
+    }
+  },
 
 
 
+
+  // ── Buff Hand Attacks (M'bur's Whetstone) — stamp +damage on every
+  //    attack card item in hand. Per-item, so it is consumed naturally
+  //    when each card is played (the item is destroyed on play).
+  //    resolveCardEffects reads item._dmgBuff. ──
+  buff_hand_attacks: {
+    label:'Buff Hand Attacks', cat:'modifier',
+    desc:'Add damage to every attack card currently in hand (consumed on play).',
+    fields:[{id:'amt',label:'Damage',type:'number',default:5}],
+    effectText: function(v){ return 'Attack cards in hand: +'+(+v.amt||0)+' damage (next play).'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      var actor = ctx.actor;
+      if(!actor || !actor.hand) return;
+      var amt = +v.amt || 0;
+      actor.hand.forEach(function(it){
+        var c = CARDS[it.id];
+        if(c && c.type === 'attack') it._dmgBuff = (it._dmgBuff || 0) + amt;
+      });
+      if(actor.side === 'player' && typeof renderHand === 'function') renderHand();
+    }
+  },
+
+  // ── Temper Universals (M'bur's Tempered Edge passive) — idempotently
+  //    give universal cards a "[Sorcery] [10]: Draw 1" cantrip. Run from
+  //    an on_draw trigger; the source-check makes repeat runs a silent
+  //    no-op so it only ever creates one mod. ──
+  temper_universals: {
+    label:'Temper Universals', cat:'modifier',
+    desc:'Universal cards in hand gain a Draw-1 cantrip Sorcery.',
+    fields:[],
+    effectText: function(v){ return 'Universal cards gain [Sorcery] [10]: Draw 1.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      var actor = ctx.actor;
+      if(!actor) return;
+      if(!actor._cardMods) actor._cardMods = [];
+      for(var i=0;i<actor._cardMods.length;i++){
+        if(actor._cardMods[i].source === 'tempered_edge') return;
+      }
+      actor._cardMods.push({
+        id:'tempered_edge', source:'tempered_edge',
+        filter:{tag:'universal'}, where:'all', scope:'battle',
+        changes:[{append_sorcery:{cost:10, effect:{type:'draw_cards',count:1}}}]
+      });
+    }
+  },
+
+  // ── Markup (the Merchant's innate) — on crit, conjure an escalating-
+  //    crit copy of the card into the draw pile, flagged Banish (one
+  //    play, then gone). actor._markupCopies tracks the pending copy's
+  //    crit bonus; actorDraw stamps it onto the drawn hand item. ──
+  markup_conjure: {
+    label:'Markup', cat:'card_create',
+    desc:'On crit: conjure a sharper Banish copy of the card into the deck.',
+    fields:[],
+    effectText: function(v){ return 'On [Crit]: conjure a [Banish] copy.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      var actor = ctx.actor, cid = ctx.cardId;
+      if(!actor || !cid) return;
+      var card = CARDS[cid];
+      if(!card) return;
+      if(!actor._markupCopies) actor._markupCopies = {};
+      var wasCopy = !!ctx._isMarkupCopy;
+      // One copy of a card at a time — a base-card crit while a copy is
+      // still circulating does not start a second chain.
+      if(!wasCopy && actor._markupCopies[cid]) return;
+      var baseCrit = _cardPrintedCrit(card);
+      var sourceCrit = baseCrit + (+ctx._critSourceBonus || 0);
+      var nextCrit = Math.min(100, sourceCrit * 2);
+      var nextBonus = Math.max(0, nextCrit - baseCrit);
+      actor._markupCopies[cid] = { critBonus: nextBonus, drawn:false };
+      if(actor.drawPool) actor.drawPool.push(cid);
+      addLog('Markup: a sharper copy of ' + (card.name||cid) + ' slips into the deck.', 'draw');
+      if(actor.side === 'player' && typeof renderPiles === 'function') renderPiles();
+    }
+  },
+
+  // ── Self Damage (Leona's Rigged Contract) — damage the card's holder. ──
+  dmg_self: {
+    label:'Self Damage', cat:'damage',
+    desc:'Deal damage to this card\'s own holder.',
+    fields:[{id:'amt',label:'Damage',type:'number',default:12}],
+    effectText: function(v){ return 'Deal '+(+v.amt||0)+' damage to self.'; },
+    typeHint:'attack',
+    run: function(v,ctx){
+      var amt = +v.amt || 0;
+      var holder = ctx.actor;
+      if(holder && typeof dealDamage === 'function'){
+        dealDamage(holder, amt);
+      } else if(holder){
+        holder.hp = Math.max(0, holder.hp - amt);
+      }
+      addLog((ctx.cardName||'Rigged Contract')+' detonates — '+amt+' damage to its holder!', 'dmg');
+    }
+  },
+
+  // ── Create Card In Deck (Leona's bombs) — place copies of a card into
+  //    a target's draw pile. Draws are random, so no positioning needed. ──
+  create_card_in_deck: {
+    label:'Create Card In Deck', cat:'card_create',
+    desc:'Place a card into a target\'s draw pile.',
+    fields:[
+      {id:'cardId', label:'Card ID', type:'text',   default:''},
+      {id:'target', label:'Target',  type:'select', default:'opponent', options:['self','opponent']},
+      {id:'count',  label:'Count',   type:'number', default:1}
+    ],
+    effectText: function(v){
+      var n=+v.count||1;
+      var hasCard=(typeof CARDS!=='undefined' && CARDS[v.cardId]);
+      var nm=hasCard?'{{'+v.cardId+'}}':(v.cardId||'a card');
+      return 'Create '+n+' '+nm+(n>1?'s':'')+' in '+(v.target==='self'?'your':'the opponent\'s')+' deck.';
+    },
+    typeHint:'utility',
+    run: function(v,ctx){
+      var cardId = v.cardId;
+      if(!cardId || !CARDS[cardId]) return;
+      var tgt = (v.target === 'opponent') ? ctx.opponent : ctx.actor;
+      if(!tgt || !tgt.drawPool) return;
+      var count = +v.count || 1;
+      for(var i=0;i<count;i++){ tgt.drawPool.push(cardId); }
+      addLog((CARDS[cardId].name||cardId)+' x'+count+' planted in '+(tgt.side==='player'?'your':'the enemy\'s')+' deck.', 'draw');
+      if(typeof renderPiles === 'function') renderPiles();
+    }
+  },
+
+  // ── Churn Both (Leona's Contract Killer) — both actors discard N from
+  //    hand and draw N. Discarded cards with onDiscard (Rigged Contract)
+  //    detonate, holder-aware. Self-contained — bypasses the legacy churn. ──
+  churn_both: {
+    label:'Churn Both', cat:'card_act',
+    desc:'Both creatures discard N random cards and draw N.',
+    fields:[{id:'count',label:'Count',type:'number',default:4}],
+    effectText: function(v){ return 'Both creatures [Churn] '+(+v.count||4)+'.'; },
+    typeHint:'utility',
+    run: function(v,ctx){
+      var n = +v.count || 4;
+      var actors = [];
+      if(gs && gs.actors){
+        if(gs.actors.player) actors.push(gs.actors.player);
+        if(gs.actors.enemy)  actors.push(gs.actors.enemy);
+      }
+      actors.forEach(function(act){
+        if(!act.hand || !act.drawPool) return;
+        var discarded = 0;
+        for(var i=0;i<n;i++){
+          if(!act.hand.length) break;
+          var ri = Math.floor(Math.random()*act.hand.length);
+          var item = act.hand.splice(ri,1)[0];
+          discarded++;
+          var card = CARDS[item.id];
+          var dctx = {
+            actor: act, opponent: (typeof getOpponent==='function'?getOpponent(act):null),
+            cardId: item.id, cardName: (card?card.name:item.id),
+            str: act.str, agi: act.agi, wis: act.wis,
+            pdmg: function(b){ return Math.max(1, Math.round(b)); },
+            isEnemy: act.side === 'enemy'
+          };
+          // onDiscard echo (Rigged Contract detonation), holder-aware.
+          if(card && card.onDiscard && card.onDiscard.length){
+            card.onDiscard.forEach(function(eff){
+              if(eff.type && EFFECT_TYPES[eff.type]) EFFECT_TYPES[eff.type].run(eff, dctx);
+            });
+          }
+          if(typeof fireInnateTriggers === 'function') fireInnateTriggers(act, 'on_discard', dctx);
+          // Non-ethereal cards return to the discard pile.
+          if(!item.ghost && !item._banish) act.discardPile.push(item.id);
+        }
+        for(var d=0; d<discarded; d++){
+          if(typeof actorDraw === 'function') actorDraw(act);
+        }
+      });
+      if(typeof renderHand === 'function') renderHand();
+      if(typeof renderPiles === 'function') renderPiles();
+    }
+  },
+
+  // ── Bonus Hits (a Sorcery rider) — add hits to this card's attack.
+  //    Sets ctx._bonusHits, read by dmg_conditional. Place the Sorcery
+  //    FIRST in effects[] so it runs before the damage resolves. ──
+  bonus_hits: {
+    label:'Bonus Hits', cat:'damage',
+    desc:'Add hits to this card\'s dmg_conditional attack.',
+    fields:[{id:'amount',label:'Hits',type:'number',default:1}],
+    effectText: function(v){ var n=+v.amount||1; return '+'+n+' hit'+(n!==1?'s':''); },
+    typeHint:'attack',
+    run: function(v,ctx){
+      ctx._bonusHits = (ctx._bonusHits || 0) + (+v.amount || 0);
+    }
+  },
 
   // ── CONDITIONAL DAMAGE ─────────────────────────────
 
@@ -2526,66 +3083,87 @@ var EFFECT_TYPES = {
 // Expiry: Full cleanse — when timer hits 0 the whole thing collapses instantly
 // Mana Sustain: drains 3 mana/s while active — cleansed immediately if mana = 0
 // ═══════════════════════════════════════════════════════
-function _applyFrenzy(stacks){
+// Round 67s: unified, side-aware Frenzy. The status lives in
+// gs.statusEffects[side]; tickStatuses() (game.js) decays it and the
+// manabound purge collapses it — both already handle 'player' AND
+// 'enemy'. The draw-speed knob differs per side: player drives
+// gs.drawSpeedBonus (tracked via gs._frenzyDrawBonus), enemy drives
+// the current enemy's _frenzyAtkMult. _applyFrenzy is the single
+// entry point for both. (A lone numeric arg = player, for back-compat.)
+function _applyFrenzy(side, stacks){
+  if(typeof side === 'number'){ stacks = side; side = 'player'; }
+  side = (side === 'enemy') ? 'enemy' : 'player';
   stacks = stacks || 1;
-  var e = gs.statusEffects.player.find(function(s){ return s.id === 'frenzy'; });
+  var list = gs.statusEffects[side];
+  if(!list) return;
+  var e = list.find(function(s){ return s.id === 'frenzy'; });
   if(e){
     e.stacks = (e.stacks||1) + stacks;
-    // Duration: 3s base, each stack reduces max by 10% (×0.9 per stack)
-    var dur = Math.round(3000 * Math.pow(0.9, e.stacks - 1));
-    e.remaining = dur; e.maxRemaining = dur;
-    _updateFrenzyBonus(e.stacks);
-    _updateFrenzyTag(e.stacks);
   } else {
-    var initDur = Math.round(3000 * Math.pow(0.9, stacks - 1));
-    gs.statusEffects.player.push({
-      id:'frenzy', label:'Frenzy \xd7'+stacks, cls:'buff', stat:'frenzy',
-      stacks:stacks, remaining:initDur, maxRemaining:initDur, dot:false,
-      desc:'Frenzy: +10% draw speed per stack. Duration shortens per stack. Manabound. Drains 3 mana/s.'
-    });
-    addTag('player','buff','Frenzy \xd7'+stacks, stacks, 'frenzy',
-      'Frenzy: +10% draw speed per stack. Duration shortens per stack. Manabound. Drains 3 mana/s.');
-    _updateFrenzyBonus(stacks);
+    e = { id:'frenzy', label:'Frenzy', cls:'buff', stat:'frenzy', stacks:stacks,
+      remaining:0, maxRemaining:0, dot:false,
+      desc:'Frenzy: +10% draw speed per stack. Duration shortens per stack. Manabound. Drains 3 mana/s.' };
+    list.push(e);
   }
-  if(SETTINGS.logd!=='brief') addLog('Frenzy \xd7'+(e?e.stacks:stacks)+'!','buff');
+  // Duration: 3s base, each stack shortens the window (×0.9 per stack).
+  var dur = Math.round(3000 * Math.pow(0.9, e.stacks - 1));
+  e.remaining = dur; e.maxRemaining = dur;
+  e.label = 'Frenzy \xd7' + e.stacks;
+  _updateFrenzyBonus(side, e.stacks);
+  _updateFrenzyTag(side, e.stacks);
+  if(SETTINGS.logd !== 'brief') addLog('Frenzy \xd7' + e.stacks + '!', 'buff');
 }
 
-function _getFrenzyStacks(){
-  var e = gs.statusEffects.player.find(function(s){ return s.id==='frenzy'; });
+function _getFrenzyStacks(side){
+  var list = gs.statusEffects[(side === 'enemy') ? 'enemy' : 'player'];
+  var e = list && list.find(function(s){ return s.id === 'frenzy'; });
   return e ? (e.stacks||0) : 0;
 }
 
-function _updateFrenzyBonus(stacks){
-  // Replace old bonus cleanly to avoid accumulation errors
+function _updateFrenzyBonus(side, stacks){
+  if(side === 'enemy'){
+    var ce = gs.enemies && gs.enemies[gs.enemyIdx];
+    if(ce) ce._frenzyAtkMult = 1 + stacks * 0.10;
+    return;
+  }
+  // Player: replace the old frenzy portion of drawSpeedBonus cleanly.
   if(gs._frenzyDrawBonus) gs.drawSpeedBonus = Math.max(1,(gs.drawSpeedBonus||1) - gs._frenzyDrawBonus);
   gs._frenzyDrawBonus = stacks * 0.10;
   gs.drawSpeedBonus = (gs.drawSpeedBonus||1) + gs._frenzyDrawBonus;
 }
 
-function _clearFrenzy(reason){
-  var e = gs.statusEffects.player.find(function(s){ return s.id==='frenzy'; });
-  if(!e) return;
-  var lbl = e.label;
-  gs.statusEffects.player = gs.statusEffects.player.filter(function(s){ return s.id!=='frenzy'; });
-  removeTagByLabel('player', lbl);
-  // Also clear any old-label tags in case of stale state
-  var el = document.getElementById('p-tags');
-  if(el){ var stale=el.querySelector('[data-label^="Frenzy"]'); if(stale) stale.remove(); }
-  if(gs._frenzyDrawBonus){
-    gs.drawSpeedBonus = Math.max(1,(gs.drawSpeedBonus||1) - gs._frenzyDrawBonus);
-    gs._frenzyDrawBonus = 0;
+function _clearFrenzy(side, reason){
+  if(typeof side !== 'string' || (side !== 'player' && side !== 'enemy')){ reason = side; side = 'player'; }
+  var list = gs.statusEffects[side];
+  if(!list) return;
+  var lbl = null;
+  for(var i = list.length - 1; i >= 0; i--){
+    if(list[i].id === 'frenzy'){ lbl = list[i].label; list.splice(i, 1); }
   }
-  addLog('Frenzy collapsed'+(reason?' ('+reason+')':'')+'!','debuff');
+  if(lbl === null) return;
+  removeTagByLabel(side, lbl);
+  if(side === 'enemy'){
+    var ce = gs.enemies && gs.enemies[gs.enemyIdx];
+    if(ce) ce._frenzyAtkMult = 1;
+  } else {
+    if(gs._frenzyDrawBonus){
+      gs.drawSpeedBonus = Math.max(1,(gs.drawSpeedBonus||1) - gs._frenzyDrawBonus);
+      gs._frenzyDrawBonus = 0;
+    }
+  }
+  addLog('Frenzy collapsed' + (reason ? ' ('+reason+')' : '') + '!', 'debuff');
 }
 
-function _updateFrenzyTag(stacks){
-  var el = document.getElementById('p-tags');
+function _updateFrenzyTag(side, stacks){
+  var tagSide = (side === 'enemy') ? 'enemy' : 'player';
+  var el = document.getElementById(tagSide === 'enemy' ? 'e-tags' : 'p-tags');
+  var lbl = 'Frenzy \xd7' + stacks;
   var tag = el && el.querySelector('[data-label^="Frenzy"]');
-  var lbl = 'Frenzy \xd7'+stacks;
+  var desc = 'Frenzy: +' + (stacks * 10) + '% draw speed. Manabound. Drains 3 mana/s.';
   if(tag){ tag.setAttribute('data-label', lbl); tag.textContent = lbl; }
-  else { addTag('player','buff',lbl,stacks,'frenzy','Frenzy: +'+stacks+'0% draw speed. 3 mana/s drain.'); }
-  // Sync label on the status object
-  var e = gs.statusEffects.player.find(function(s){ return s.id==='frenzy'; });
+  else { addTag(tagSide, 'buff', lbl, stacks, 'frenzy', desc); }
+  var list = gs.statusEffects[tagSide];
+  var e = list && list.find(function(s){ return s.id === 'frenzy'; });
   if(e) e.label = lbl;
 }
 

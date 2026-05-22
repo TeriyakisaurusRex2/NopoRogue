@@ -353,17 +353,20 @@ function _deRenderGrid(){
     if(card.champ === _deChampId) classes += ' de-acard-champ';
     else if(item.source === 'shared') classes += ' de-acard-shared';
     if(item.isLocked) classes += ' de-acard-locked';
+    if(_deInspect && _deInspect.id === cardId) classes += ' de-acard-selected';
 
     html += '<div class="'+classes+'" onclick="_deInspectCard(\''+cardId+'\')">'
       + srcBadge
       + '<div class="de-acard-art">'+_deCardArt(cardId,card)+'</div>'
       + '<div class="de-acard-name">'+card.name+'</div>'
-      + '<div class="de-acard-effect">'+effLine+'</div>'
+      + '<div class="de-acard-effect">'+(typeof renderKeywords==='function'?renderKeywords(effLine):effLine)+'</div>'
       + (inDeck>0?'<div class="de-copy-count">in deck: ×'+inDeck+'</div>':'')
       + (item.isLocked && item.canBuy ? '<span class="de-buy-badge" onclick="event.stopPropagation();_deBuyUnlock(\''+cardId+'\','+buyGold+')">'+buyGold+'g</span>':'')
       + (item.isLocked && !item.canBuy ? '<span class="de-lock-badge">Lv.5</span>':'')
-      + (!item.isLocked && !atMax ? '<div class="de-acard-add" onclick="event.stopPropagation();_deAddCard(\''+cardId+'\')">+</div>':'')
+      + (!item.isLocked && !atMax ? '<div class="de-acard-add" onclick="event.stopPropagation();_deAddCard(\''+cardId+'\')" title="Add one copy">+</div>':'')
       + (!item.isLocked && atMax ? '<span class="de-maxed-badge">MAX</span>':'')
+      // Remove button — top-left, shown on hover when a copy is in the deck.
+      + (!item.isLocked && inDeck>0 ? '<div class="de-acard-remove" onclick="event.stopPropagation();_deRemoveCard(\''+cardId+'\')" title="Remove one copy">−</div>':'')
       + '</div>';
   });
   grid.innerHTML = html;
@@ -380,11 +383,15 @@ function _deSetSort(k){ _deSort = k; _deRenderGrid(); }
 function _deRenderInspector(){
   var el = document.getElementById('de-inspector');
   if(!el) return;
-  if(!_deInspect){
-    el.innerHTML = '<div class="de-info-empty">Select a card to see details</div>';
-    return;
-  }
-  var card = _deInspect;
+  el.innerHTML = _cardInspectorHTML(_deInspect, _deChampId);
+}
+
+// Shared card-inspector HTML builder — used by the deck editor AND the
+// read-only deck view (game.js showDeckView). ctxChampId is the champion
+// whose deck is in context, which drives the borrowed-via-ascension vs
+// Source line. Returns the empty-state markup when card is null.
+function _cardInspectorHTML(card, ctxChampId){
+  if(!card) return '<div class="de-info-empty">Select a card to see details</div>';
   var cardId = card.id || '';
   var fullEffect = renderKeywords((card.effect||'').replace(/\n/g,'<br>'));
   var html = '';
@@ -419,25 +426,25 @@ function _deRenderInspector(){
   if(card.champ){
     var src = CREATURES[card.champ];
     var srcName = src ? src.name : card.champ;
-    var isShared = (card.champ !== _deChampId);
+    var isShared = (card.champ !== ctxChampId);
     html += '<div class="de-insp-divider"></div>';
     if(isShared){
-      // Borrowed from another champion — make it visible
       html += '<div class="de-insp-shared-banner">↗ <strong>'+srcName+'</strong> · borrowed via ascension</div>';
     } else {
       html += '<div class="de-insp-source">Source: '+srcName+'</div>';
     }
-  } else if(_deInspect && (_deInspect.id === 'strike' || _deInspect.id === 'brace' || _deInspect.id === 'focus' || _deInspect.id === 'filler')){
+  } else if(cardId === 'strike' || cardId === 'brace' || cardId === 'focus' || cardId === 'filler' || cardId === 'quickstep'){
     html += '<div class="de-insp-divider"></div>';
     html += '<div class="de-insp-source">Source: Universal</div>';
   }
 
-  el.innerHTML = html;
+  return html;
 }
 
 function _deInspectCard(cardId){
   _deInspect = CARDS[cardId] || null;
   _deRenderDeckList();
+  _deRenderGrid();          // refresh the grid so the selected-card glow moves
   _deRenderInspector();
 }
 
@@ -504,12 +511,31 @@ function _deRemoveCard(cardId){
   }
 }
 
+// Card art for the compact .de-acard (deck editor + read-only view).
+// Priority: card sprite -> champion sprite -> emoji. File convention:
+// champion cards <cardId>.png, universal cards universal_<cardId>.png.
 function _deCardArt(cardId, card){
   if(!card) return '<span style="font-size:18px;">?</span>';
-  if(card.champ){
-    return '<img src="assets/creatures/'+card.champ+'.png" style="width:100%;height:100%;object-fit:contain;image-rendering:pixelated;transform:scaleX(-1);" onerror="this.style.display=\'none\'">';
+  var artKey = card.champ ? cardId : ('universal_' + cardId);
+  var cardSprite = 'assets/icons/cards/' + artKey + '.png';
+  var champSprite = card.champ ? ('assets/creatures/'+card.champ+'.png') : '';
+  return '<img class="de-card-sprite" src="'+cardSprite+'" alt="" '
+    + 'data-champ="'+champSprite+'" data-emoji="'+(card.icon||'?')+'" '
+    + 'onerror="_deCardArtFail(this)">';
+}
+
+// Cascade the .de-acard art on load error: card sprite -> champion
+// sprite (full-contain, flipped) -> emoji span.
+function _deCardArtFail(img){
+  if(!img || !img.dataset) return;
+  var d = img.dataset;
+  if(d.champ && !d.fellBack){
+    d.fellBack = '1';
+    img.className = 'de-card-champart';
+    img.src = d.champ;
+    return;
   }
-  return '<span style="font-size:18px;">'+(card.icon||'?')+'</span>';
+  img.outerHTML = '<span style="font-size:24px;">'+(d.emoji||'?')+'</span>';
 }
 
 // ── Ascended deck sharing ──

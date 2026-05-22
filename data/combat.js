@@ -340,6 +340,10 @@ function actorDraw(actor, overrideId, silent) {
   var isGhost = !!overrideId; // override draws are ghost cards
   var newItem = { id: drawnId, ghost: isGhost, _new: true };
 
+  // Cards defined with ethereal:true (Leona's Rigged Contract) are always
+  // drawn as ghosts — they vanish when played or discarded.
+  if (!isGhost && CARDS[drawnId] && CARDS[drawnId].ethereal) newItem.ghost = true;
+
   // Conjured marking — if conjured copies exist and this is the conjured card
   if (!isGhost && actor.conjuredCount > 0 && gs._conjuredCardId && drawnId === gs._conjuredCardId) {
     newItem._conjured = true;
@@ -362,6 +366,17 @@ function actorDraw(actor, overrideId, silent) {
     actor._pendingCritBonus = 0;
   }
 
+  // Markup (the Merchant): a conjured crit-chain copy of this card id is
+  // waiting — stamp its elevated crit + the Banish flag onto this draw.
+  // The registry entry stays (the copy now "exists" in hand) until the
+  // copy is played; `drawn` guards against stamping a second draw.
+  if (!isGhost && actor._markupCopies && actor._markupCopies[drawnId] && !actor._markupCopies[drawnId].drawn) {
+    newItem.critBonus = (newItem.critBonus || 0) + (actor._markupCopies[drawnId].critBonus || 0);
+    newItem._markupCopy = true;
+    newItem._banish = true;
+    actor._markupCopies[drawnId].drawn = true;
+  }
+
   // ── Draw lock + stagger (player only) ──
   if (actor.side === 'player') {
     if (!window._drawStaggerAcc) window._drawStaggerAcc = 0;
@@ -380,6 +395,25 @@ function actorDraw(actor, overrideId, silent) {
 
   // ── Add to hand ──
   actor.hand.push(newItem);
+
+  // ── [Drawn] — fire a card's onDraw trigger when it enters hand
+  //    (Leona's Retainer Fee). Real draws only, not ghost/override. ──
+  if (!isGhost && !newItem.ghost) {
+    var ddef = CARDS[drawnId];
+    if (ddef && ddef.onDraw && ddef.onDraw.length) {
+      var drawCtx = {
+        actor: actor, opponent: getOpponent(actor),
+        cardId: drawnId, cardName: ddef.name || drawnId,
+        str: actor.str, agi: actor.agi, wis: actor.wis,
+        pdmg: function(b){ return Math.max(1, Math.round(b)); },
+        isEnemy: actor.side === 'enemy'
+      };
+      ddef.onDraw.forEach(function(eff){
+        if (eff.type && EFFECT_TYPES[eff.type]) EFFECT_TYPES[eff.type].run(eff, drawCtx);
+      });
+      newItem._drawnFired = true;
+    }
+  }
 
   // ── Overflow: auto-play oldest when over capacity ──
   var maxHand = HAND_SIZE || 7;
@@ -429,7 +463,12 @@ function actorDiscard(actor, handIndex, silent) {
   var item = actor.hand.splice(handIndex, 1)[0];
   var cardId = item.id;
 
-  if (!item.ghost) {
+  // Markup: a conjured copy discarded (churn etc) is gone — clear its
+  // registry entry so a fresh chain can start.
+  if (item._markupCopy && actor._markupCopies) delete actor._markupCopies[cardId];
+
+  // [Banish] cards do not return to the discard pile.
+  if (!item.ghost && !item._banish) {
     actor.discardPile.push(cardId);
 
     // Fire echo (onDiscard) effects
@@ -619,6 +658,10 @@ function fireInnateTriggers(actor, event, ctx) {
       str: actor.str, agi: actor.agi, wis: actor.wis,
       pdmg: ctx.pdmg || function(b) { return Math.max(1, b); },
       isGhost: false, critBonus: 0,
+      // Markup (on_crit): pass the crit source's bonus + copy flag so
+      // markup_conjure can compute the next link in the crit chain.
+      _critSourceBonus: ctx.critBonus || 0,
+      _isMarkupCopy: !!ctx._isMarkupCopy,
     };
 
     // Fire the effect
@@ -783,7 +826,21 @@ function playCardForActor(actor, cardIndex) {
     pdmg: function(base) { return Math.max(1, Math.round(base)); },
     // Hellbent flag
     _wasLastInHand: wasLastInHand,
+    // Compound: Ethereal copies (Shtole's Vault Hoard) carry the live
+    // Compound count without paying Sorcery — a paid [Compound] Sorcery
+    // overwrites these via compound_advance.
+    _compounded: !!item._compounded,
+    _compoundCount: (item._compounded && actor._compound) ? (actor._compound[item.id] || 0) : 0,
+    // Markup: was this played card one of the Merchant's conjured copies?
+    _isMarkupCopy: !!item._markupCopy,
   };
+
+  // Markup: a conjured copy being played is consumed — clear its registry
+  // entry now so the chain can either continue (on crit, markup_conjure
+  // re-registers) or end (a miss leaves it cleared for a fresh chain).
+  if (item._markupCopy && actor._markupCopies) {
+    delete actor._markupCopies[item.id];
+  }
 
   // Log
   var who = actor.side === 'player' ? 'You play' : actor.creature.name + ' plays';
@@ -861,8 +918,10 @@ function playCardForActor(actor, cardIndex) {
     });
   }
 
-  // Discard (non-ghost cards)
-  if (!item.ghost) {
+  // Discard (non-ghost cards). [Banish] cards (Merchant's conjured
+  // copies) are removed for the rest of the battle — they do not return
+  // to the discard pile.
+  if (!item.ghost && !item._banish) {
     actor.discardPile.push(item.id);
     // Fire echo (onDiscard) — not here, echo fires when discarded by OTHER means
     // (Churn, Quick Hands, overflow). Playing a card is NOT a discard.

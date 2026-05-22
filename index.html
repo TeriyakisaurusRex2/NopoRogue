@@ -12,7 +12,7 @@
        game. (Crimson Text removal pass: ~55 declarations stripped
        across css + js inline styles.) -->
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=8">
 </head>
 <body>
 <!-- Round 67o: PokeRogue-style uniform scaling wrapper. Everything
@@ -31,6 +31,9 @@
      to fly a cyan particle from the quest rail to UI targets. -->
 <canvas id="ui-fx-canvas" width="1920" height="1080" style="position:absolute;top:0;left:0;width:1920px;height:1080px;pointer-events:none;image-rendering:pixelated;z-index:1500;"></canvas>
 <div id="kw-tooltip"></div>
+<!-- Card-reference preview: shows a full card face when hovering a
+     {{cardId}} reference inside card text (handler in cards.js). -->
+<div id="card-ref-tip"></div>
 
 <!-- NAV BAR — sibling of root, always at top of page.
      Round 67p: wordmark replaced with the active save name (orienting
@@ -380,6 +383,9 @@
         <div class="tb-stat-val wis" id="ts-wis">20</div>
         <div class="tb-stat-lbl">WIS</div>
       </div>
+      <!-- Equipped-relic strip — sits between the stat pills and the DECK
+           pill. Hidden via .tb-relics:empty when no relics are equipped. -->
+      <div class="tb-relics" id="tb-relics"></div>
       <div class="tb-stat">
         <div class="tb-stat-val deck" id="ts-deck">0/20</div>
         <div class="tb-stat-lbl">DECK</div>
@@ -538,8 +544,11 @@
 
 <!-- DECK VIEW -->
 <div id="deck-screen" class="screen">
-  <div class="dv-title">YOUR DECK</div>
-  <div class="dv-grid" id="dv-grid"></div>
+  <div class="dv-title">YOUR DECK <span class="dv-count" id="dv-count"></span></div>
+  <div class="dv-body">
+    <div class="de-avail-grid" id="dv-grid"></div>
+    <div class="de-inspector" id="dv-inspector"><div class="de-info-empty">Select a card to see details</div></div>
+  </div>
   <div class="dv-btns">
     <button class="btn btn-gold" onclick="continueDeckView()">CONTINUE →</button>
   </div>
@@ -1370,23 +1379,23 @@
 
   <!-- ── Core engine (defines all functions + empty data stubs) ── -->
   <script src="fx-engine.js?v=3"></script>
-  <script src="fx-effects.js?v=20"></script>
-  <script src="game.js?v=16"></script>
+  <script src="fx-effects.js?v=21"></script>
+  <script src="game.js?v=27"></script>
 
   <!-- ── Deck builder (deck editing screen) ── -->
-  <script src="deck_builder.js?v=1"></script>
+  <script src="deck_builder.js?v=6"></script>
 
   <!-- ── Town: buildings, NPC dialogue, bestiary, tutorials ── -->
-  <script src="town.js?v=13"></script>
+  <script src="town.js?v=19"></script>
 
   <!-- ── Data: keywords, cards, creature decks ── -->
-  <script src="data/cards.js?v=2"></script>
+  <script src="data/cards.js?v=14"></script>
 
   <!-- ── Data: card effects (executeCard, activateInnate, combat helpers) ── -->
-  <script src="data/card_effects.js?v=6"></script>
+  <script src="data/card_effects.js?v=19"></script>
 
   <!-- ── New unified combat system (symmetrical actor-based) ── -->
-  <script src="data/combat.js?v=4"></script>
+  <script src="data/combat.js?v=6"></script>
 
   <!-- ── Data: achievements ── -->
   <script src="data/achievements.js"></script>
@@ -1396,7 +1405,7 @@
   <script src="data/relics.js?v=2"></script>
   <script src="data/expedition.js"></script>
   <!-- quests.js removed — quest logic now lives in town.js -->
-  <script src="data/vault.js"></script>
+  <script src="data/vault.js?v=2"></script>
   <script src="data/arena.js"></script>
 
   <!-- ── Data: one file per creature ──
@@ -1404,25 +1413,31 @@
        data/creatures/. A missing file here throws ERR_FILE_NOT_FOUND
        on page load. -->
   <script src="data/creatures/bandit.js"></script>
+  <script src="data/creatures/blacksmith.js"></script>
   <script src="data/creatures/bloom.js"></script>
   <script src="data/creatures/dire_wolf.js"></script>
   <script src="data/creatures/dojo_tiger.js"></script>
   <script src="data/creatures/drain_lurker.js"></script>
   <script src="data/creatures/druid.js"></script>
   <script src="data/creatures/goblin.js"></script>
+  <script src="data/creatures/guild_girl.js"></script>
+  <script src="data/creatures/hoot_archivist.js?v=3"></script>
   <script src="data/creatures/infernal_beast.js"></script>
   <script src="data/creatures/iron_sentinel.js"></script>
+  <script src="data/creatures/merchant.js"></script>
   <script src="data/creatures/mycelid.js"></script>
   <script src="data/creatures/paladin.js"></script>
   <script src="data/creatures/plagued_one.js"></script>
   <script src="data/creatures/raider.js"></script>
   <script src="data/creatures/rat.js"></script>
+  <script src="data/creatures/sanctum_keeper.js"></script>
   <script src="data/creatures/slime.js"></script>
   <script src="data/creatures/smuggler.js"></script>
   <script src="data/creatures/snake.js"></script>
   <script src="data/creatures/sporepuff.js"></script>
   <script src="data/creatures/squanchback.js"></script>
   <script src="data/creatures/thief.js"></script>
+  <script src="data/creatures/vault_keeper.js"></script>
   <script src="data/creatures/wolf.js"></script>
   <script src="data/creatures/zombie.js"></script>
 
@@ -1430,10 +1445,10 @@
   <script src="audio.js?v=7"></script>
 
   <!-- ── Changelog (Round 67r) ── -->
-  <script src="changelog.js?v=1"></script>
+  <script src="changelog.js?v=3"></script>
 
   <!-- ── Tutorial (Round 66) — first-run wolf-vs-goblin lesson ── -->
-  <script src="tutorial.js?v=13"></script>
+  <script src="tutorial.js?v=14"></script>
 
   <!-- ── Boot: runs after all data is loaded ── -->
   <script src="init.js"></script>

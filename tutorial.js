@@ -926,6 +926,7 @@ var STORY_QUESTS = {
     rewards:          [
       {type:'gold',   icon:'✦', amount:30, label:'Gold'},
       {type:'unlock', icon:'🔓', label:'The Forge'},
+      {type:'item',   icon:'⏳', id:'cracked_hourglass', amount:1, label:'Cracked Hourglass'},
     ],
     issuer:           'Leona',
     next:             'story_craft_safety_net',
@@ -938,6 +939,15 @@ var STORY_QUESTS = {
         if(typeof showTownToast === 'function'){
           showTownToast("Leona: \"M'bur's at the Forge. He could use a hand.\"");
         }
+      }
+      // Round 67r: Cracked Hourglass grant happens via the rewards
+      // array (declarative `type:'item'` entry handled by claimQuest's
+      // reward loop). Followup toast tells the player WHERE to find
+      // and use it, so the Vault gets a natural introduction.
+      if(typeof showTownToast === 'function'){
+        setTimeout(function(){
+          showTownToast('✦ Cracked Hourglass added to your Vault. Use it to skip craft waits.');
+        }, 1200);
       }
     },
   },

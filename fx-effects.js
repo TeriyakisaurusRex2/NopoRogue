@@ -1202,7 +1202,14 @@
     if(!source || !target) return null;
     var e = new F.Effect();
     var DUR = 600; // a little slower than combat projectiles so the eye can track it
-    var ARC = -140;
+    // Round 67r: arc direction picked based on where the straight-line
+    // midpoint sits in stage space. If the midpoint is in the top
+    // half (most common — quest rail rows and most UI targets live
+    // near the top), arc DOWN so the apex doesn't clip the screen
+    // top. If in the bottom half, arc UP for the mirror reason.
+    var midY = (source.y + target.y) / 2;
+    var STAGE_H = (F.STAGE_H || 1080);
+    var ARC = (midY < STAGE_H * 0.55) ? 140 : -140;
 
     var head = { x: source.x, y: source.y };
     var lastSpawn = 0;

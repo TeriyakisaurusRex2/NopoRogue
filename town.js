@@ -37,11 +37,63 @@ var LOOT_DEFS = {
   card_paladin:     {icon:'📙', name:'Paladin\'s Seal',    type:'champcard', champ:'paladin',     color:'#c06020'},
   card_thief:       {icon:'📗', name:'Thief\'s Cipher',    type:'champcard', champ:'thief',       color:'#206040'},
   card_moonsquirrel:{icon:'📕', name:'Sciurid\'s Token',   type:'champcard', champ:'moonsquirrel',color:'#804080'},
+  // ── Consumables (Round 67r) ──
+  // timeMs = how many milliseconds the consumable advances when used.
+  // Tier ladder for the future: cracked (30m) → polished (2h) →
+  // golden (8h) → eternal (24h). Same use-handler covers all of them.
+  cracked_hourglass:{icon:'⏳', name:'Cracked Hourglass',  type:'consumable', desc:'Advances time by 30 minutes. Affects Forge, Shard Well, Market, Expeditions, and Vault.', color:'#9ad8e8', timeMs: 30*60*1000},
 };
 
 function addLootItem(itemId, qty){
   qty=qty||1;
   PERSIST.town.items[itemId]=(PERSIST.town.items[itemId]||0)+qty;
+}
+
+// Round 67r: shared "use consumable" entry point. Reads the item's
+// LOOT_DEFS entry, branches on item id, decrements the count on
+// success. Currently handles cracked_hourglass; future hourglass
+// tiers slot in here. Returns true if the item was consumed.
+function useConsumableItem(itemId){
+  if(!PERSIST.town || !PERSIST.town.items) return false;
+  var count = PERSIST.town.items[itemId] || 0;
+  if(count <= 0){
+    showTownToast('No ' + ((LOOT_DEFS[itemId] && LOOT_DEFS[itemId].name) || itemId) + ' in inventory.');
+    return false;
+  }
+  // Block during active combat — time-skip mid-fight is nonsense.
+  if(typeof gs !== 'undefined' && gs && gs.running){
+    showTownToast('Cannot use consumables during combat.');
+    return false;
+  }
+  var def = LOOT_DEFS[itemId];
+  if(!def) return false;
+
+  // Hourglass-class items: confirm + advance time.
+  if(def.type === 'consumable' && typeof def.timeMs === 'number' && def.timeMs > 0){
+    var mins = Math.round(def.timeMs / 60000);
+    var label = mins >= 60
+      ? (Math.round(def.timeMs / 3600000) + ' hour' + (def.timeMs >= 7200000 ? 's' : ''))
+      : (mins + ' minutes');
+    if(!confirm('Use ' + def.name + '?\n\nAdvances time by ' + label + ' for Forge crafts, Shard Well shards, Market restock, Expeditions, and Vault generation.')) return false;
+    PERSIST.town.items[itemId] = count - 1;
+    if(PERSIST.town.items[itemId] <= 0) delete PERSIST.town.items[itemId];
+    if(typeof advanceTimeBySec === 'function') advanceTimeBySec(def.timeMs / 1000);
+    if(typeof savePersist === 'function') savePersist();
+    if(typeof playSfx === 'function') playSfx('rising_bubble');
+    showTownToast('✦ ' + label + ' pass…');
+    // Refresh any open panels so the player sees the result.
+    if(typeof refreshForgePanel === 'function') refreshForgePanel();
+    if(typeof refreshVaultPanel === 'function') refreshVaultPanel();
+    if(typeof refreshMarketPanel === 'function') refreshMarketPanel();
+    if(typeof refreshAdventurersHallPanel === 'function') refreshAdventurersHallPanel();
+    if(typeof refreshShardWellPanel === 'function') refreshShardWellPanel();
+    // Round 67r: time skip can finish a craft — move the safety_net
+    // pulse Vault → Forge immediately rather than waiting for the
+    // 5s idle tick.
+    if(typeof _refreshBuildingPulses === 'function') _refreshBuildingPulses();
+    return true;
+  }
+  return false;
 }
 
 function getLootCount(itemId){
@@ -1761,6 +1813,14 @@ function _questRewardChipsHTML(quest){
     if(r.type === 'unlock'){
       return '<span class="qrwd qrwd-unlock">'+(r.icon || '🔓')+' '+_csqEsc(r.label || 'Unlock')+'</span>';
     }
+    // Round 67r: item rewards — consumables, keys, etc from LOOT_DEFS.
+    // Same chip shape as material rewards.
+    if(r.type === 'item'){
+      var iicon = r.icon
+        || ((typeof LOOT_DEFS !== 'undefined' && r.id && LOOT_DEFS[r.id]) ? LOOT_DEFS[r.id].icon : null)
+        || '📦';
+      return '<span class="qrwd">'+iicon+' '+(r.amount||1)+'</span>';
+    }
     return '<span class="qrwd">+'+r.amount+' '+_csqEsc(r.label || r.type)+'</span>';
   }).filter(Boolean);
   return '<div class="qrwd-strip">'+parts.join(' ')+'</div>';
@@ -1821,8 +1881,10 @@ function buildCsQuestRail(railIdOpt){
     // game story chain can be claimed without entering town (Hall is
     // still reachable, but the side rail is the smoother path for
     // brand-new players easing in via the questline).
+    // Round 67r: stopPropagation so clicking CLAIM doesn't bubble to the
+    // row's onclick and re-fire the cyan quest pointer particle.
     var claimBtn = complete
-      ? '<button class="cs-q-claim" data-qid="'+_csqEsc(def.id)+'" onclick="claimQuestFromRail(this.dataset.qid)">CLAIM REWARDS</button>'
+      ? '<button class="cs-q-claim" data-qid="'+_csqEsc(def.id)+'" onclick="event.stopPropagation();claimQuestFromRail(this.dataset.qid)">CLAIM REWARDS</button>'
       : '';
     // Round 67p: chain-in flag — true for rows that were activated as
     // the .next link of a just-claimed story quest. Applies the
@@ -2109,7 +2171,14 @@ function _renderQuestDetailCard(questId, quests, activeIds, maxActive){
   if(isComplete){
     btn = '<button class="hall-quest-btn claim" data-action="claim" data-questid="'+q.id+'">CLAIM REWARD</button>';
   } else if(isActive){
-    btn = '<button class="hall-quest-btn" data-action="abandon" data-questid="'+q.id+'" style="border-color:#5a3020;color:#8a5030;">ABANDON</button>';
+    // Round 67r: story quests (the New Beginnings questline) are plot
+    // progression — not optional bounties — so they can't be
+    // abandoned. Show a small note in place of the ABANDON button.
+    if(q.isStory){
+      btn = '<div style="font-size:8px;color:#5a4020;font-style:italic;letter-spacing:.5px;padding:6px 0;">Story quest — part of the main path.</div>';
+    } else {
+      btn = '<button class="hall-quest-btn" data-action="abandon" data-questid="'+q.id+'" style="border-color:#5a3020;color:#8a5030;">ABANDON</button>';
+    }
   } else if(countNonStoryActiveQuests() < maxActive){
     // Round 67q: gate the ACCEPT button on the bounty cap, not the
     // total active count — story quests don't compete for these slots.
@@ -2687,7 +2756,16 @@ function _questTargetSelector(questId){
   // Story quest IDs — match against the data, not magic strings.
   if(questId === 'story_edit_deck') return '#cs-cr-edit-deck, #ar-cr-edit-deck';
   if(questId === 'story_visit_hall') return '[data-bid="adventurers_hall"]';
-  if(questId === 'story_craft_safety_net') return '[data-bid="forge"]';
+  // Round 67r: story_craft_safety_net is phase-aware — pointer flies
+  // to the Vault while crafting (use a Cracked Hourglass), the Hall
+  // once the craft is done + collected (go claim), and the Forge
+  // otherwise (start the craft / collect the finished relic).
+  if(questId === 'story_craft_safety_net'){
+    var phase = (typeof _safetyNetQuestPhase === 'function') ? _safetyNetQuestPhase() : null;
+    if(phase === 'wait')  return '[data-bid="vault"]';
+    if(phase === 'claim') return '[data-bid="adventurers_hall"]';
+    return '[data-bid="forge"]';
+  }
   if(questId === 'story_equip_safety_net') return '[data-bid="sanctum"]';
   if(questId === 'story_clear_pale_road') return '.area-card.quest-target-pulse';
   if(questId === 'story_meet_barau') return '[data-bid="market"]';
@@ -2743,6 +2821,38 @@ function isAreaQuestTarget(areaId){
   }
   return false;
 }
+// Round 67r: phase of the story_craft_safety_net quest, derived from
+// the forge queue + quest progress. Drives a multi-stage pulse glow:
+//   'craft'   — quest active, no safety_net job queued → pulse Forge
+//   'wait'    — safety_net job crafting, not done → pulse Vault
+//               (nudges the player to use a Cracked Hourglass or wait)
+//   'collect' — safety_net craft finished, not yet collected → Forge
+//   'claim'   — craft collected, quest at target, awaiting claim →
+//               pulse the Adventurer's Hall (the quest hub)
+//   null      — quest not active
+function _safetyNetQuestPhase(){
+  if(!PERSIST.town || !PERSIST.town.quests) return null;
+  var active = PERSIST.town.quests.active || [];
+  var offered = PERSIST.town.quests.offered || [];
+  var entry = null;
+  for(var i = 0; i < active.length; i++){
+    if(active[i].id === 'story_craft_safety_net'){ entry = active[i]; break; }
+  }
+  if(!entry) return null;
+  var def = offered.find(function(o){ return o.id === 'story_craft_safety_net'; });
+  if(!def) return null;
+  // Quest at target — craft done + collected, awaiting the claim.
+  if((entry.progress || 0) >= (def.target || 1)) return 'claim';
+  var fb = PERSIST.town.buildings && PERSIST.town.buildings.forge;
+  var job = null;
+  if(fb && Array.isArray(fb.queue)){
+    job = fb.queue.find(function(j){ return j && j.relicId === 'safety_net'; });
+  }
+  if(!job) return 'craft';
+  var ready = (Date.now() - job.startTime) >= job.totalMs;
+  return ready ? 'collect' : 'wait';
+}
+
 function isBuildingQuestTarget(buildingId){
   if(!buildingId || !PERSIST.town || !PERSIST.town.quests) return false;
   var active = PERSIST.town.quests.active || [];
@@ -2751,6 +2861,17 @@ function isBuildingQuestTarget(buildingId){
     var entry = active[i];
     var def = offered.find(function(o){ return o.id === entry.id; });
     if(!def || !def.isStory) continue;
+    // Round 67r: story_craft_safety_net handled BEFORE the generic
+    // claimable-skip below, because its pulse continues into the
+    // claimable phase (Hall) — the generic `>= target` skip would
+    // otherwise drop it.
+    if(def.id === 'story_craft_safety_net'){
+      var phase = _safetyNetQuestPhase();
+      if(phase === 'wait')                          return buildingId === 'vault';
+      if(phase === 'claim')                         return buildingId === 'adventurers_hall';
+      if(phase === 'craft' || phase === 'collect')  return buildingId === 'forge';
+      continue; // phase null — no pulse
+    }
     if((entry.progress || 0) >= (def.target || 1)) continue;
     // visit_building targets a specific building.
     if(def.type === 'visit_building' && def.targetBuildingId === buildingId) return true;
@@ -2762,6 +2883,21 @@ function isBuildingQuestTarget(buildingId){
     if(def.type === 'equip_relic' && buildingId === 'sanctum') return true;
   }
   return false;
+}
+
+// Round 67r: lightweight pulse refresh — re-evaluates the
+// quest-target-pulse class on every mounted building card without
+// rebuilding the whole town grid. Called from the 5s idle tick so
+// the multi-phase safety_net pulse (Forge → Vault → Forge) keeps up
+// with the forge craft state, and on demand from startForgeCraft.
+function _refreshBuildingPulses(){
+  var cards = document.querySelectorAll('.building-card[data-bid]');
+  if(!cards.length) return;
+  for(var i = 0; i < cards.length; i++){
+    var bid = cards[i].getAttribute('data-bid');
+    var pulse = (typeof isBuildingQuestTarget === 'function') && isBuildingQuestTarget(bid);
+    cards[i].classList.toggle('quest-target-pulse', pulse);
+  }
 }
 
 // Round 67q: is a quest in EITHER active or completed? Used to gate UI
@@ -2905,6 +3041,16 @@ function acceptQuest(idx){
 }
 
 function abandonQuest(questId){
+  // Round 67r: story quests (the New Beginnings questline) are plot
+  // progression, not optional bounties, so they can't be abandoned.
+  var sq = (PERSIST.town && PERSIST.town.quests && Array.isArray(PERSIST.town.quests.offered))
+    ? PERSIST.town.quests.offered.find(function(o){ return o.id === questId; })
+    : null;
+  if(sq && sq.isStory){
+    if(typeof showTownToast === 'function') showTownToast('Story quests can\'t be abandoned.');
+    return;
+  }
+
   // In-game confirmation modal
   var existing = document.getElementById('abandon-overlay');
   if(existing) existing.remove();
@@ -2959,6 +3105,12 @@ function claimQuest(questId){
     if(r.type === 'gold') PERSIST.gold += r.amount;
     else if(r.type === 'soul_shards') PERSIST.soulShards = (PERSIST.soulShards||0) + r.amount;
     else if(r.type === 'material' && r.id) PERSIST.town.materials[r.id] = (PERSIST.town.materials[r.id]||0) + r.amount;
+    // Round 67r: 'item' type — grants a LOOT_DEFS entry into
+    // PERSIST.town.items (consumables, keys, chest tokens, etc).
+    else if(r.type === 'item' && r.id){
+      if(!PERSIST.town.items) PERSIST.town.items = {};
+      PERSIST.town.items[r.id] = (PERSIST.town.items[r.id]||0) + (r.amount || 1);
+    }
     else if(r.type === 'mastery_xp'){
       // Grant mastery XP to all unlocked champions
       PERSIST.unlockedChamps.forEach(function(cid){
@@ -2975,8 +3127,18 @@ function claimQuest(questId){
   // (e.g. building unlocks) before activating the next link so the
   // toast order makes sense to the player.
   if(q.isStory){
-    if(typeof q.onClaim === 'function'){
-      try { q.onClaim(); } catch(e){ /* swallow — onClaim is content-driven */ }
+    // Round 67r: prefer the LIVE STORY_QUESTS definition's onClaim.
+    // The `q` pulled from PERSIST.town.quests.offered is JSON-
+    // deserialized on every save load — functions don't survive
+    // JSON.stringify, so q.onClaim is undefined on any post-reload
+    // or imported-save claim. That silently skipped building
+    // unlocks (e.g. the Sanctum never opening after the Safety Net
+    // craft). STORY_QUESTS always holds the live functions.
+    var liveDef = (typeof STORY_QUESTS !== 'undefined' && STORY_QUESTS[questId]) ? STORY_QUESTS[questId] : null;
+    var onClaimFn = (liveDef && typeof liveDef.onClaim === 'function') ? liveDef.onClaim
+                  : (typeof q.onClaim === 'function' ? q.onClaim : null);
+    if(onClaimFn){
+      try { onClaimFn(); } catch(e){ /* swallow — onClaim is content-driven */ }
     }
     if(q.next && typeof STORY_QUESTS !== 'undefined' && STORY_QUESTS[q.next] && typeof _activateStoryQuest === 'function'){
       _activateStoryQuest(STORY_QUESTS[q.next]);
@@ -3432,7 +3594,8 @@ function buildBestiaryGlossary(){
     'Shield':'Defense · Manabound', 'Dodge':'Defense · Manabound', 'Thorns':'Defense · Manabound',
     'Haste':'Tempo · Manabound', 'Frenzy':'Tempo · Manabound',
     'Sorcery':'Conditional Triggers', 'Hellbent':'Conditional Triggers', 'Echo':'Conditional Triggers', 'Crit':'Conditional Triggers',
-    'Churn':'Card Lifecycle', 'Ethereal':'Card Lifecycle', 'Conjured':'Card Lifecycle',
+    'Compound':'Conditional Triggers', 'Accrue':'Conditional Triggers', 'Drawn':'Conditional Triggers',
+    'Churn':'Card Lifecycle', 'Ethereal':'Card Lifecycle', 'Conjured':'Card Lifecycle', 'Banish':'Card Lifecycle', 'Gift':'Card Lifecycle',
     'Manabound':'Meta', 'Debuff':'Meta',
   };
 
@@ -5200,6 +5363,11 @@ var MARKET_RARE_POOL = [
   {id:'rare_reroll',      icon:'🎲', label:'Reroll Token',        desc:'Reroll quest offerings at the Hall.',       price:80,  tier:'standard', type:'reroll'},
   {id:'rare_build_tome',  icon:'📜', label:'Architect\'s Tome',   desc:'+50 XP to any building.',                   price:120, tier:'standard', type:'building_xp_any', xp:50},
   {id:'rare_mat_bundle',  icon:'🎁', label:'Rare Material Bundle',desc:'3 Plague Marrow + 3 Ancient Bark',  price:200, tier:'standard', type:'material_bundle', items:[{matId:'plague_marrow',qty:3},{matId:'ancient_bark',qty:3}]},
+  // Round 67r: Cracked Hourglass — first consumable in the time-skip
+  // tier ladder. Aspirational tier (1/4 the weight of standard rares)
+  // so it shows up rarely. Player gets one free copy from the
+  // story_visit_hall quest claim to learn what it does.
+  {id:'rare_cracked_hourglass', icon:'⏳', label:'Cracked Hourglass',   desc:'Advances time by 30 minutes for Forge, Shard Well, Market, and Expeditions.', price:500, tier:'aspirational', type:'consumable', consumableId:'cracked_hourglass', qty:1},
   // Summoning Lures (750-2000g)
   {id:'lure_sewers',      icon:'🪤', label:'Sewer Lure',          desc:'Next summon limited to Sewer creatures.',   price:750,  tier:'aspirational', type:'lure', lureType:'area', lureTarget:'sewers'},
   {id:'lure_swamp',       icon:'🪤', label:'Swamp Lure',          desc:'Next summon limited to Swamp creatures.',   price:750,  tier:'aspirational', type:'lure', lureType:'area', lureTarget:'swamp'},
@@ -5428,6 +5596,13 @@ function buyMarketRare(itemId){
   } else if(def.type === 'lure'){
     PERSIST.activeLure = {type:def.lureType, target:def.lureTarget};
     addLog('Purchased '+def.label+'. Next summon will be limited.', 'sys');
+  } else if(def.type === 'consumable'){
+    // Round 67r: rare-pool consumables (Cracked Hourglass etc) drop
+    // into PERSIST.town.items so the Vault inspector picks them up
+    // with its USE button.
+    var conId = def.consumableId || def.id;
+    PERSIST.town.items[conId] = (PERSIST.town.items[conId]||0) + (def.qty || 1);
+    addLog('Purchased '+def.label+'. Use it from the Vault.', 'sys');
   }
 
   savePersist();
@@ -6090,8 +6265,21 @@ function startForgeCraft(relicId){
 
   if(typeof playCraftStartSfx === 'function') playCraftStartSfx();
   showTownToast('Forging '+RELICS[relicId].name+'…');
+  // Round 67r: during the story_craft_safety_net quest, starting the
+  // Safety Net craft hands the player off to the Vault — M'bur points
+  // them at the Cracked Hourglass. The pulse glow follows (Forge →
+  // Vault) via _refreshBuildingPulses; a fresh call here makes the
+  // swap instant rather than waiting for the 5s idle tick.
+  if(relicId === 'safety_net'
+     && typeof isQuestSeen === 'function' && isQuestSeen('story_craft_safety_net')
+     && !(typeof isQuestClaimed === 'function' && isQuestClaimed('story_craft_safety_net'))){
+    setTimeout(function(){
+      showTownToast("M'bur: \"That'll take a while. Stop by the Vault — a Cracked Hourglass rushes the work. Or just wait.\"");
+    }, 900);
+  }
   savePersist();
   refreshForgePanel();
+  if(typeof _refreshBuildingPulses === 'function') _refreshBuildingPulses();
 }
 
 // ── Forge: champion assignment ───────────────────────────────────────
@@ -6623,6 +6811,10 @@ setInterval(function(){
   shardWellTick(5);
   if(typeof arenaTick === 'function') arenaTick(5);
   questTick(5);
+  // Round 67r: keep the building pulse glows in sync with state that
+  // changes on its own timer — chiefly the multi-phase safety_net
+  // pulse moving Forge → Vault → Forge as the craft progresses.
+  if(typeof _refreshBuildingPulses === 'function') _refreshBuildingPulses();
   savePersist();
   // Live-update vault bar if vault panel is open
   var vp=document.getElementById('vault-panel-bg');

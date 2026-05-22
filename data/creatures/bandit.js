@@ -11,6 +11,12 @@ CREATURES.bandit = {
 
   baseStats: { str:12, agi:14, wis:10 },
   growth:    { str:1,  agi:2,  wis:1 },
+  
+  altSprites: ['_alt_1'],
+			spriteWeights: [
+			  { sprite: 'default', weight: 98 },
+			  { sprite: '_alt_1',  weight: 2 }
+			],
 
   innate: {
     id:       'quick_hands',

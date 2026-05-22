@@ -18,6 +18,49 @@
 
 var CHANGELOG = [
   {
+    version: '67t',
+    title:   'New champion, combat polish & fixes',
+    date:    '2026-05',
+    entries: [
+      {cat:'New content'},
+      'Kaine, the Sanctum Keeper joins the summon pool — a slow, heavy Legendary bruiser who grinds enemies down. [Churn] recycles his hand, two of his cards open a [Bleed] wound the moment they are drawn, and his Hemorrhage innate makes every Bleed he inflicts hit harder the more STR he has.',
+      'New keyword [Gift] — places a card directly into the opponent\'s hand.',
+      {cat:'Mechanics'},
+      'Card text now links the cards it creates — hover a highlighted card name to see that card\'s full face.',
+      '[Compound] cards now show their grown values live as the count climbs, instead of always displaying the base number.',
+      'Frenzy rebuilt — it now works for enemy creatures as well as champions, speeds up draws per stack, and drains mana while active (it collapses if mana runs dry).',
+      {cat:'Combat & UI'},
+      'The Deck and Discard piles in combat are now a card inspector — tap either to pause the fight and look through the cards. Deck order stays hidden.',
+      'Pausing combat now desaturates the battlefield and pulses the resume button.',
+      'Bigger, more readable card text.',
+      'Your equipped relics now show in the combat top bar.',
+      {cat:'Balance'},
+      'Hoot\'s Research Grant no longer Compounds your whole hand — it now simply draws 2 cards. Whole-hand compounding scaled out of control.',
+      {cat:'Bug fixes'},
+      'Fixed: the combat Deck and Discard buttons opened an empty window — they now show your cards.',
+      'Fixed: Champion Select now reopens on the last champion you played, instead of resetting to the Starcaller Druid.',
+      'Fixed: Drain Lurker\'s Hunker innate did nothing — it now grants Shield as intended.',
+      'Fixed: Giant Rat\'s Frenzied innate did nothing — it now builds Frenzy when it attacks.',
+      'Card wording tidied up — Rummage and other card-creating cards now read consistently.',
+    ]
+  },
+  {
+    version: '67s',
+    title:   'Five new champions',
+    date:    '2026-05',
+    entries: [
+      'Five new Legendary champions join the summon pool — one keeper for each town building.',
+      'Shtole, the Vault Keeper — his Treasure grows stronger every time you pay its [Compound] Sorcery.',
+      'Hoot, the Bestiary Archivist — a kit where every card compounds, improving the more you invest.',
+      'M\'bur, the Forge Blacksmith — turns basic Strikes into buffed, self-cycling cards.',
+      'Barau, the Merchant — landing a crit conjures a sharper copy of that card into your deck.',
+      'Leona of the Guild — plants Rigged Contract bombs into the opponent\'s deck; they detonate when played or churned away.',
+      'New keywords: [Compound], [Banish], [Accrue], [Drawn]. Hover any keyword on a card for its rule.',
+      'Card text tidied — Shield and Poison now read keyword-first ("Gain [Shield] 16"), matching every other status.',
+      'Hover a computed value on a card (the blue numbers) to see its formula breakdown.',
+    ]
+  },
+  {
     version: '67r',
     title:   'Combat polish & tutorial rewrite',
     date:    '2026-05',
@@ -95,7 +138,12 @@ function showChangelog(){
       +   '</div>'
       +   '<ul class="changelog-entry-list">';
     (entry.entries || []).forEach(function(line){
-      html += '<li>' + line + '</li>';
+      // A {cat:'...'} object is a category header; a string is a normal line.
+      if(line && typeof line === 'object' && line.cat){
+        html += '<li class="changelog-cat">' + line.cat + '</li>';
+      } else {
+        html += '<li>' + line + '</li>';
+      }
     });
     html += '</ul></div>';
   });

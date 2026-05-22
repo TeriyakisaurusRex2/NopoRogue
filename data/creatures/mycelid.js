@@ -12,6 +12,11 @@ CREATURES.mycelid = {
   baseStats: { str:12, agi:10, wis:12 },
   growth:    { str:1,  agi:1,  wis:1 },
 
+	altSprites: ['_alt_1'],
+				spriteWeights: [
+				  { sprite: 'default', weight: 98 },
+				  { sprite: '_alt_1',  weight: 2 }
+				],
   innate: {
     id:       'mycelium_network',
     name:     'Mycelium Network',

@@ -2522,13 +2522,44 @@ function applyOfflineProgress(){
   // Floor: don't bother for sub-minute gaps (tab refresh, quick reload).
   if(elapsedSec < 60) return;
   elapsedSec = Math.min(elapsedSec, OFFLINE_CAP_SEC);
+  advanceTimeBySec(elapsedSec);
+}
 
-  if(typeof vaultTick      === 'function') vaultTick(elapsedSec);
-  if(typeof marketTick     === 'function') marketTick(elapsedSec);
-  if(typeof bestiaryTick   === 'function') bestiaryTick(elapsedSec);
-  if(typeof shardWellTick  === 'function') shardWellTick(elapsedSec);
-  if(typeof arenaTick      === 'function') arenaTick(elapsedSec);
-  if(typeof questTick      === 'function') questTick(elapsedSec);
+// Round 67r: forced time advance, used by the Cracked Hourglass
+// (and future hourglass tiers). Calls every counter-based tick
+// function with the given second count AND decrements startTime
+// on every active Date.now()-based timer (forge jobs, expedition
+// slots, rest cooldowns). Result: all time-gated progression
+// catches up as if `seconds` had passed.
+function advanceTimeBySec(seconds){
+  if(!(seconds > 0)) return;
+  var ms = seconds * 1000;
+  // Counter-based ticks: vault gen, market refresh, shard well
+  // accumulation, bestiary research, arena pendingGold, quest refresh.
+  if(typeof vaultTick      === 'function') vaultTick(seconds);
+  if(typeof marketTick     === 'function') marketTick(seconds);
+  if(typeof bestiaryTick   === 'function') bestiaryTick(seconds);
+  if(typeof shardWellTick  === 'function') shardWellTick(seconds);
+  if(typeof arenaTick      === 'function') arenaTick(seconds);
+  if(typeof questTick      === 'function') questTick(seconds);
+  // Timestamp-based timers: shift startTime backward by `ms` so the
+  // computed elapsed (now - startTime) jumps forward.
+  if(PERSIST && PERSIST.town && PERSIST.town.buildings){
+    var fb = PERSIST.town.buildings.forge;
+    if(fb && Array.isArray(fb.queue)){
+      fb.queue.forEach(function(job){
+        if(job && typeof job.startTime === 'number') job.startTime -= ms;
+      });
+    }
+    var ahb = PERSIST.town.buildings.adventurers_hall;
+    if(ahb && Array.isArray(ahb.expeditionSlots)){
+      ahb.expeditionSlots.forEach(function(slot){
+        if(!slot) return;
+        if(typeof slot.startTime === 'number') slot.startTime -= ms;
+        if(typeof slot.restUntil === 'number') slot.restUntil -= ms;
+      });
+    }
+  }
 }
 function loadPersist(){
   try{
@@ -3430,16 +3461,23 @@ function rebuildChampGrid(){
   // panel reflects the latest state (after a run, after a quest claim,
   // after the auto-refresh tick, etc).
   if(typeof buildCsQuestRail === 'function') buildCsQuestRail();
-  // Auto-select first unlocked champion if nothing is selected, so the
-  // left rail isn't empty on first land. Falls through to existing
-  // selectChamp logic which also paints the rail.
+  // Auto-select a champion if nothing is selected, so the left rail
+  // isn't empty on first land. Prefer the last champion the player
+  // actually used (PERSIST.lastUsedChamp) — e.g. after a reload from
+  // the main menu — falling back to the first unlocked champion.
   if(!selectedChampId && Array.isArray(PERSIST.unlockedChamps)){
-    var firstUnlocked = null;
-    for(var u=0;u<PERSIST.unlockedChamps.length;u++){
-      var uid = PERSIST.unlockedChamps[u];
-      if(uid !== 'dojo_tiger' && CREATURES[uid]){ firstUnlocked = uid; break; }
+    var lastUsed = PERSIST.lastUsedChamp;
+    if(lastUsed && lastUsed !== 'dojo_tiger' && CREATURES[lastUsed]
+       && PERSIST.unlockedChamps.indexOf(lastUsed) !== -1){
+      selectedChampId = lastUsed;
+    } else {
+      var firstUnlocked = null;
+      for(var u=0;u<PERSIST.unlockedChamps.length;u++){
+        var uid = PERSIST.unlockedChamps[u];
+        if(uid !== 'dojo_tiger' && CREATURES[uid]){ firstUnlocked = uid; break; }
+      }
+      if(firstUnlocked) selectedChampId = firstUnlocked;
     }
-    if(firstUnlocked) selectedChampId = firstUnlocked;
   }
   if(typeof buildCsChampRail === 'function') buildCsChampRail(selectedChampId);
   var sort=document.getElementById('cs-sort').value;
@@ -4412,9 +4450,13 @@ function startRun(champId,area){
   document.getElementById('p-name').textContent=ch.name;
   setCreatureImg(document.getElementById('p-icon'), champId, ch.icon, '320px', champVariant);
   document.getElementById('p-icon').classList.add('flip-x');
-  // Equipped relics strip — hover for tooltip
-  var pRelics = document.getElementById('p-relics');
-  if(pRelics) pRelics.innerHTML = relicStripHTML(champId, {size:'28px'});
+  // Equipped relics strip — hover for tooltip. Round 67r: moved from the
+  // player combatant card (#p-relics) into the top bar (#tb-relics),
+  // sitting between the stat pills and the DECK pill.
+  var pRelics = document.getElementById('tb-relics');
+  if(pRelics) pRelics.innerHTML = relicStripHTML(champId, {size:'24px'});
+  var oldPRelics = document.getElementById('p-relics');
+  if(oldPRelics) oldPRelics.innerHTML = '';
 
   // Innate card in hand area
   var innateCard=document.getElementById('innate-card');
@@ -4643,6 +4685,7 @@ function startBattle(){
   document.getElementById('btn-start').style.display='none';
   document.getElementById('btn-pause').style.display='inline-block';
   gs.running=true; paused=false;
+  if(typeof _setCombatPauseVisual==='function') _setCombatPauseVisual();
   var startCards=3; // default opening hand size
   if(gs._relicBonusStartCards) startCards += gs._relicBonusStartCards; // Quick-Draw Holster
   var e=gs.enemies[gs.enemyIdx];
@@ -4760,8 +4803,11 @@ function checkManabound(target, mana, effects){
       effects.splice(i, 1);
       removeTagByLabel(target, fLabel);
       if(target === 'player'){
-        gs.drawSpeedBonus = 1.0;
-        gs._frenzyDrawBonus = 0;
+        // Subtract only the frenzy portion — don't nuke other draw buffs.
+        if(gs._frenzyDrawBonus){
+          gs.drawSpeedBonus = Math.max(1,(gs.drawSpeedBonus||1) - gs._frenzyDrawBonus);
+          gs._frenzyDrawBonus = 0;
+        }
         addLog('⚡ Frenzy collapsed (manabound — mana depleted).', 'sys');
       }
       if(target === 'enemy'){
@@ -4811,6 +4857,13 @@ function gameTick(){
   if(gs._relicManaRegenMult&&gs._relicManaRegenMult!==1) mRegenMult*=gs._relicManaRegenMult;
   gs.manaAccum+=gs.manaRegen*mRegenMult/10;
   if(gs.manaAccum>=1){ var g=Math.floor(gs.manaAccum); gs.manaAccum-=g; gs.mana=Math.min(gs.maxMana,gs.mana+g); gs._handDisplayDirty=true; }
+  // Frenzy mana drain — 3/s per stack (Manabound; checkManabound above
+  // collapses it once mana reaches 0).
+  var pFrenzy=(typeof _getFrenzyStacks==='function')?_getFrenzyStacks('player'):0;
+  if(pFrenzy>0){
+    gs._frenzyManaAcc=(gs._frenzyManaAcc||0)+0.3*pFrenzy;
+    if(gs._frenzyManaAcc>=1){ var fd=Math.floor(gs._frenzyManaAcc); gs._frenzyManaAcc-=fd; gs.mana=Math.max(0,gs.mana-fd); }
+  } else { gs._frenzyManaAcc=0; }
 
   // Enemy mana regen
   if(gs.enemyMaxMana>0){
@@ -4818,6 +4871,12 @@ function gameTick(){
     var eg=Math.floor(gs.enemyManaAccum);
     if(eg>=1){ gs.enemyManaAccum-=eg; gs.enemyMana=Math.min(gs.enemyMaxMana,gs.enemyMana+eg); }
   }
+  // Enemy Frenzy mana drain — 3/s per stack (Manabound).
+  var eFrenzy=(typeof _getFrenzyStacks==='function')?_getFrenzyStacks('enemy'):0;
+  if(eFrenzy>0){
+    gs._enemyFrenzyManaAcc=(gs._enemyFrenzyManaAcc||0)+0.3*eFrenzy;
+    if(gs._enemyFrenzyManaAcc>=1){ var efd=Math.floor(gs._enemyFrenzyManaAcc); gs._enemyFrenzyManaAcc-=efd; gs.enemyMana=Math.max(0,gs.enemyMana-efd); }
+  } else { gs._enemyFrenzyManaAcc=0; }
   // Enemy innate cooldown tick (player cooldown)
   if(gs._innCooldown>0) gs._innCooldown=Math.max(0,gs._innCooldown-100);
 
@@ -5674,8 +5733,11 @@ function tickStatuses(ms){
         // Frenzy expiry — clear speed multiplier
         if(statusId==='frenzy'){
           if(t==='player'){
-            gs.drawSpeedBonus=1.0;
-            gs._frenzyDrawBonus=0;
+            // Subtract only the frenzy portion of drawSpeedBonus.
+            if(gs._frenzyDrawBonus){
+              gs.drawSpeedBonus=Math.max(1,(gs.drawSpeedBonus||1)-gs._frenzyDrawBonus);
+              gs._frenzyDrawBonus=0;
+            }
             addLog('Frenzy collapsed!','sys');
           }
           if(t==='enemy'){
@@ -7278,6 +7340,53 @@ function _highlightFillerCards(champId){
   if(hasUnseenFiller){ PERSIST[seenKey]=true; savePersist(); }
 }
 
+// ── Read-only deck view — 2-pane: compact card grid + the deck editor's
+//    shared inspector (_cardInspectorHTML). Click a card to inspect it. ──
+var _dvChampId = null, _dvCounts = null, _dvInspect = null;
+
+function _dvRenderGrid(){
+  var grid = document.getElementById('dv-grid');
+  if(!grid || !_dvCounts) return;
+  var ids = Object.keys(_dvCounts);
+  ids.sort(function(a,b){
+    var ca=CARDS[a], cb=CARDS[b];
+    var ma=ca?(ca.manaCost||0):999, mb=cb?(cb.manaCost||0):999;
+    if(ma!==mb) return ma-mb;
+    return (ca?ca.name:'') < (cb?cb.name:'') ? -1 : 1;
+  });
+  var total=0; ids.forEach(function(id){ total += _dvCounts[id]; });
+  var cnt=document.getElementById('dv-count'); if(cnt) cnt.textContent='('+total+')';
+  var html='';
+  ids.forEach(function(id){
+    var c=CARDS[id]; if(!c) return;
+    var cls='de-acard'+(c.champ===_dvChampId?' de-acard-champ':'')+(_dvInspect&&_dvInspect.id===id?' de-acard-selected':'');
+    var effLine=(c.effect||'').split('\n')[0];
+    var art=(typeof _deCardArt==='function') ? _deCardArt(id,c) : '<span style="font-size:18px;">'+(c.icon||'?')+'</span>';
+    html+='<div class="'+cls+'" onclick="_dvInspectCard(\''+id+'\')">'
+      +'<div class="de-acard-art">'+art+'</div>'
+      +'<div class="de-acard-name">'+c.name+'</div>'
+      +'<div class="de-acard-effect">'+effLine+'</div>'
+      +'<div class="de-copy-count">×'+_dvCounts[id]+'</div>'
+      +'</div>';
+  });
+  grid.innerHTML=html;
+}
+
+function _dvInspectCard(cardId){
+  _dvInspect = CARDS[cardId] || null;
+  _dvRenderGrid();
+  var insp=document.getElementById('dv-inspector');
+  if(insp && typeof _cardInspectorHTML==='function') insp.innerHTML=_cardInspectorHTML(_dvInspect,_dvChampId);
+}
+
+function _dvOpen(champId, counts){
+  _dvChampId=champId; _dvCounts=counts; _dvInspect=null;
+  _dvRenderGrid();
+  var insp=document.getElementById('dv-inspector');
+  if(insp) insp.innerHTML='<div class="de-info-empty">Select a card to see details</div>';
+  showScreen('deck-screen');
+}
+
 function showDeckView(){
   _deckReturnScreen='game-screen';
   // Hide begin-battle modal if it's open
@@ -7286,34 +7395,16 @@ function showDeckView(){
   stopLoops();
   var all=gs.drawPool.concat(gs.discardPile).concat(gs.hand.map(function(h){return h.id;}));
   var counts={}; all.forEach(function(id){counts[id]=(counts[id]||0)+1;});
-  var grid=document.getElementById('dv-grid'); grid.innerHTML='';
-  Object.keys(counts).forEach(function(id){
-    var c=CARDS[id]; if(!c) return;
-    var wrap=document.createElement('div'); wrap.className='dv-wrap';
-    wrap.innerHTML=buildCardHTML(id,false)+'<div class="dv-cnt">×'+counts[id]+'</div>';
-    grid.appendChild(wrap);
-  });
-  showScreen('deck-screen');
-  _highlightFillerCards(gs&&gs.champId);
+  _dvOpen(gs&&gs.champId, counts);
 }
 
 function showDeckViewForChamp(champId){
   // Capture the screen we came from so Continue returns to the right place.
-  // (Was hardcoded to 'area-screen', which broke the path:
-  //  champ select → ℹ → View Deck → Continue → empty area-screen.)
   var cur = document.querySelector('.screen.active');
   _deckReturnScreen = (cur && cur.id) ? cur.id : 'area-screen';
   var deck=buildStartDeck(champId);
   var counts={}; deck.forEach(function(id){counts[id]=(counts[id]||0)+1;});
-  var grid=document.getElementById('dv-grid'); grid.innerHTML='';
-  Object.keys(counts).forEach(function(id){
-    var c=CARDS[id]; if(!c) return;
-    var wrap=document.createElement('div'); wrap.className='dv-wrap';
-    wrap.innerHTML=buildCardHTML(id,false)+'<div class="dv-cnt">×'+counts[id]+'</div>';
-    grid.appendChild(wrap);
-  });
-  showScreen('deck-screen');
-  _highlightFillerCards(champId);
+  _dvOpen(champId, counts);
 }
 
 function continueDeckView(){
@@ -7345,16 +7436,32 @@ function continueDeckView(){
 // ═══════════════════════════════════════════════════════
 // PILE POPUP
 // ═══════════════════════════════════════════════════════
+// Toggle the desaturate/blur veil on the combat screen to match `paused`.
+function _setCombatPauseVisual(){
+  var gsEl=document.getElementById('game-screen');
+  if(gsEl) gsEl.classList.toggle('combat-paused', !!paused);
+}
+
+// True when the pile inspector itself triggered the pause, so closing it
+// resumes — but a manual pre-existing pause is left alone.
+var _pilePopupPaused=false;
 function openPilePopup(which){
   var cards=which==='deck'?gs.drawPool:gs.discardPile;
   document.getElementById('popup-title').textContent=(which==='deck'?'DECK':'DISCARD')+' ('+cards.length+')';
+  // Shuffle the display copy so the inspector never reveals draw order.
   var display=cards.slice().sort(function(){return Math.random()-.5;});
   var grid=document.getElementById('popup-grid'); grid.innerHTML='';
-  display.forEach(function(id){ var w=document.createElement('div'); w.innerHTML=buildCardHTML(id,false); grid.appendChild(w); });
+  display.forEach(function(id){ var w=document.createElement('div'); w.className='popup-card-wrap'; w.innerHTML=buildCardHTML(id,false); grid.appendChild(w); });
   if(!cards.length) grid.innerHTML='<div style="color:#7a6030;font-size:9px;text-align:center;padding:20px;grid-column:1/-1;">Empty</div>';
   document.getElementById('pile-popup').classList.add('show');
+  // Inspecting a pile pauses combat. Remember if we caused the pause.
+  if(gs&&gs.running&&!paused){ _pilePopupPaused=true; togglePause(); }
 }
-function closePilePopup(e){ if(!e||e.target===document.getElementById('pile-popup')) document.getElementById('pile-popup').classList.remove('show'); }
+function closePilePopup(e){
+  if(e&&e.target!==document.getElementById('pile-popup')) return;
+  document.getElementById('pile-popup').classList.remove('show');
+  if(_pilePopupPaused){ _pilePopupPaused=false; if(paused) togglePause(); }
+}
 
 // ═══════════════════════════════════════════════════════
 // BUILD CARD HTML
@@ -7364,24 +7471,46 @@ function closePilePopup(e){ if(!e||e.target===document.getElementById('pile-popu
 function cardEffectFontSize(effectText){
   var raw=(effectText||'').replace(/<[^>]+>/g,'').replace(/\s+/g,' ').trim();
   var len=raw.length;
-  if(len<=30)  return 'font-size:10px;line-height:1.7;';
-  if(len<=55)  return 'font-size:9px;line-height:1.8;';
-  if(len<=80)  return 'font-size:8px;line-height:1.85;';
-  if(len<=110) return 'font-size:7px;line-height:1.9;';
-  if(len<=145) return 'font-size:6.5px;line-height:2.0;';
-  return              'font-size:6px;line-height:2.0;';
+  if(len<=30)  return 'font-size:12px;line-height:1.6;';
+  if(len<=55)  return 'font-size:10.5px;line-height:1.7;';
+  if(len<=80)  return 'font-size:9.5px;line-height:1.75;';
+  if(len<=110) return 'font-size:8.5px;line-height:1.8;';
+  if(len<=145) return 'font-size:7.5px;line-height:1.9;';
+  return              'font-size:6.5px;line-height:2.0;';
 }
 
-// Card art — champion sprite if card has a champ, emoji fallback for universals
+// Card art — priority: card sprite -> champion sprite -> emoji.
+// Bespoke per-card art lives in assets/icons/cards/. File-name convention:
+//   champion cards -> <cardId>.png        (the id already carries the
+//                                          champ prefix, e.g. paladin_aegis)
+//   universal cards -> universal_<cardId>.png   (e.g. universal_strike)
 function cardArtHTML(cardId, emoji, manaCost, champId){
-  var html='';
-  if(champId){
-    var csrc='assets/creatures/'+champId+'.png';
-    html='<img class="card-champ-art" src="'+csrc+'" alt="" onerror="this.style.display=\'none\';">';
-  }
-  html+='<span class="card-emoji-icon"'+(champId?' style="opacity:0;"':'')+'>'+emoji+'</span>';
-  if(manaCost) html+='<div class="card-mana-badge">'+manaCost+'</div>';
+  var artKey = champId ? cardId : ('universal_' + cardId);
+  var cardSprite = 'assets/icons/cards/' + artKey + '.png';
+  var champSprite = champId ? ('assets/creatures/'+champId+'.png') : '';
+  // The <img> starts as the card sprite; _cardArtFail cascades it to the
+  // champion sprite, then to the emoji span sitting behind.
+  var html = '<img class="card-art-sprite" src="'+cardSprite+'" alt="" '
+    + 'data-champ="'+champSprite+'" onerror="_cardArtFail(this)">';
+  html += '<span class="card-emoji-icon" style="opacity:0;">'+emoji+'</span>';
+  if(manaCost) html += '<div class="card-mana-badge">'+manaCost+'</div>';
   return html;
+}
+
+// Cascade a card-art <img> on load error: card sprite -> champion sprite
+// (the bottom-anchored .card-champ-art look) -> reveal the emoji span.
+function _cardArtFail(img){
+  if(!img || !img.dataset) return;
+  var d = img.dataset;
+  if(d.champ && !d.fellBack){
+    d.fellBack = '1';
+    img.className = 'card-champ-art';
+    img.src = d.champ;
+    return;
+  }
+  img.style.display = 'none';
+  var span = img.parentNode && img.parentNode.querySelector('.card-emoji-icon');
+  if(span) span.style.opacity = '1';
 }
 
 function getCardIdentityLabel(c){
@@ -7647,7 +7776,9 @@ function renderHand(){
     var statCls = cd&&cd.statId?'card-stat-'+cd.statId:'card-stat-none';
     var isSel = SETTINGS.confirm&&pendingConfirmIdx===i;
     var isNew = item._newDraw||false;
-    var isConjured = item._conjured||false;
+    // Conjured-card styling (teal bg) — Druid's [Conjured] copies, and
+    // Barau's Markup copies, which are likewise conjured into the deck.
+    var isConjured = item._conjured||item._markupCopy||false;
     var notArrived = item._arriveAt && Date.now() < item._arriveAt;
     var justArrived = item._justArrived||false; if(justArrived) delete item._justArrived;
 
@@ -8024,6 +8155,8 @@ function togglePause(){
     var lbl = handBtn.querySelector('.pile-lbl');
     if(lbl) lbl.textContent = paused ? 'RESUME' : 'PAUSE';
   }
+  // Desaturate/blur the creatures + background while paused.
+  _setCombatPauseVisual();
   if(!paused) scheduleEnemyAction();
 }
 
