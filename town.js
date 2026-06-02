@@ -3935,8 +3935,11 @@ function renderBestiaryDetail(id){
       deckOrder.forEach(function(cardId){
         var c = CARDS[cardId];
         if(!c) return;
-        var effectText = c.effect || '';
-        html+='<div class="bcd-card-entry"><span class="bcd-card-name">'+(c.icon||'')+' '+c.name+'</span><span class="bcd-card-effect">'+renderKeywords(effectText.replace(/\\n/g,' · '))+'</span></div>';
+        // Bestiary list — multi-line effects joined by ' · '. Generator first.
+        var effectHTML = (typeof getCardDisplayHTML === 'function')
+          ? getCardDisplayHTML(cardId, {joiner:' · '})
+          : renderKeywords((c.effect||'').replace(/\n/g,' · '));
+        html+='<div class="bcd-card-entry"><span class="bcd-card-name">'+(c.icon||'')+' '+c.name+'</span><span class="bcd-card-effect">'+effectHTML+'</span></div>';
       });
       html+='</div>';
     }
@@ -6899,11 +6902,15 @@ function showSpoilsOverlay(champId){
     var alreadyOwned=getSanctumCollected(picked);
     addToSanctumPool(picked,1);
     var cd=CARDS[picked];
+    // Sanctum pool reveal chip — compact first-line preview via the helper.
+    var revealEffect = (cd && typeof getCardDisplayHTML === 'function')
+      ? getCardDisplayHTML(cd.id, {firstLine:true})
+      : (cd ? (cd.effect||'') : '');
     cardInnerEl.innerHTML=
       '<span style="font-size:28px;">'+(cd?cd.icon:'🃏')+'</span>'
       +'<div style="text-align:left;">'
         +'<div style="font-size:10px;color:#d4a843;">'+(cd?cd.name:picked)+'</div>'
-        +'<div style="font-size:8px;color:#7a6030;margin-top:2px;">'+(cd?cd.effect:'')+'</div>'
+        +'<div style="font-size:8px;color:#7a6030;margin-top:2px;">'+revealEffect+'</div>'
         +(alreadyOwned?'<div style="font-size:7px;color:#4a6030;margin-top:3px;">+1 copy (you have '+(alreadyOwned+1)+')</div>':'<div style="font-size:7px;color:#60a040;margin-top:3px;">✨ New card unlocked!</div>')
       +'</div>';
     cardEarnedEl.style.display='block';

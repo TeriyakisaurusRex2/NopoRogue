@@ -25,12 +25,12 @@ CREATURES.paladin = {
     cost:     0,
     cooldown: 0,
     triggers: [
-      { on: 'on_hit_while_shielded', target: 'opponent', effect: {type: 'apply_status', status: 'burn', target: 'opponent', value: 2, dur: 5} }
+      { on: 'on_hit_while_shielded', target: 'opponent', effect: {type: 'apply_status', status: 'burn', target: 'self', value: 2, dur: 5} }
     ],
   },
 
   deckOrder: ['paladin_smite', 'paladin_aegis', 'paladin_consecrate'],
 };
 CREATURES.paladin._innateTriggers = [
-  {on: 'on_hit_while_shielded', target: 'opponent', effect: {type: 'apply_status', status: 'burn', target: 'opponent', value: 2, dur: 5}}
+  {on: 'on_hit_while_shielded', target: 'opponent', effect: {type: 'apply_status', status: 'burn', target: 'self', value: 2, dur: 5}}
 ];

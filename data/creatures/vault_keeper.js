@@ -18,7 +18,7 @@ CREATURES.vault_keeper = {
   innate: {
     id:       'vault_hoard',
     name:     'Vault Hoard',
-    desc:     'Discard your hand. Fill it with [Ethereal] Treasures that carry the current [Compound] count.',
+    desc:     'Discard your hand. For each card discarded this way, create an [Ethereal] {{vault_keeper_treasure}}.',
     active:   true,
     cost:     40,
     cooldown: 2000,

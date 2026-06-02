@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Card Frame Preview — Noporogue</title>
+<link rel="stylesheet" href="style.css">
+<!-- same pixel font the game loads -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+  html,body{ height:auto!important; width:auto!important; overflow:auto!important;
+    margin:0; padding:24px; background:#0a0604!important; color:#c0a060!important;
+    font-family:'Press Start 2P',monospace!important; font-size:13px!important; }
+  h1{ color:#d4a843; margin:0 0 8px; font-size:18px; }
+  .sub{ color:#7a6030; font-size:11px; line-height:1.7; margin:0 0 18px; }
+
+  /* ── Tuning region variables (×2 frame = 320×448) ── */
+  :root{
+    --card-w: 320px;  --card-h: 448px;
+    --title-top: 18px;  --title-h: 38px;  --title-fs: 11px;
+    --icon-top: 64px;   --icon-size: 120px;
+    --text-top: 190px;  --text-x: 18px;  --text-bottom: 22px;  --text-fs: 8px;
+  }
+
+  .pcard{
+    position:relative; width:var(--card-w); height:var(--card-h);
+    background-size:100% 100%; background-repeat:no-repeat;
+    image-rendering:pixelated; flex:0 0 auto;
+  }
+  .pcard-title{
+    position:absolute; top:var(--title-top); left:10px; right:10px; height:var(--title-h);
+    display:flex; align-items:center; justify-content:center;
+    font-family:'Press Start 2P',monospace; color:#e8d7a8; font-size:var(--title-fs);
+    line-height:1.3; text-align:center; overflow:hidden;
+  }
+  .pcard-icon{
+    position:absolute; top:var(--icon-top); left:50%; transform:translateX(-50%);
+    width:var(--icon-size); height:var(--icon-size);
+    display:flex; align-items:center; justify-content:center;
+  }
+  .pcard-art{ position:absolute; inset:0; width:100%; height:100%; object-fit:contain;
+    image-rendering:pixelated; }
+  .pcard-emoji{ font-size:calc(var(--icon-size) * 0.55); line-height:1; }
+  .pcard-text{
+    position:absolute; top:var(--text-top); left:var(--text-x); right:var(--text-x);
+    bottom:var(--text-bottom);
+    font-family:'Press Start 2P',monospace; color:#c0a060;
+    font-size:var(--text-fs); line-height:1.9; text-align:left; overflow:hidden;
+    word-break:break-word;
+  }
+  body.show-guides .pcard-title{ outline:1px dashed #e8806080; }
+  body.show-guides .pcard-icon { outline:1px dashed #9adc7e80; }
+  body.show-guides .pcard-text { outline:1px dashed #9ad8e880; }
+
+  .cards{ display:flex; gap:22px; flex-wrap:wrap; align-items:flex-start; margin-top:8px; }
+
+  .panel{ background:#150c04; border:1px solid #2a1808; border-radius:6px; padding:14px 18px; margin-bottom:18px; }
+  .panel h3{ margin:0 0 10px; color:#d4a843; font-size:13px; }
+  .ctrls{ display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:8px 22px; }
+  .ctrl{ display:flex; align-items:center; gap:10px; font-size:10px; }
+  .ctrl label{ width:92px; color:#c0a060; }
+  .ctrl input[type=range]{ flex:1; }
+  .ctrl .val{ width:46px; text-align:right; color:#9ad8e8; }
+  .readout{ margin-top:12px; padding:10px 12px; background:#0a0604; border:1px solid #2a1808;
+    border-radius:4px; color:#9adc7e; font-family:monospace; font-size:12px; white-space:pre-wrap; }
+  .toggle{ background:#1a1208; color:#d4a843; border:1px solid #3a2010; border-radius:4px;
+    font:inherit; font-size:10px; padding:6px 12px; cursor:pointer; }
+</style>
+</head>
+<body>
+  <h1>Card Frame Preview</h1>
+  <p class="sub">Pixel font (Press Start 2P), real card art, ×2 frame (320×448). Drag sliders to place title / icon / text, then read the values off the bottom box. "toggle guides" outlines the regions. Check that ÷ and × render in the pixel font.</p>
+
+  <div class="panel">
+    <h3>Region tuning &nbsp; <button type="button" class="toggle" id="guides">toggle guides</button></h3>
+    <div class="ctrls" id="ctrls"></div>
+    <div class="readout" id="readout"></div>
+  </div>
+
+  <div class="cards" id="cards"></div>
+
+  <script>
+    var gs=null, GAME_DESIGN_W=window.innerWidth, GAME_DESIGN_H=window.innerHeight;
+    function getOpponent(){return null;} function clientToGameCoords(x,y){return{x:x,y:y};}
+    function buildCardHTML(){return'';} function fireInnateTriggers(){} function applyStatus(){}
+    function applyDoT(){} function dealDamage(){} function dealDamageToEnemy(){} function dealDamageToPlayer(){}
+    function addLog(){} function addTag(){} function removeTagByLabel(){} function removeTagsByClass(){}
+    function spawnFloatNum(){} function spawnEchoFloat(){} function updateAll(){} function renderHand(){}
+    function getStatuses(){return[];} function getAura(){return 0;}
+    function _fxStatusApplyFromTarget(){} function _fxShieldBreakFromSide(){} function _fxCardZone(){}
+    function _fxHandSlotPos(){return{x:0,y:0};}
+  </script>
+  <script src="data/cards.js"></script>
+  <script src="data/card_effects.js"></script>
+  <script>
+    try{ localStorage.setItem('fmtDriftLog','off'); }catch(e){}
+
+    function frameFor(c){
+      var s=c.statId;
+      if(s==='str'||s==='agi'||s==='wis') return 'assets/ui/card_frame_'+s+'.png';
+      return 'assets/ui/card_frame_gold.png';
+    }
+    function artPath(id,c){
+      var base = c.champ ? id : 'universal_'+id;
+      return 'assets/icons/cards/'+base+'.png';
+    }
+    function genHTML(id){
+      try{
+        var secs = generateCardText(null, id, null) || [];
+        var html = secs.map(function(s){return s.html||'';}).join('<br>');
+        return (typeof renderKeywords==='function') ? renderKeywords(html) : html;
+      }catch(e){ return '(err: '+e.message+')'; }
+    }
+
+    // Samples that HAVE real art in assets/icons/cards/
+    var SAMPLES = ['paladin_smite','paladin_aegis','thief_quick_slash','druid_void_bolt','strike'];
+    function renderCards(){
+      document.getElementById('cards').innerHTML = SAMPLES.map(function(id){
+        var c = CARDS[id]; if(!c) return '';
+        return '<div class="pcard" style="background-image:url('+frameFor(c)+')">'
+          + '<div class="pcard-title">'+(c.name||id)+'</div>'
+          + '<div class="pcard-icon">'
+            + '<img class="pcard-art" src="'+artPath(id,c)+'" onerror="this.remove()">'
+            + '<span class="pcard-emoji">'+(c.icon||'?')+'</span>'
+          + '</div>'
+          + '<div class="pcard-text">'+genHTML(id)+'</div>'
+          + '</div>';
+      }).join('');
+    }
+
+    var VARS=[
+      ['--title-top',0,90],['--title-h',18,70],['--title-fs',7,18],
+      ['--icon-top',20,220],['--icon-size',50,200],
+      ['--text-top',120,320],['--text-x',4,40],['--text-bottom',6,60],['--text-fs',6,16],
+    ];
+    function curVal(n){ return parseInt(getComputedStyle(document.documentElement).getPropertyValue(n)); }
+    function buildCtrls(){
+      document.getElementById('ctrls').innerHTML = VARS.map(function(v){
+        var n=v[0],lo=v[1],hi=v[2],val=curVal(n);
+        return '<div class="ctrl"><label>'+n.replace('--','')+'</label>'
+          +'<input type="range" min="'+lo+'" max="'+hi+'" value="'+val+'" data-var="'+n+'">'
+          +'<span class="val" id="val'+n+'">'+val+'px</span></div>';
+      }).join('');
+      document.querySelectorAll('input[type=range]').forEach(function(inp){
+        inp.addEventListener('input',function(){
+          var n=inp.getAttribute('data-var');
+          document.documentElement.style.setProperty(n,inp.value+'px');
+          document.getElementById('val'+n).textContent=inp.value+'px';
+          writeReadout();
+        });
+      });
+    }
+    function writeReadout(){
+      document.getElementById('readout').textContent =
+        ':root{\n'+VARS.map(function(v){return '  '+v[0]+': '+curVal(v[0])+'px;';}).join('\n')+'\n}';
+    }
+    document.getElementById('guides').addEventListener('click',function(){ document.body.classList.toggle('show-guides'); });
+
+    function boot(){
+      if(typeof CARDS==='undefined'){ document.getElementById('cards').textContent='CARDS not loaded.'; return; }
+      renderCards(); buildCtrls(); writeReadout();
+    }
+    setTimeout(boot,80);
+  </script>
+</body>
+</html>

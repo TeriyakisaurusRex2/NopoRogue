@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Card Text Audit — Noporogue</title>
+
+<!-- Shared game styling so card faces look as close to combat as possible. -->
+<link rel="stylesheet" href="style.css">
+
+<style>
+  /* ── Audit-page chrome (not the cards themselves) ── */
+  /* style.css locks html/body to 100vh + overflow:hidden for the game's
+     viewport-locked design. Override here so the audit can scroll. */
+  html, body {
+    height: auto !important;
+    width: auto !important;
+    overflow: auto !important;
+    margin: 0; padding: 0;
+    background: #0a0604 !important;
+    color: #c0a060 !important;
+    font-family: 'Crimson Text', Georgia, serif !important;
+    font-size: 15px !important;
+  }
+  body { padding: 24px 32px 64px !important; }
+
+  .audit-header {
+    position: sticky; top: 0;
+    background: linear-gradient(180deg, #0a0604 0%, #0a0604 70%, rgba(10,6,4,0.85) 100%);
+    padding: 16px 0 20px;
+    margin: 0 0 20px;
+    border-bottom: 1px solid #3a2010;
+    z-index: 50;
+  }
+  .audit-title {
+    font-family: 'Cinzel', serif;
+    color: #d4a843;
+    font-size: 28px;
+    margin: 0 0 12px;
+    letter-spacing: 1px;
+  }
+  .audit-sub {
+    color: #7a6030;
+    font-size: 13px;
+    margin: -6px 0 14px;
+  }
+
+  /* Explainer panel — folds open via the [?] toggle in the header. */
+  .audit-help {
+    background: #150c04;
+    border: 1px solid #2a1808;
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin: 0 0 16px;
+    color: #c0a060;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  .audit-help h3 {
+    margin: 0 0 8px;
+    color: #d4a843;
+    font-size: 15px;
+    font-family: 'Cinzel', serif;
+    letter-spacing: 0.5px;
+  }
+  .audit-help p { margin: 6px 0; }
+  .audit-help code {
+    background: #0a0604; padding: 1px 5px; border-radius: 3px;
+    color: #9ad8e8; font-size: 13px;
+  }
+  .audit-help .legend {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 6px 14px;
+    margin-top: 10px;
+    align-items: start;
+  }
+  .audit-help .badge { margin: 0; align-self: start; }
+  .audit-help .legend .what { color: #c0a060; }
+  .audit-help .legend .action { color: #9adc7e; font-style: italic; }
+  .audit-help[hidden] { display: none; }
+
+  .help-toggle {
+    background: #1a1208; color: #d4a843;
+    border: 1px solid #3a2010; border-radius: 4px;
+    font: inherit; font-size: 13px;
+    padding: 6px 12px; cursor: pointer;
+  }
+  .help-toggle:hover { background: #2a1808; }
+  .audit-bar {
+    display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
+  }
+  .audit-bar input[type=search] {
+    flex: 1; min-width: 240px;
+    background: #1a1208; color: #e8d7a8;
+    border: 1px solid #3a2010; border-radius: 4px;
+    font: inherit; font-size: 15px;
+    padding: 8px 12px;
+  }
+  .audit-bar label {
+    display: inline-flex; align-items: center; gap: 6px;
+    color: #c0a060; cursor: pointer; user-select: none;
+    font-size: 14px;
+  }
+  .audit-bar select {
+    background: #1a1208; color: #e8d7a8;
+    border: 1px solid #3a2010; border-radius: 4px;
+    font: inherit; font-size: 14px;
+    padding: 6px 10px;
+  }
+
+  .audit-counts {
+    display: flex; gap: 18px; font-size: 14px;
+    color: #c0a060;
+  }
+  .audit-counts b { color: #d4a843; font-weight: 600; }
+  .audit-counts .pill {
+    background: #1a1208; border: 1px solid #3a2010; border-radius: 4px;
+    padding: 4px 10px;
+  }
+  .audit-counts .pill.drift  b { color: #e88060; }
+  .audit-counts .pill.match  b { color: #9adc7e; }
+  .audit-counts .pill.error  b { color: #e0c060; }
+  .audit-counts .pill.no-eff b { color: #7a6030; }
+
+  /* ── Card row ── */
+  .row {
+    margin: 0 0 14px;
+    border: 1px solid #2a1808;
+    background: #120802;
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .row-head {
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 14px;
+    background: linear-gradient(90deg, #1a0e04 0%, #120802 100%);
+    border-bottom: 1px solid #2a1808;
+  }
+  .row-id {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 11px;
+    color: #d4a843;
+  }
+  .row-meta {
+    color: #7a6030; font-size: 12px;
+  }
+  .badge {
+    margin-left: auto;
+    font-family: 'Press Start 2P', monospace;
+    font-size: 9px;
+    padding: 5px 10px;
+    border-radius: 3px;
+    letter-spacing: 1px;
+  }
+  .badge-drift   { background: #2a1008; color: #e88060; border: 1px solid #5a2010; }
+  .badge-match   { background: #0a2010; color: #9adc7e; border: 1px solid #205030; }
+  .badge-no-eff  { background: #1a1208; color: #7a6030; border: 1px solid #3a2010; }
+  .badge-no-hand { background: #1a1208; color: #9ad8e8; border: 1px solid #205070; }
+  .badge-error   { background: #2a1800; color: #e0c060; border: 1px solid #604010; }
+
+  /* ── Side-by-side card panels ── */
+  .row-body {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    padding: 14px;
+  }
+  .panel {
+    display: flex; flex-direction: column;
+    background: #0a0604;
+    border: 1px solid #2a1808;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .panel-label {
+    padding: 6px 10px;
+    background: #1a1208;
+    border-bottom: 1px solid #2a1808;
+    font-family: 'Press Start 2P', monospace;
+    font-size: 9px;
+    color: #7a6030;
+    letter-spacing: 1px;
+    display: flex; align-items: baseline; gap: 8px;
+  }
+  .panel-label.hand { color: #c0a060; }
+  .panel-label.gen  { color: #9ad8e8; }
+  .panel-label .sub {
+    font-family: 'Crimson Text', Georgia, serif;
+    font-size: 11px;
+    letter-spacing: 0;
+    color: #7a6030;
+    font-weight: normal;
+  }
+  .panel-body {
+    padding: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 200px;
+  }
+
+  /* Force the .card to a static, non-absolute position inside our grid. */
+  .row-body .card {
+    position: static !important;
+    bottom: auto !important;
+    left: auto !important;
+    transform: none !important;
+    margin: 0 auto;
+    flex-shrink: 0;
+  }
+  .row-body .card:hover {
+    box-shadow: 0 0 18px rgba(200,150,40,.18);
+  }
+
+  /* Compact mode for raw text display when card render fails */
+  .text-only {
+    padding: 12px;
+    color: #c0a060;
+    font-size: 14px;
+    text-align: left;
+    line-height: 1.5;
+    background: #0e0804;
+    border: 1px dashed #3a2010;
+    border-radius: 4px;
+    min-height: 60px;
+    width: 240px;
+  }
+  .text-only.muted { color: #7a6030; font-style: italic; }
+
+  /* Side-by-side text comparison strip below the card render. */
+  .diff-strip {
+    padding: 8px 14px 14px;
+    border-top: 1px dashed #2a1808;
+    color: #7a6030;
+    font-size: 12px;
+    line-height: 1.5;
+    display: grid;
+    grid-template-columns: 70px 1fr;
+    gap: 4px 14px;
+    font-family: 'Crimson Text', Georgia, serif;
+  }
+  .diff-strip .lab { color: #7a6030; text-align: right; }
+  .diff-strip .val { color: #c0a060; }
+  .diff-strip .val.gen { color: #9ad8e8; }
+
+  .empty-state {
+    text-align: center; padding: 60px;
+    color: #7a6030; font-style: italic;
+  }
+
+  /* Tooltip elements for keyword + card-ref hovers (cards.js attaches handlers). */
+  #kw-tooltip, #card-ref-tip {
+    position: fixed; z-index: 1000; pointer-events: none;
+    background: #1a1208; border: 1px solid #3a2010; border-radius: 4px;
+    padding: 8px 12px; color: #e8d7a8; font-size: 13px;
+    max-width: 280px; line-height: 1.4;
+    opacity: 0; transition: opacity 0.12s;
+  }
+  #kw-tooltip.show, #card-ref-tip.show { opacity: 1; }
+  #card-ref-tip { padding: 0; background: transparent; border: none; }
+</style>
+</head>
+<body>
+
+<!-- Tooltip containers cards.js mouseover handlers expect to find. -->
+<div id="kw-tooltip"></div>
+<div id="card-ref-tip"></div>
+
+<div class="audit-header">
+  <h1 class="audit-title">Card Text Audit</h1>
+  <div class="audit-sub">
+    Comparing each card's <em>hand-written</em> text against what the generator produces. <button type="button" class="help-toggle" id="help-toggle">What am I looking at?</button>
+  </div>
+
+  <div class="audit-bar">
+    <input type="search" id="search" placeholder="Search by card id or name…">
+    <select id="filter">
+      <option value="all">All cards</option>
+      <option value="drift" selected>Drift only</option>
+      <option value="match">Match only</option>
+      <option value="error">Errors only</option>
+      <option value="no-eff">No effects array</option>
+    </select>
+    <select id="sort">
+      <option value="id">Sort: by id</option>
+      <option value="champ">Sort: by champion</option>
+      <option value="status">Sort: by status</option>
+    </select>
+    <div class="audit-counts" id="counts"></div>
+  </div>
+</div>
+
+<div class="audit-help" id="help-panel" hidden>
+  <h3>What you're seeing</h3>
+  <p>Every card in the game has <strong>two</strong> sources for its description:</p>
+  <p>1. <strong style="color:#c0a060;">HAND-WRITTEN</strong> — the static <code>effect:</code> string we typed into <code>cards.js</code>. This is what's shipped today.</p>
+  <p>2. <strong style="color:#9ad8e8;">GENERATED</strong> — what <code>generateCardText()</code> produces from the card's <code>effects:[]</code> array (the actual mechanics). This is the future. Eventually, hand-written goes away.</p>
+  <p>Each card-face below renders BOTH so you can compare visually. The badge tells you whether they agree.</p>
+
+  <h3 style="margin-top:14px;">Badge meanings</h3>
+  <div class="legend">
+    <span class="badge badge-drift">DRIFT</span>
+    <span><span class="what">The two texts don't match.</span> <span class="action">Either the hand-written has a typo / old style, OR the generator's not yet producing the right text. Inspect both, decide which is correct.</span></span>
+
+    <span class="badge badge-match">MATCH</span>
+    <span><span class="what">Generated text equals hand-written.</span> <span class="action">Safe to delete the <code>effect:</code> field on this card — generator is authoritative.</span></span>
+
+    <span class="badge badge-no-hand">NO HAND TEXT</span>
+    <span><span class="what">Card has <code>effects:[]</code> but no <code>effect:</code> string.</span> <span class="action">Already migrated. Generator IS the source of truth.</span></span>
+
+    <span class="badge badge-no-eff">NO EFFECTS</span>
+    <span><span class="what">Card is hand-written only — no mechanics array.</span> <span class="action">Generator can't help yet. Needs a new effect type, or it's a placeholder.</span></span>
+
+    <span class="badge badge-error">ERROR</span>
+    <span><span class="what">Generator threw an exception.</span> <span class="action">Bug — investigate the effects array or the renderer.</span></span>
+  </div>
+
+  <h3 style="margin-top:14px;">Why drift exists right now</h3>
+  <p>We're mid-migration. Phase 1 (done) built the <code>fmt</code> primitives and centralised formatting rules. Phase 2 is what this audit is for — burn down the drift list card by card, either fixing the generator (if the hand-written form is what we want) or deleting the static string (if the generator's output is correct).</p>
+  <p>When a card shows DRIFT, look at the diff strip below the card faces — it shows the raw text side-by-side without HTML noise.</p>
+</div>
+
+<div id="rows"></div>
+
+<!-- Stubs for globals that cards.js / card_effects.js reference but we
+     don't run combat or use the game DOM. -->
+<script>
+  // Combat / game functions that may be referenced from registry run()
+  // bodies, top-level event handlers, or aura processing. None of these
+  // need to actually DO anything for text generation — they just need
+  // to exist so the module loads without ReferenceError.
+  var gs = null;
+  var GAME_DESIGN_W = window.innerWidth;
+  var GAME_DESIGN_H = window.innerHeight;
+  function getOpponent(){ return null; }
+  function clientToGameCoords(x,y){ return {x:x, y:y}; }
+  function buildCardHTML(){ return ''; }
+  function fireInnateTriggers(){}
+  function applyStatus(){}
+  function applyDoT(){}
+  function dealDamage(){}
+  function dealDamageToEnemy(){}
+  function dealDamageToPlayer(){}
+  function addLog(){}
+  function addTag(){}
+  function removeTagByLabel(){}
+  function removeTagsByClass(){}
+  function spawnFloatNum(){}
+  function spawnEchoFloat(){}
+  function updateAll(){}
+  function renderHand(){}
+  function _fxStatusApplyFromTarget(){}
+  function _fxShieldBreakFromSide(){}
+  function _fxCardZone(){}
+  function _fxHandSlotPos(){ return {x:0,y:0}; }
+</script>
+
+<!-- Load the same data + renderer the game uses. -->
+<script src="data/cards.js"></script>
+<script src="data/card_effects.js"></script>
+
+<script>
+  // Suppress the auto-audit that card_effects.js fires — we're rendering
+  // our own visual version of it instead.
+  try { localStorage.setItem('fmtDriftLog','off'); } catch(e){}
+
+  // ── Normalisation: strip HTML and collapse whitespace for comparison. ──
+  function stripHtml(s){ return String(s||'').replace(/<[^>]+>/g, ''); }
+  function norm(s){
+    return stripHtml(s)
+      .replace(/\s+/g,' ')
+      .trim();
+  }
+
+  // ── Render a "card" using the same DOM structure combat uses. ──
+  // Returns an HTML string. effectHtml is the already-rendered effect
+  // section (with kw chips, stat-val spans, etc.).
+  function renderCard(card, effectHtml){
+    var statCls = card.statId ? 'card-stat-'+card.statId : 'card-stat-none';
+    return '<div class="card '+statCls+'">'
+      + '<div class="card-title">'+(card.name||card.id||'?')+'</div>'
+      + '<div class="card-identity">'+(card.type||'')+(card.champ?' · '+card.champ:'')+'</div>'
+      + '<div class="card-art"><span class="card-emoji-icon" style="font-size:48px">'+(card.icon||'?')+'</span></div>'
+      + '<div class="card-effect" style="font-size:14px">'+effectHtml+'</div>'
+      + '<div class="card-type-bar"></div>'
+      + '</div>';
+  }
+
+  // ── For each card, produce hand-written render + generated render + status. ──
+  function buildRowData(){
+    var rows = [];
+    Object.keys(CARDS).forEach(function(id){
+      var c = CARDS[id];
+      if(!c) return;
+      var hasEffects = !!(c.effects && c.effects.length);
+      var hasHandText = !!(c.effect && c.effect.length);
+      var handHtml = hasHandText ? renderKeywords(String(c.effect).replace(/\n/g,'<br>')) : '';
+      var genHtml = '', genText = '', err = null;
+      if(hasEffects){
+        try {
+          var sections = generateCardText(null, id, null);
+          if(sections && sections.length){
+            // generateCardText returns sections; join with separators like combat does.
+            genHtml = sections.map(function(s){ return s.html||''; }).join('<div class="card-line-sep"></div>');
+            genHtml = renderKeywords(genHtml);
+            genText = sections.map(function(s){ return s.html||''; }).join(' ');
+          }
+        } catch(e){ err = e.message || String(e); }
+      }
+      // Determine status.
+      var status;
+      if(err)                          status = 'error';
+      else if(!hasEffects)             status = 'no-eff';
+      else if(!hasHandText)            status = 'no-hand';
+      else if(norm(c.effect) === norm(genText)) status = 'match';
+      else                             status = 'drift';
+
+      rows.push({
+        id: id,
+        card: c,
+        champ: c.champ || '(universal)',
+        status: status,
+        err: err,
+        handHtml: handHtml,
+        genHtml: genHtml,
+        handText: norm(c.effect),
+        genText: norm(genText)
+      });
+    });
+    return rows;
+  }
+
+  // ── Render the rows list into the page. ──
+  function renderRows(rows, filter, search, sort){
+    var container = document.getElementById('rows');
+    var STATUS_RANK = { error:0, drift:1, 'no-hand':2, match:3, 'no-eff':4 };
+
+    var filtered = rows.filter(function(r){
+      if(filter !== 'all' && filter !== r.status) return false;
+      if(search){
+        var q = search.toLowerCase();
+        if(r.id.toLowerCase().indexOf(q) === -1 &&
+           (r.card.name||'').toLowerCase().indexOf(q) === -1 &&
+           (r.champ||'').toLowerCase().indexOf(q) === -1) return false;
+      }
+      return true;
+    });
+
+    filtered.sort(function(a,b){
+      if(sort === 'champ'){
+        var cc = a.champ.localeCompare(b.champ);
+        if(cc) return cc;
+      } else if(sort === 'status'){
+        var sc = STATUS_RANK[a.status] - STATUS_RANK[b.status];
+        if(sc) return sc;
+      }
+      return a.id.localeCompare(b.id);
+    });
+
+    if(!filtered.length){
+      container.innerHTML = '<div class="empty-state">No cards match. Try a different filter or search.</div>';
+      return;
+    }
+
+    var html = filtered.map(function(r){
+      var badge = 'badge-'+r.status;
+      var badgeLabel = (r.status==='no-eff') ? 'NO EFFECTS'
+                     : (r.status==='no-hand') ? 'NO HAND TEXT'
+                     : r.status.toUpperCase();
+
+      var handPanel, genPanel;
+      if(r.handHtml){
+        handPanel = renderCard(r.card, r.handHtml);
+      } else {
+        handPanel = '<div class="text-only muted">— no hand-written <code>effect:</code> string —</div>';
+      }
+      if(r.err){
+        genPanel = '<div class="text-only" style="color:#e0c060">Error: '+r.err+'</div>';
+      } else if(r.genHtml){
+        genPanel = renderCard(r.card, r.genHtml);
+      } else {
+        genPanel = '<div class="text-only muted">— no <code>effects:</code> array —</div>';
+      }
+
+      // Compact diff strip below the cards (text-only, normalized).
+      var diff = '';
+      if(r.status === 'drift'){
+        diff = '<div class="diff-strip">'
+             + '<div class="lab">hand:</div><div class="val">'+escapeHtml(r.handText)+'</div>'
+             + '<div class="lab">gen:</div><div class="val gen">'+escapeHtml(r.genText)+'</div>'
+             + '</div>';
+      }
+
+      return '<div class="row" data-status="'+r.status+'">'
+           +   '<div class="row-head">'
+           +     '<span class="row-id">'+r.id+'</span>'
+           +     '<span class="row-meta">'+(r.card.name||'')+' · '+r.champ+'</span>'
+           +     '<span class="badge '+badge+'">'+badgeLabel+'</span>'
+           +   '</div>'
+           +   '<div class="row-body">'
+           +     '<div class="panel"><div class="panel-label hand">HAND-WRITTEN <span class="sub">— current <code>effect:</code> string from cards.js</span></div><div class="panel-body">'+handPanel+'</div></div>'
+           +     '<div class="panel"><div class="panel-label gen">GENERATED <span class="sub">— output of generateCardText() from the <code>effects:[]</code> array</span></div><div class="panel-body">'+genPanel+'</div></div>'
+           +   '</div>'
+           +   diff
+           + '</div>';
+    }).join('');
+
+    container.innerHTML = html;
+  }
+
+  function escapeHtml(s){
+    return String(s||'').replace(/[&<>"']/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+
+  function renderCounts(rows){
+    var counts = { all:rows.length, drift:0, match:0, error:0, 'no-eff':0, 'no-hand':0 };
+    rows.forEach(function(r){ counts[r.status]++; });
+    document.getElementById('counts').innerHTML =
+        '<span class="pill"><b>'+counts.all+'</b> total</span>'
+      + '<span class="pill drift"><b>'+counts.drift+'</b> drift</span>'
+      + '<span class="pill match"><b>'+counts.match+'</b> match</span>'
+      + (counts.error ? '<span class="pill error"><b>'+counts.error+'</b> error</span>' : '')
+      + (counts['no-eff'] ? '<span class="pill no-eff"><b>'+counts['no-eff']+'</b> no-eff</span>' : '');
+  }
+
+  // ── Boot ──
+  var ALL_ROWS = [];
+  function refresh(){
+    var filter = document.getElementById('filter').value;
+    var search = document.getElementById('search').value.trim();
+    var sort   = document.getElementById('sort').value;
+    renderRows(ALL_ROWS, filter, search, sort);
+  }
+  function boot(){
+    if(typeof CARDS === 'undefined'){
+      document.getElementById('rows').innerHTML =
+        '<div class="empty-state">CARDS not loaded — check console.</div>';
+      return;
+    }
+    ALL_ROWS = buildRowData();
+    renderCounts(ALL_ROWS);
+    refresh();
+    document.getElementById('search').addEventListener('input', refresh);
+    document.getElementById('filter').addEventListener('change', refresh);
+    document.getElementById('sort').addEventListener('change', refresh);
+    var helpBtn = document.getElementById('help-toggle');
+    var helpPanel = document.getElementById('help-panel');
+    helpBtn.addEventListener('click', function(){
+      var nowHidden = !helpPanel.hasAttribute('hidden');
+      if(nowHidden){
+        helpPanel.setAttribute('hidden','');
+        helpBtn.textContent = 'What am I looking at?';
+      } else {
+        helpPanel.removeAttribute('hidden');
+        helpBtn.textContent = 'Hide help';
+      }
+    });
+  }
+  // Defer slightly to let any async script-tag side effects settle.
+  setTimeout(boot, 80);
+</script>
+
+</body>
+</html>

@@ -508,6 +508,87 @@ var CARDS = {
     effects:[{type:'apply_status',status:'shield',target:'self',value:0,stat:'str',stat_div:2,dur:3}],
     onDraw:[{type:'apply_status',status:'bleed',target:'opponent',value:4,dur:3}]},
 
+  // ── Groll (Deeproot) ──
+  // Stone-monk elemental. Slow STR/WIS, Churn-focused with Stun secondary.
+  // Tending innate (+1 to all Churn) compounds the engine; Granite Fist's
+  // [Echo] spawns an [Ethereal] Granite Shard — the cheap stun follow-up.
+  groll_granite_fist: {id:'groll_granite_fist', name:'Granite Fist', icon:'✊', type:'attack', unique:true, champ:'groll', statId:'str',
+    effect:'Deal 12 + STR÷4 damage.\n[Echo]: Create [Ethereal] {{groll_granite_shard}}.',
+    effects:[{type:'dmg_conditional',base:12,hits:1,stat:'str',stat_div:4}],
+    onDiscard:[{type:'create_card_in_hand',cardId:'groll_granite_shard',target:'self',ghost:true}]},
+
+  groll_resonance: {id:'groll_resonance', name:'Resonance', icon:'🔔', type:'utility', unique:true, champ:'groll', statId:'wis',
+    effect:'[Churn] 2.\n[Sorcery] [25]: Apply [Stun].',
+    effects:[{type:'churn',count:2},{type:'sorcery',cost:25,effect:{type:'apply_status',status:'stun',target:'opponent'}}]},
+
+  groll_stonewall: {id:'groll_stonewall', name:'Stonewall', icon:'🧱', type:'defense', unique:true, champ:'groll', statId:'str',
+    effect:'Gain [Shield] 8 + STR÷2 for 3s.\n[Drawn]: Gain [Shield] 3.',
+    effects:[{type:'apply_status',status:'shield',target:'self',value:8,stat:'str',stat_div:2,dur:3}],
+    onDraw:[{type:'apply_status',status:'shield',target:'self',value:3,dur:3}]},
+
+  // Conjured-only — Granite Fist's [Echo] creates this on discard.
+  groll_granite_shard: {id:'groll_granite_shard', name:'Granite Shard', icon:'🪨', type:'utility', unique:true, champ:'groll', statId:'wis',
+    effect:'[Sorcery] [10]: Apply [Stun].\n[Ethereal].',
+    effects:[{type:'sorcery',cost:10,effect:{type:'apply_status',status:'stun',target:'opponent'}}]},
+
+  // ── Tree Sprite (Deeproot) ──
+  // Squishy WIS spirit. Every base play conjures an [Ethereal] Echo;
+  // each Echo Sorcery'd repeats the base effect + Sap (Mana Burn 10).
+  // Base deck is never ethereal — convention respected.
+  tree_sprite_flicker: {id:'tree_sprite_flicker', name:'Flicker', icon:'✨', type:'attack', unique:true, champ:'tree_sprite', statId:'wis',
+    effect:'Deal WIS÷2 damage × 2 hits.\nCreate [Ethereal] {{tree_sprite_flicker_echo}}.',
+    effects:[
+      {type:'dmg_conditional',base:0,hits:2,stat:'wis',stat_div:2},
+      {type:'create_card_in_hand',cardId:'tree_sprite_flicker_echo',target:'self',ghost:true}]},
+
+  tree_sprite_wither: {id:'tree_sprite_wither', name:'Wither', icon:'🍂', type:'utility', unique:true, champ:'tree_sprite', statId:'wis',
+    effect:'Mana Burn 10 + WIS÷4.\nCreate [Ethereal] {{tree_sprite_wither_echo}}.',
+    effects:[
+      {type:'mana_burn',value:10,stat:'wis',stat_div:4},
+      {type:'create_card_in_hand',cardId:'tree_sprite_wither_echo',target:'self',ghost:true}]},
+
+  tree_sprite_phase: {id:'tree_sprite_phase', name:'Phase', icon:'🌀', type:'defense', unique:true, champ:'tree_sprite', statId:'wis',
+    effect:'Apply [Weaken] for 4s.\nCreate [Ethereal] {{tree_sprite_phase_echo}}.',
+    effects:[
+      {type:'apply_status',status:'weaken',target:'opponent',value:1,dur:4},
+      {type:'create_card_in_hand',cardId:'tree_sprite_phase_echo',target:'self',ghost:true}]},
+
+  // Conjured-only — born from the base cards' Create lines.
+  tree_sprite_flicker_echo: {id:'tree_sprite_flicker_echo', name:'Flicker Echo', icon:'✨', type:'attack', unique:true, champ:'tree_sprite', statId:'wis',
+    effect:'[Sorcery] [20]: Deal WIS÷2 damage × 2 hits.\n[Ethereal].',
+    effects:[{type:'sorcery',cost:20,effect:{type:'dmg_conditional',base:0,hits:2,stat:'wis',stat_div:2}}]},
+
+  tree_sprite_wither_echo: {id:'tree_sprite_wither_echo', name:'Wither Echo', icon:'🍂', type:'utility', unique:true, champ:'tree_sprite', statId:'wis',
+    effect:'[Sorcery] [20]: Mana Burn 10 + WIS÷4.\n[Ethereal].',
+    effects:[{type:'sorcery',cost:20,effect:{type:'mana_burn',value:10,stat:'wis',stat_div:4}}]},
+
+  tree_sprite_phase_echo: {id:'tree_sprite_phase_echo', name:'Phase Echo', icon:'🌀', type:'defense', unique:true, champ:'tree_sprite', statId:'wis',
+    effect:'[Sorcery] [20]: Apply [Weaken] for 4s.\n[Ethereal].',
+    effects:[{type:'sorcery',cost:20,effect:{type:'apply_status',status:'weaken',target:'opponent',value:1,dur:4}}]},
+
+  // ── Grub (Deeproot) ──
+  // Common parasite. Relentless innate locks his draw speed — so the
+  // self-stun riders on every card are a drawback only any non-Grub
+  // user would actually feel. Cards are "balanced for anyone, free
+  // for the Grub."
+  grub_gnaw: {id:'grub_gnaw', name:'Gnaw', icon:'🦷', type:'attack', unique:true, champ:'grub', statId:'agi',
+    effect:'Deal 6 + AGI÷4 damage.\nApply [Stun] to both.',
+    effects:[
+      {type:'dmg_conditional',base:6,hits:1,stat:'agi',stat_div:4},
+      {type:'apply_status',status:'stun',target:'both'}]},
+
+  grub_burrow: {id:'grub_burrow', name:'Burrow', icon:'🕳', type:'utility', unique:true, champ:'grub', statId:'wis',
+    effect:'Apply [Stun] to both.\n[Sorcery] [20]: Apply [Slow] 50% for 3s.',
+    effects:[
+      {type:'apply_status',status:'stun',target:'both'},
+      {type:'sorcery',cost:20,effect:{type:'apply_status',status:'slow',target:'opponent',value:0.5,dur:3}}]},
+
+  grub_curl: {id:'grub_curl', name:'Curl', icon:'🌀', type:'defense', unique:true, champ:'grub', statId:'str',
+    effect:'Gain [Shield] 6 + STR÷2 for 3s.\nApply [Stun] to both.',
+    effects:[
+      {type:'apply_status',status:'shield',target:'self',value:6,stat:'str',stat_div:2,dur:3},
+      {type:'apply_status',status:'stun',target:'both'}]},
+
   // ── Infernal Beast ──
   infernal_strike: {id:'infernal_strike', name:'Infernal Strike', icon:'🔥', type:'attack',
     unique:false, champ:'infernal_beast', statId:'agi',
@@ -531,6 +612,19 @@ var CARDS = {
       {type:'apply_status', status:'weaken', target:'opponent', value:1, dur:4},
       {type:'sorcery', cost:35, effect:{type:'mana_burn', value:15}},
       {type:'hellbent', effect:{type:'cleanse', target:'both', what:'shield'}}]},
+
+  // ── Cultist (faction: cultist — self-sacrifice / WIS bleed) ──
+  cultist_bloodletting: {id:'cultist_bloodletting', name:'Bloodletting', icon:'🩸', type:'attack', unique:true, champ:'cultist', statId:'wis',
+    effects:[
+      {type:'dmg_conditional', base:6, hits:1, stat:'wis', stat_div:4},
+      {type:'apply_status', status:'bleed', target:'opponent', value:0, stat:'wis', stat_div:4, dur:3}]},
+  cultist_hex_ward: {id:'cultist_hex_ward', name:'Hex Ward', icon:'🕯️', type:'utility', unique:true, champ:'cultist', statId:'wis',
+    effects:[
+      {type:'apply_status', status:'weaken', target:'opponent', value:1, dur:6},
+      {type:'sorcery', cost:30, effect:{type:'apply_status', status:'shield', target:'self', value:0, stat:'wis', stat_div:2, dur:3}}]},
+  cultist_sanguine_bolt: {id:'cultist_sanguine_bolt', name:'Sanguine Bolt', icon:'🔥', type:'attack', unique:true, champ:'cultist', statId:'wis',
+    effects:[
+      {type:'dmg_conditional', base:8, hits:1, stat:'wis', stat_div:4, condition:'has_debuff', check:'opponent', on_true:'bonus_dmg', on_true_val:6}]},
 };
 
 // Deck size = creature STR (same as max HP). Cards ARE health — small decks are fragile.

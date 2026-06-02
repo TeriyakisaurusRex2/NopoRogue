@@ -3039,7 +3039,7 @@ function buildArea(def,level){
     // No valid creatures — return a minimal area with just a Strike-only dummy
     return {id:def.id+'-'+level, def:def, level:level, enemies:[{
       id:'dummy', name:'???', icon:'❓', str:10, agi:10, wis:10,
-      baseHp:50, dmgMult:1, atkInterval:3000, xp:10,
+      baseHp:50, atkInterval:3000, xp:10,
       innate:null, deck:['strike','strike','brace']
     }]};
   }
@@ -3054,9 +3054,9 @@ function buildArea(def,level){
       var hp=str*5;
       enemies.push({
         id:b.id, name:b.name, icon:b.icon, str:str, agi:agi, wis:wis, baseHp:hp,
-        dmgMult:1+level*0.2, atkInterval:calcDrawInterval(agi),
+        atkInterval:calcDrawInterval(agi),
         gold:b.gold, xp:Math.round(8+level*10)*2, // boss XP bonus
-        innate:b.innate, deck:b.deck, openingMove:b.openingMove, cardRewards:b.cardRewards,
+        innate:b.innate, deck:b.deck, cardRewards:b.cardRewards,
         isBoss:(b.id==='harbourmaster'||b.id==='sumpthing'), // mark the actual boss
       });
     });
@@ -3090,20 +3090,15 @@ function buildArea(def,level){
     var str=Math.round(b.baseStats.str+(level-1)*b.growth.str);
     var agi=Math.round(b.baseStats.agi+(level-1)*b.growth.agi);
     var wis=Math.round(b.baseStats.wis+(level-1)*b.growth.wis);
-    // Damage scaled by level multiplier: 1.2× at lv1, 3× at lv10, 5× at lv20
-    var baseDmg=(b.baseDmg||0)+(level-1)*(b.dmgGrowth||0);
-    var dmgMult=1+level*0.2;
     var hp=str*5;
     enemies.push({
       id:b.id, name:b.name, icon:b.icon,
       str:str, agi:agi, wis:wis,
       baseHp:hp,
-      dmgMult:dmgMult,  // applied to all card.value in executeEnemyCard
       atkInterval:calcDrawInterval(agi),
       xp:Math.round(8+level*10),
       innate:b.innate,
       deck:b.deck,
-      openingMove:b.openingMove,
     });
   }
   return {id:def.id+'-'+level, def:def, level:level, enemies:enemies};
@@ -3160,6 +3155,51 @@ var HAND_SIZE=7;
 var SOUL_SHARDS_PER_PULL=100;
 
 // ═══════════════════════════════════════════════════════
+// SYMMETRIC PLAY MODEL (V1) — shared draw timing + AI driver
+// ═══════════════════════════════════════════════════════
+// getDrawInterval(actor): the shared combat-intrinsic draw timing for
+// either side (base AGI formula + haste/slow/frenzy/locked). The PLAYER
+// gameTick block additionally layers progression buffs (drawSpeedBonus,
+// one-time bonuses) — those are meta-progression, not combatant-intrinsic.
+// Currently drives the ENEMY; the player block is slated to migrate here
+// once its frenzy/haste handling is reconciled (would double-count today).
+function getDrawInterval(actor){
+  if(!actor) return 3000;
+  var eff = calcDrawInterval(actor.agi);
+  // Grub's Relentless — draw speed cannot be modified by anything.
+  var locked = (typeof getAura==='function') ? getAura(actor,'lockedDrawSpeed') : 0;
+  if(locked) return Math.round(eff);
+  var side = actor.side;
+  if(typeof getStatuses==='function'){
+    getStatuses(side,'haste').forEach(function(s){ eff=eff/(1+(s.val||0)); });
+    getStatuses(side,'atkspeed').forEach(function(s){ eff=eff/(1+(s.val||0)); });
+    getStatuses(side,'drawspeed').forEach(function(s){ eff=eff/(1+(s.val||0)); });
+  }
+  var fst = (typeof _getFrenzyStacks==='function') ? _getFrenzyStacks(side) : 0;
+  if(fst>0) eff = eff/(1+0.1*fst);
+  var slow = actor.statusEffects && actor.statusEffects.find(function(s){return s.stat==='slow_draw';});
+  if(slow) eff = eff*(1+(slow.val||0.5));
+  if(!eff || isNaN(eff) || eff<200) eff=200;
+  return Math.round(eff);
+}
+
+// AI "think speed" — how often the bot considers playing a card. Faster
+// with AGI (STR=body, AGI=speed, WIS=quality-later). Tuned a touch
+// quicker than the draw interval so the bot plays from a held hand at
+// roughly draw-rate. THIS IS THE DIFFICULTY DIAL — tune to taste.
+function calcReactionInterval(agi){
+  return Math.round(1000 + 3500/(1+(agi||10)*0.08));
+}
+
+// AI card choice (v1): play the oldest card in hand. Returns a hand index
+// or -1 for "do nothing this beat". Future layers (WIS decision-quality,
+// archetype strategy profiles) slot in HERE without touching the caller.
+function pickCardToPlay(actor){
+  if(!actor || !actor.hand || !actor.hand.length) return -1;
+  return 0;
+}
+
+// ═══════════════════════════════════════════════════════
 // DECK BUILDER — generates a creature's deck from STR + deckOrder
 // ═══════════════════════════════════════════════════════
 // Rules:
@@ -3211,6 +3251,7 @@ function getCreaturePlayable(id){
   if(!c.innateDesc&&c.innate)  c.innateDesc=c.innate.desc;
   if(c.innateActive===undefined&&c.innate) c.innateActive=!!c.innate.active;
   if(c.innateCost===undefined&&c.innate)   c.innateCost=c.innate.cost||0;
+  if(c.innateCostHp===undefined&&c.innate) c.innateCostHp=c.innate.costHp||0;
   if(c.innateCooldown===undefined&&c.innate) c.innateCooldown=c.innate.cooldown||8000;
   // startDeck: deckOrder always wins if present (generates from STR).
   // Otherwise fall back to legacy deck / CREATURE_DECKS.
@@ -4135,12 +4176,10 @@ function _resumeActiveRun(){
         id: creature.id, name: creature.name, icon: creature.icon,
         str: str, agi: agi, wis: wis,
         baseHp: str * 5,
-        dmgMult: 1 + lvl * 0.2,
         atkInterval: calcDrawInterval(agi),
         xp: Math.round(8 + lvl * 10),
         innate: creature.innate,
         deck: creature.deck,
-        openingMove: creature.openingMove,
       });
     }
     if(rebuilt.length) area.enemies = rebuilt;
@@ -4586,16 +4625,14 @@ function setEnemyUI(idx){
       eDeck = buildCreatureDeck(creatureDef, e.str || (creatureDef.baseStats && creatureDef.baseStats.str) || 10);
     }
   }
+  // Draw pool holds card-ID STRINGS (symmetric with the player; actorDraw
+  // expects ids, not objects — the old enemyDrawCard path used objects).
   var pool=[];
   (eDeck).forEach(function(card){
     if(typeof card==='string'){
-      // New format: card ID string — look up in CARDS
-      var cDef=CARDS[card];
-      if(cDef) pool.push({id:card, name:cDef.name, _new:true});
-      else pool.push({id:card, name:card, _new:true});
-    } else {
-      // Old format: inline card object with copies
-      for(var i=0;i<(card.copies||1);i++) pool.push(Object.assign({},card));
+      pool.push(card);
+    } else if(card && card.id){
+      for(var i=0;i<(card.copies||1);i++) pool.push(card.id);
     }
   });
   // Shuffle
@@ -4740,6 +4777,14 @@ function startBattle(){
   // (Future: on_battle_start triggers can be added to creature innate definitions)
   for(var i=0;i<startCards;i++) doDraw(null,true);
 
+  // Symmetric opening hand for the enemy (base 3 — no player relic/shrine
+  // bonuses; those are player progression, not combatant-intrinsic).
+  if(gs.actors && gs.actors.enemy){
+    for(var _ei=0; _ei<3; _ei++) actorDraw(gs.actors.enemy, null, true);
+    gs.actors.enemy.drawTimer = 0;
+    gs.actors.enemy._reactionTimer = 0;
+  }
+
   startLoops();
 
   // Round 66: tutorial step machine starts after the initial draw
@@ -4755,7 +4800,7 @@ function startBattle(){
     }, 800);
   }
 }
-function startLoops(){ stopLoops(); tickTimer=setInterval(gameTick,100); scheduleEnemyAction(); }
+function startLoops(){ stopLoops(); tickTimer=setInterval(gameTick,100); }  // enemy now driven by gameTick (symmetric play model)
 function stopLoops(){ clearInterval(tickTimer); tickTimer=null; clearTimeout(enemyTimer); enemyTimer=null; clearInterval(_enemyDrawBarTimer); _enemyDrawBarTimer=null; }
 
 // Manabound purge — when a creature's mana hits 0, all manabound
@@ -4905,7 +4950,13 @@ function gameTick(){
       // Get effect array from innate or INNATE_EFFECTS registry
       var eInn = eActor.creature.innate;
       var eEffArr = eInn.effect || (typeof INNATE_EFFECTS !== 'undefined' ? INNATE_EFFECTS[eInn.id] : null);
-      if(eEffArr && eEffArr.length && eActor.innateCooldown <= 0 && eActor.mana >= (eInn.cost||0)){
+      // Self-cost (HP) innate guard — a bot must not sacrifice itself to
+      // death. Only fire a blood-cost innate when HEALTHY (>50% max HP and
+      // able to pay) AND genuinely card-starved (small hand). Conservative;
+      // the future WIS-quality AI layer can let high-WIS cultists push harder.
+      var eHpCost = eInn.costHp ? Math.round(eActor.maxHp * eInn.costHp) : 0;
+      var selfCostOk = !eHpCost || (eActor.hp > eHpCost && eActor.hp > eActor.maxHp * 0.5 && eActor.hand.length <= 2);
+      if(eEffArr && eEffArr.length && eActor.innateCooldown <= 0 && eActor.mana >= (eInn.cost||0) && selfCostOk){
         var shouldActivate = true;
         if(eInn.id === 'absorb' && (!gs.lastCardPlayed || !CARDS[gs.lastCardPlayed])) shouldActivate = false;
         if(eInn.id === 'quick_hands' && eActor.hand.length === 0) shouldActivate = false;
@@ -4919,6 +4970,38 @@ function gameTick(){
     // Tick enemy actor innate cooldown
     if(eActor.innateCooldown > 0) eActor.innateCooldown = Math.max(0, eActor.innateCooldown - 100);
   }
+
+  // ── Enemy draw + reaction (symmetric play model, V1) ──
+  // The enemy draws on the SAME gameTick clock as the player and plays
+  // from a held hand on a separate AGI-based "reaction" beat — replacing
+  // the old draw-one-play-one loop (scheduleEnemyAction/doEnemyAction).
+  if(gs.actors && gs.actors.enemy && gs.running){
+    var enAct = gs.actors.enemy;
+    var enDef = gs.enemies[gs.enemyIdx];
+    // DRAW timer — fills toward the next draw, like the player's bar.
+    enAct.drawTimer = (enAct.drawTimer||0) + 100;
+    var enInterval = getDrawInterval(enAct);
+    var enBar = document.getElementById('e-draw-bar');
+    if(enBar){ enBar.style.transition='none'; enBar.style.width = Math.min(100,(enAct.drawTimer/enInterval)*100)+'%'; }
+    var enEta = document.getElementById('enemy-eta');
+    if(enEta) enEta.textContent = Math.max(0,(enInterval-enAct.drawTimer)/1000).toFixed(1)+'s';
+    if(enAct.drawTimer >= enInterval){
+      enAct.drawTimer = 0;
+      actorDraw(enAct, null, false);   // actorDraw handles its own hand-overflow auto-play
+    }
+    // REACTION timer — the AI driver's beat: decide whether to play.
+    if(gs.running){
+      enAct._reactionTimer = (enAct._reactionTimer||0) + 100;
+      if(enAct._reactionTimer >= calcReactionInterval(enAct.agi)){
+        enAct._reactionTimer = 0;
+        if(pickCardToPlay(enAct) >= 0) _enemyPlayCard(enDef);
+      }
+    }
+    if(typeof syncActorsToGS==='function') syncActorsToGS();
+    checkEnd();
+    if(!gs || !gs.running) return;
+  }
+
   // Draw speed bonus timer
   if(gs.drawSpeedBonusTimer>0){
     gs.drawSpeedBonusTimer-=100;
@@ -4928,18 +5011,24 @@ function gameTick(){
   gs.drawTimer+=100;
   // Rooted: can't draw
   if(gs.playerRooted){ document.getElementById('draw-bar').style.width='0%'; updateAll(); maybeRenderHand(); return; }
-  var eff=calcDrawInterval(gs.stats.agi)/gs.drawSpeedBonus;
-  // Apply drawspeed debuffs
-  getStatuses('player','drawspeed').forEach(function(s){ eff=eff/(1+s.val); });
-  // Apply flat draw delay (Orbweaver web trap)
-  eff=eff+(gs.playerDrawDelay||0);
-  // Apply Slow debuff to player draw interval (percentage-based)
-  var playerSlow=gs.statusEffects.player.find(function(s){return s.stat==='slow_draw';});
-  if(playerSlow) eff=Math.round(eff*(1+(playerSlow.val||0.5)));
-  // Apply one-time draw speed bonus (e.g. Fence the Goods)
-  if(gs._nextDrawBonus&&gs._nextDrawBonus>0){
-    eff=Math.max(200, eff-gs._nextDrawBonus);
-    gs._nextDrawBonus=0;
+  var eff=calcDrawInterval(gs.stats.agi);
+  // Grub's Relentless aura — draw speed can't be modified by any effect.
+  // Skip the whole modifier stack and use the raw AGI-derived interval.
+  var pLockedDraw = (gs.actors && gs.actors.player && typeof getAura==='function') ? getAura(gs.actors.player,'lockedDrawSpeed') : 0;
+  if(!pLockedDraw){
+    eff = eff / gs.drawSpeedBonus;
+    // Apply drawspeed debuffs
+    getStatuses('player','drawspeed').forEach(function(s){ eff=eff/(1+s.val); });
+    // Apply flat draw delay (Orbweaver web trap)
+    eff=eff+(gs.playerDrawDelay||0);
+    // Apply Slow debuff to player draw interval (percentage-based)
+    var playerSlow=gs.statusEffects.player.find(function(s){return s.stat==='slow_draw';});
+    if(playerSlow) eff=Math.round(eff*(1+(playerSlow.val||0.5)));
+    // Apply one-time draw speed bonus (e.g. Fence the Goods)
+    if(gs._nextDrawBonus&&gs._nextDrawBonus>0){
+      eff=Math.max(200, eff-gs._nextDrawBonus);
+      gs._nextDrawBonus=0;
+    }
   }
   var pct=(gs.drawTimer/eff)*100;
   document.getElementById('draw-bar').style.width=Math.min(pct,100)+'%';
@@ -4953,12 +5042,21 @@ function scheduleEnemyAction(){
   clearInterval(_enemyDrawBarTimer);
   var e=gs.enemies[gs.enemyIdx];
   var interval=e.atkInterval;
-  getStatuses('enemy','atkspeed').forEach(function(s){ interval=Math.round(interval/(1+(s.val||0))); });
-  // Frenzy: reduce interval by frenzy multiplier
-  if(e._frenzyAtkMult && e._frenzyAtkMult > 1) interval = Math.round(interval / e._frenzyAtkMult);
-  // slow_draw: percentage-based draw speed reduction (non-stacking)
-  var slowDraw=gs.statusEffects.enemy.find(function(s){return s.stat==='slow_draw';});
-  if(slowDraw) interval=Math.round(interval*(1+(slowDraw.val||0.5)));
+  // Grub's Relentless aura — draw speed can't be modified by any effect.
+  // Skip atkspeed / haste / frenzy / slow_draw reads entirely.
+  var eLockedDraw = (gs.actors && gs.actors.enemy && typeof getAura==='function') ? getAura(gs.actors.enemy,'lockedDrawSpeed') : 0;
+  if(!eLockedDraw){
+    getStatuses('enemy','atkspeed').forEach(function(s){ interval=Math.round(interval/(1+(s.val||0))); });
+    // Haste: same shape — apply_status pushes a stat:'haste' status on
+    // the enemy side, but the legacy loop above only knew about
+    // 'atkspeed'. So Hellfire / enemy Lunge / etc. went invisible.
+    getStatuses('enemy','haste').forEach(function(s){ interval=Math.round(interval/(1+(s.val||0))); });
+    // Frenzy: reduce interval by frenzy multiplier
+    if(e._frenzyAtkMult && e._frenzyAtkMult > 1) interval = Math.round(interval / e._frenzyAtkMult);
+    // slow_draw: percentage-based draw speed reduction (non-stacking)
+    var slowDraw=gs.statusEffects.enemy.find(function(s){return s.stat==='slow_draw';});
+    if(slowDraw) interval=Math.round(interval*(1+(slowDraw.val||0.5)));
+  }
   if(!interval||isNaN(interval)||interval<200) interval=200;
   // Animate draw bar draining over interval
   var elapsed=0;
@@ -5068,15 +5166,6 @@ function _enemyPlayCard(e){
 
 // ── Enemy Active Innate Trigger System ──────────────────────────
 // Creatures with innate.trigger:'mana_full' fire when mana >= cost.
-// Creatures with innate.trigger:'hp_below' fire when HP <= threshold.
-// Creatures with innate.trigger:'on_timer' fire every innate.cooldown ms.
-// Passive innates (trigger:'passive' or no trigger) need no AI here.
-function applyPlayerDmgMods(dmg,e){
-  // Lurk: first enemy card deals double damage
-  if(e.innate&&e.innate.id==='lurk'&&gs.enemyCardCount===1) dmg*=2;
-  return Math.max(1,Math.round(dmg));
-}
-
 // ═══════════════════════════════════════════════════════
 // HIT FEEDBACK — shake, flash, floating numbers
 // ═══════════════════════════════════════════════════════
@@ -6966,14 +7055,13 @@ function nextEnemy(autoChain){
   if(creatureDef && creatureDef.deckOrder){
     eDeck = buildCreatureDeck(creatureDef, e.str);
   }
+  // Draw pool holds card-ID STRINGS (symmetric with the player / actorDraw).
   var pool=[];
   eDeck.forEach(function(card){
     if(typeof card==='string'){
-      var cDef=CARDS[card];
-      if(cDef) pool.push({id:card, name:cDef.name, _new:true});
-      else pool.push({id:card, name:card, _new:true});
-    } else {
-      for(var i=0;i<(card.copies||1);i++) pool.push(Object.assign({},card));
+      pool.push(card);
+    } else if(card && card.id){
+      for(var i=0;i<(card.copies||1);i++) pool.push(card.id);
     }
   });
   for(var i=pool.length-1;i>0;i--){ var j=Math.floor(Math.random()*(i+1)); var tmp=pool[i]; pool[i]=pool[j]; pool[j]=tmp; }
@@ -7094,15 +7182,12 @@ function startArenaCombat(opts){
     icon:  ch.icon,
     str:   str, agi: agi, wis: wis,
     baseHp: Math.max(1, str * 5),
-    // Damage scaling parallels buildArea's normal-enemy formula
-    dmgMult:     1 + lv * 0.2,
     atkInterval: (typeof calcDrawInterval === 'function') ? calcDrawInterval(agi) : 3000,
     // No area-XP from arena enemies — rewards flow through callbacks
     xp:          0,
     innate:      ch.innate,
     // Custom deck if the code carries one, otherwise the creature's base
     deck:        (p.deck && p.deck.length) ? p.deck.slice() : (ch.deck || ['strike','strike','brace']),
-    openingMove: ch.openingMove,
     // Stash relic/ascension hooks for future combat-side use (TBD)
     _arenaRelics:    (p.rel || []).slice(),
     _arenaAscension: p.asc || 0
@@ -7360,12 +7445,9 @@ function _dvRenderGrid(){
   ids.forEach(function(id){
     var c=CARDS[id]; if(!c) return;
     var cls='de-acard'+(c.champ===_dvChampId?' de-acard-champ':'')+(_dvInspect&&_dvInspect.id===id?' de-acard-selected':'');
-    var effLine=(c.effect||'').split('\n')[0];
-    var art=(typeof _deCardArt==='function') ? _deCardArt(id,c) : '<span style="font-size:18px;">'+(c.icon||'?')+'</span>';
+    // Real frame card in the grid (matches the deck builder).
     html+='<div class="'+cls+'" onclick="_dvInspectCard(\''+id+'\')">'
-      +'<div class="de-acard-art">'+art+'</div>'
-      +'<div class="de-acard-name">'+c.name+'</div>'
-      +'<div class="de-acard-effect">'+effLine+'</div>'
+      +(typeof buildCardHTML==='function' ? buildCardHTML(id,false) : '')
       +'<div class="de-copy-count">×'+_dvCounts[id]+'</div>'
       +'</div>';
   });
@@ -7471,12 +7553,15 @@ function closePilePopup(e){
 function cardEffectFontSize(effectText){
   var raw=(effectText||'').replace(/<[^>]+>/g,'').replace(/\s+/g,' ').trim();
   var len=raw.length;
-  if(len<=30)  return 'font-size:12px;line-height:1.6;';
-  if(len<=55)  return 'font-size:10.5px;line-height:1.7;';
-  if(len<=80)  return 'font-size:9.5px;line-height:1.75;';
-  if(len<=110) return 'font-size:8.5px;line-height:1.8;';
-  if(len<=145) return 'font-size:7.5px;line-height:1.9;';
-  return              'font-size:6.5px;line-height:2.0;';
+  // Tuned for Press Start 2P in the frame's ~270x209 text box (line-height
+  // 1.9 lives in the .card-effect rule). 14px max (J's tuned value), shrink
+  // for longer cards so every card fits without clipping.
+  if(len<=42)  return 'font-size:11px;';
+  if(len<=70)  return 'font-size:10px;';
+  if(len<=100) return 'font-size:9px;';
+  if(len<=140) return 'font-size:8px;';
+  if(len<=190) return 'font-size:7px;';
+  return            'font-size:6px;';
 }
 
 // Card art — priority: card sprite -> champion sprite -> emoji.
@@ -7639,7 +7724,9 @@ function buildCardHTML(id,isGhost){
   var playerActor = (typeof gs !== 'undefined' && gs && gs.actors) ? gs.actors.player : null;
   var mechanic = _resolveCardEffectHTML(id, null, playerActor);
   var manaCost=c.manaCost!=null?c.manaCost:0;
-  var fzStyle=cardEffectFontSize(c.effect||'');
+  // Size from the ACTUAL rendered text (generator output), not the static
+  // effect: string — so effects-only cards (no effect:) size correctly.
+  var fzStyle=cardEffectFontSize(mechanic||c.effect||'');
   var tags=getCardTags(c);
   var tagsHTML=buildTagsHTML(tags);
   var identity=getCardIdentityLabel(c);
@@ -7675,17 +7762,26 @@ function maybeRenderHand(){
 }
 
 // ── Card effect text generation (shared by renderHand, updateHandText, buildCardHTML, etc.) ──
+// Generator-first: if effects[] exists, use generateCardTextHTML regardless
+// of whether we have a live actor. Without an actor, dynamic-source cards
+// render with the 'X' placeholder and static-stat formulas show as math —
+// same as the deck builder / audit view. Static fallback only fires for
+// cards that haven't been migrated to effects[].
 function _resolveCardEffectHTML(cardId, item, actor){
   var cd = CARDS[cardId];
   if(!cd) return '';
-  if(actor && cd.effects && cd.effects.length){
+  if(cd.effects && cd.effects.length){
     try {
-      var rawHtml = generateCardTextHTML(actor, cardId, item);
+      var rawHtml = generateCardTextHTML(actor || null, cardId, item);
       if(typeof rawHtml !== 'string') rawHtml = String(rawHtml || '');
+      // Append the crit-bonus indicator if this hand item carries one.
+      if(item && item.critBonus){
+        rawHtml += '<div class="card-line-sep"></div><span style="color:#60c060;">+[Crit]: '+item.critBonus+'%</span>';
+      }
       return renderKeywords(rawHtml);
     } catch(e){}
   }
-  // Fallback to static text
+  // Fallback to static text (cards without effects[] — not yet migrated).
   var cEffect = cd.effect || '';
   var rawLines = cEffect.split('\n');
   var resolvedLines = rawLines.map(function(line){ return resolveCardEffect(line, gs, null); });
@@ -7828,7 +7924,7 @@ function renderHand(){
 
       var mechanic = _resolveCardEffectHTML(item.id, item, actor);
       var cEffect = cd ? (cd.effect||'') : '';
-      var fzStyle = cardEffectFontSize(cEffect);
+      var fzStyle = cardEffectFontSize(mechanic||cEffect);
       var manaCost = cd&&cd.manaCost!=null?cd.manaCost:0;
       var rTags = getCardTags(cd||{});
       var rTagsHTML = buildTagsHTML(rTags);
@@ -8005,16 +8101,25 @@ function updateAll(){
   var emVal=document.getElementById('e-mana-val'); if(emVal) emVal.textContent=(gs.enemyMana||0)+'/'+(gs.enemyMaxMana||0);
   var ch=getCreaturePlayable(gs.champId);
   // Hidden proxy
-  if(ch.innateActive) document.getElementById('innate-btn').disabled=(!gs.running||gs.mana<ch.innateCost||gs._innCooldown>0);
+  var _innHpCost = ch.innateCostHp ? Math.round(gs.playerMaxHp*ch.innateCostHp) : 0;
+  if(ch.innateActive) document.getElementById('innate-btn').disabled=(!gs.running||gs.mana<ch.innateCost||gs._innCooldown>0||(_innHpCost>0&&gs.playerHp<=_innHpCost));
   // Innate card: mana bar + ready glow
   if(ch.innateActive){
     var innateCard=document.getElementById('innate-card');
     var fill=document.getElementById('innate-mana-fill');
     var lbl=document.getElementById('innate-mana-lbl');
     var cost=ch.innateCost||1;
+    var hpCost=ch.innateCostHp?Math.round(gs.playerMaxHp*ch.innateCostHp):0;
     var onCooldown = gs._innCooldown > 0;
-    var manaPct=Math.min(100,Math.round((gs.mana/cost)*100));
-    var ready=gs.running&&gs.mana>=cost&&!onCooldown;
+    // HP-cost (self-sacrifice) innates show readiness/cost in HP, not mana.
+    var ready, manaPct;
+    if(hpCost){
+      ready = gs.running && gs.playerHp > hpCost && !onCooldown;
+      manaPct = ready ? 100 : 0;
+    } else {
+      manaPct=Math.min(100,Math.round((gs.mana/cost)*100));
+      ready=gs.running&&gs.mana>=cost&&!onCooldown;
+    }
     if(fill){
       if(onCooldown){
         // Show cooldown progress instead of mana
@@ -8029,6 +8134,8 @@ function updateAll(){
     if(lbl){
       if(onCooldown){
         lbl.textContent = (gs._innCooldown/1000).toFixed(1)+'s';
+      } else if(hpCost){
+        lbl.textContent='-'+hpCost+' HP';
       } else {
         lbl.textContent=Math.min(gs.mana,cost)+' / '+cost;
       }
@@ -8157,7 +8264,7 @@ function togglePause(){
   }
   // Desaturate/blur the creatures + background while paused.
   _setCombatPauseVisual();
-  if(!paused) scheduleEnemyAction();
+  // Enemy resumes automatically — gameTick drives its draw+reaction now.
 }
 
 // ═══════════════════════════════════════════════════════

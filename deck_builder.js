@@ -337,7 +337,11 @@ function _deRenderGrid(){
     var atMax = !isUncappedCardId(cardId) && (deckCounts[cardId]||0) >= MAX_CARD_COPIES;
     var inDeck = deckCounts[cardId] || 0;
     var buyGold = 50;
-    var effLine = (card.effect||'').split('\n')[0];
+    // Compact tile — first line of effect text. Routed through the
+    // generator when effects[] exists, falls back to static effect:.
+    var effLine = (typeof getCardDisplayHTML === 'function')
+      ? getCardDisplayHTML(cardId, {firstLine:true})
+      : (card.effect||'').split('\n')[0];
 
     // Source badge — shown on shared cards (and on champion-card if owner ≠ active, which shouldn't happen)
     var srcBadge = '';
@@ -356,10 +360,8 @@ function _deRenderGrid(){
     if(_deInspect && _deInspect.id === cardId) classes += ' de-acard-selected';
 
     html += '<div class="'+classes+'" onclick="_deInspectCard(\''+cardId+'\')">'
+      + (typeof buildCardHTML==='function' ? buildCardHTML(cardId,false) : '')
       + srcBadge
-      + '<div class="de-acard-art">'+_deCardArt(cardId,card)+'</div>'
-      + '<div class="de-acard-name">'+card.name+'</div>'
-      + '<div class="de-acard-effect">'+(typeof renderKeywords==='function'?renderKeywords(effLine):effLine)+'</div>'
       + (inDeck>0?'<div class="de-copy-count">in deck: ×'+inDeck+'</div>':'')
       + (item.isLocked && item.canBuy ? '<span class="de-buy-badge" onclick="event.stopPropagation();_deBuyUnlock(\''+cardId+'\','+buyGold+')">'+buyGold+'g</span>':'')
       + (item.isLocked && !item.canBuy ? '<span class="de-lock-badge">Lv.5</span>':'')
@@ -393,7 +395,10 @@ function _deRenderInspector(){
 function _cardInspectorHTML(card, ctxChampId){
   if(!card) return '<div class="de-info-empty">Select a card to see details</div>';
   var cardId = card.id || '';
-  var fullEffect = renderKeywords((card.effect||'').replace(/\n/g,'<br>'));
+  // Full effect text — generator first, static fallback. Already kw-processed.
+  var fullEffect = (typeof getCardDisplayHTML === 'function')
+    ? getCardDisplayHTML(cardId)
+    : renderKeywords((card.effect||'').replace(/\n/g,'<br>'));
   var html = '';
 
   if(typeof buildCardHTML === 'function'){
@@ -407,7 +412,11 @@ function _cardInspectorHTML(card, ctxChampId){
   html += '<div class="de-insp-type">'+typeLine+'</div>';
   html += '<div class="de-insp-effect">'+fullEffect+'</div>';
 
-  var kwMatches = (card.effect||'').match(/\[([A-Za-z_]+)\]/g);
+  // Scan kw tokens from the canonical text (generator preferred).
+  var kwSource = (typeof getCardDisplayText === 'function')
+    ? getCardDisplayText(cardId)
+    : (card.effect||'');
+  var kwMatches = kwSource.match(/\[([A-Za-z_]+)\]/g);
   if(kwMatches){
     var seen = {};
     var kwHtml = '';

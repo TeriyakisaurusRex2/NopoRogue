@@ -81,7 +81,16 @@ function _applyBurn(dpt, durMs){
   }
   var dur=(durMs||9000)+((gs&&gs._relicBurnDurBonus)||0);
   var e=gs.statusEffects.enemy.find(function(s){return s.id==='burn';});
-  if(e){ e.remaining=dur; e.maxRemaining=dur; }
+  if(e){
+    e.remaining=dur; e.maxRemaining=dur;
+    // Stronger Burn replaces weaker (Status doc rule). Weaker
+    // reapplication refreshes duration only.
+    if(dpt > (e.dpt||0)){
+      e.dpt = dpt;
+      e.label = 'Burn ('+dpt+'/s)';
+      e.desc  = 'Burn: '+dpt+' dmg/s. Bypasses Shield. Does not stack — reapplication refreshes duration.';
+    }
+  }
   else {
     gs.statusEffects.enemy.push({id:'burn',label:'Burn ('+dpt+'/s)',cls:'debuff',stat:'dot',
       remaining:dur,maxRemaining:dur,dot:true,dpt:dpt,tickMs:1000,tickAcc:0,
@@ -100,7 +109,14 @@ function _applyBurn(dpt, durMs){
 function _applyBurnToPlayer(dpt, durMs){
   var dur=durMs||9000;
   var e=gs.statusEffects.player.find(function(s){return s.id==='burn';});
-  if(e){ e.remaining=dur; e.maxRemaining=dur; }
+  if(e){
+    e.remaining=dur; e.maxRemaining=dur;
+    if(dpt > (e.dpt||0)){
+      e.dpt = dpt;
+      e.label = 'Burn ('+dpt+'/s)';
+      e.desc  = 'Burn: '+dpt+' dmg/s. Bypasses Shield.';
+    }
+  }
   else {
     gs.statusEffects.player.push({id:'burn',label:'Burn ('+dpt+'/s)',cls:'debuff',stat:'dot',
       remaining:dur,maxRemaining:dur,dot:true,dpt:dpt,tickMs:1000,tickAcc:0,
@@ -472,7 +488,8 @@ function _applyAura(actor, auraDef){
   // (base + card modifiers + attackCritBonus) so the doubling counts
   // every crit source the card receives.
   var modKeys = ['debuffDurMult','poisonTickMult','poisonDurMult','burnDurMult',
-                 'shieldMult','healMult','critDmgMult','attackCritBonus','attackCritMult','bleedStrDiv'];
+                 'shieldMult','healMult','critDmgMult','attackCritBonus','attackCritMult',
+                 'bleedStrDiv','churnBonus','etherealManaBurn','lockedDrawSpeed'];
   modKeys.forEach(function(key){
     if(eff[key] !== undefined) actor.auras[key] = eff[key];
   });
@@ -495,7 +512,8 @@ function _removeAura(actor, auraDef){
   // (base + card modifiers + attackCritBonus) so the doubling counts
   // every crit source the card receives.
   var modKeys = ['debuffDurMult','poisonTickMult','poisonDurMult','burnDurMult',
-                 'shieldMult','healMult','critDmgMult','attackCritBonus','attackCritMult','bleedStrDiv'];
+                 'shieldMult','healMult','critDmgMult','attackCritBonus','attackCritMult',
+                 'bleedStrDiv','churnBonus','etherealManaBurn','lockedDrawSpeed'];
   modKeys.forEach(function(key){
     if(eff[key] !== undefined) delete actor.auras[key];
   });
@@ -727,6 +745,171 @@ var EFFECT_DISPLAY = {
   // echo:         {cat:'keyword',  order:9},  // future
 };
 
+// ══════════════════════════════════════════════════════════════
+// fmt — TEXT FORMAT PRIMITIVES
+// ══════════════════════════════════════════════════════════════
+// Single source of truth for card-text style rules. Change a rule
+// here and every card that uses the renderer picks it up.
+//
+// Design notes:
+//   • All functions are HTML-safe: values may be plain numbers OR
+//     already-wrapped <span class="stat-val">N</span> strings. fmt
+//     just concatenates — wrapping is the caller's choice.
+//   • Empty/null parts drop out cleanly (no "Apply [X] for s." junk).
+//   • Style rules live ONLY here. CLAUDE.md describes them but this
+//     module enforces them.
+//
+// Style rules currently encoded:
+//   • Duration suffix is "for Ns" (not bare "Ns").
+//   • Keyword-first ordering: "Apply [Poison] 3" never "Apply 3 [Poison]".
+//   • Self-target buffs use "Gain"; opponent-target debuffs use "Apply".
+//   • Mana Burn is plain text (no brackets) — flip one line to change.
+// ══════════════════════════════════════════════════════════════
+
+var fmt = {
+
+  // Duration → "for 3s". Falsy → "".
+  // Accepts a plain number OR a pre-wrapped HTML string (e.g. sv-span)
+  // for live-combat usage. Don't coerce — preserve HTML.
+  dur: function(s){
+    if(s === null || s === undefined || s === '' || s === 0) return '';
+    return 'for '+s+'s';
+  },
+
+  // Percent. Accepts a number (0.20→"20%" or 20→"20%") OR a pre-wrapped
+  // string (passes through). Don't coerce HTML.
+  pct: function(n){
+    if(n === null || n === undefined || n === '') return '0%';
+    if(typeof n === 'number'){
+      if(!n) return '0%';
+      if(n > 0 && n < 1) return Math.round(n*100)+'%';
+      return Math.round(n)+'%';
+    }
+    // String (possibly HTML-wrapped) — assume caller already formatted.
+    return n+'%';
+  },
+
+  // Keyword chip: "[Poison]" or "[Poison] 3".
+  // val may be a number or pre-formatted string (e.g. sv-wrapped span).
+  kw: function(name, val){
+    var s = '['+name+']';
+    if(val !== undefined && val !== null && val !== '') s += ' '+val;
+    return s;
+  },
+
+  // "Apply [Keyword] N for Ms." — opponent-target convention.
+  applyKw: function(name, val, dur){
+    var s = 'Apply '+fmt.kw(name, val);
+    var d = fmt.dur(dur);
+    if(d) s += ' '+d;
+    return s+'.';
+  },
+
+  // "Gain [Keyword] N for Ms." — self-target convention.
+  gainKw: function(name, val, dur){
+    var s = 'Gain '+fmt.kw(name, val);
+    var d = fmt.dur(dur);
+    if(d) s += ' '+d;
+    return s+'.';
+  },
+
+  // Card-reference token. Combat renderer turns this into a hoverable chip.
+  cardRef: function(cardId){ return '{{'+cardId+'}}'; },
+
+  // Mana cost in prose: "20 mana".
+  mana: function(n){ return (+n||0)+' mana'; },
+
+  // Stat scaling formula fragment: "STR÷4". Falsy stat → "".
+  statScale: function(stat, div){
+    if(!stat || stat === 'none') return '';
+    return stat.toUpperCase()+'÷'+(+div||1);
+  },
+
+  // "Deal N damage." or "Deal N damage × K hits."
+  // base may be a number or pre-formatted string.
+  dmg: function(base, hits){
+    hits = +hits || 1;
+    if(hits > 1) return 'Deal '+base+' damage × '+hits+' hits.';
+    return 'Deal '+base+' damage.';
+  },
+
+  // "Heal N HP."
+  heal: function(amt){ return 'Heal '+amt+' HP.'; },
+
+  // "Mana Burn N." — currently unbracketed. To bracket it as a keyword:
+  //   return fmt.kw('Mana Burn', val)+'.';
+  manaBurn: function(val){ return 'Mana Burn '+val+'.'; },
+
+  // Plural helper: fmt.pl(n, 'card') → 'card' or 'cards'.
+  pl: function(n, sing, plur){
+    n = +n||0;
+    if(n === 1) return sing;
+    return plur || (sing+'s');
+  },
+
+  // Status display table — drives apply_status text rendering.
+  //   name    : display name (without brackets)
+  //   showVal : whether to print the value next to the keyword
+  //   showDur : whether to append "for Ns"
+  //   asPct   : show value as percent (e.g. Haste 20%, Slow 50%)
+  //   gain    : default verb is "Gain" rather than "Apply" (when target=self)
+  STATUS_FMT: {
+    poison: { name:'Poison', showVal:true,  showDur:true,  asPct:false, gain:false },
+    burn:   { name:'Burn',   showVal:false, showDur:true,  asPct:false, gain:false },
+    bleed:  { name:'Bleed',  showVal:true,  showDur:true,  asPct:false, gain:false },
+    weaken: { name:'Weaken', showVal:false, showDur:true,  asPct:false, gain:false },
+    slow:   { name:'Slow',   showVal:true,  showDur:true,  asPct:true,  gain:false },
+    stun:   { name:'Stun',   showVal:false, showDur:false, asPct:false, gain:false },
+    haste:  { name:'Haste',  showVal:true,  showDur:true,  asPct:true,  gain:true  },
+    shield: { name:'Shield', showVal:true,  showDur:true,  asPct:false, gain:true  },
+    thorns: { name:'Thorns', showVal:true,  showDur:true,  asPct:false, gain:true  },
+    dodge:  { name:'Dodge',  showVal:false, showDur:true,  asPct:false, gain:true  },
+    // Frenzy is stack-count, no duration. Phrasing: "Gain [Frenzy] N."
+    frenzy: { name:'Frenzy', showVal:true,  showDur:false, asPct:false, gain:true  }
+  },
+
+  // ── Dynamic source descriptors for dmg_scaling ──────────────────
+  // Each source maps to a SINGULAR-unit phrase used in "per [unit]"
+  // text. Two perspectives: self (caster) and opp (opposing side).
+  //
+  // The static-vs-dynamic convention is enforced here. Static stat
+  // scaling (eff.source==='stat') uses math notation: "Deal 10+STR÷4".
+  // Dynamic in-combat sources use descriptive English: "Deal 1 damage
+  // per card in your discard pile." — chosen because the value changes
+  // moment-to-moment and the player needs to see WHAT it's coming from.
+  SOURCE_DESC: {
+    hand_size:    { self:'card in your hand',         opp:'card in the enemy\'s hand' },
+    discard_size: { self:'card in your discard pile', opp:'card in the enemy\'s discard pile' },
+    missing_hp:   { self:'missing HP',                opp:'HP missing from the enemy' },
+    shield:       { self:'point of your [Shield]',    opp:'point of enemy [Shield]' },
+    missing_mana: { self:'missing mana',              opp:'mana missing from the enemy' },
+    cards_played: { self:'card you have played',      opp:'card the enemy has played' },
+    purged_count: { self:'card purged',               opp:'card purged' }
+  },
+
+  // MTG-style dynamic damage:
+  //   base=0:  "Deal X damage (1 per UNIT)."
+  //   base>0:  "Deal BASE + X damage (M per UNIT)."
+  // X is the scaling-portion placeholder. In live mode, the caller passes
+  // an xLabel arg containing the resolved number (sv-wrapped). In no-actor
+  // mode, xLabel defaults to literal 'X' so the rule reads as a template.
+  // Returns '' if source is 'stat' — caller renders math notation.
+  dmgScalingText: function(base, mult, source, check, wrap, xLabel){
+    if(source === 'stat') return '';
+    wrap = wrap || function(x){ return ''+x; };
+    var perspective = (check === 'opponent') ? 'opp' : 'self';
+    var desc = fmt.SOURCE_DESC[source];
+    var unit = desc ? desc[perspective] : String(source||'').replace(/_/g,' ');
+    var perUnit = (mult > 1 ? wrap(mult) : '1') + ' per ' + unit;
+    // X — resolved live value (already sv-wrapped by caller) OR literal 'X'.
+    var x = (xLabel !== undefined && xLabel !== null) ? xLabel : wrap('X');
+    if(base > 0){
+      return 'Deal '+wrap(base)+' + '+x+' damage ('+perUnit+').';
+    }
+    return 'Deal '+x+' damage ('+perUnit+').';
+  }
+};
+
 // Generate a single effect's display text with live values.
 // extraCrit (optional) is folded into a dmg_conditional's [Crit] line so
 // the card shows ONE merged crit total — base + mods + item.critBonus +
@@ -750,17 +933,28 @@ function _effectLiveText(eff, actor, opponent, extraCrit, compoundN){
     case 'dmg_conditional': {
       var base = +eff.base || 0;
       var dmgFbase = base, dmgFparts = [];
-      if(eff.stat && actor){
-        var statVal = actor[eff.stat] || 0;
-        var dadd = Math.floor(statVal / (+eff.stat_div || 1));
-        base += dadd;
-        dmgFparts.push(eff.stat.toUpperCase()+' '+statVal+' ÷ '+(+eff.stat_div||1)+' = +'+dadd);
+      // No-actor path (deck builder / audit) emits the formula inline
+      // instead of a resolved value — same shape as hand-written text.
+      var noActorFormula = '';
+      if(eff.stat){
+        if(actor){
+          var statVal = actor[eff.stat] || 0;
+          var dadd = Math.floor(statVal / (+eff.stat_div || 1));
+          base += dadd;
+          dmgFparts.push(eff.stat.toUpperCase()+' '+statVal+' ÷ '+(+eff.stat_div||1)+' = +'+dadd);
+        } else {
+          noActorFormula += '+'+fmt.statScale(eff.stat, eff.stat_div);
+        }
       }
-      if(eff.stat2 && actor){
-        var statVal2 = actor[eff.stat2] || 0;
-        var dadd2 = Math.floor(statVal2 / (+eff.stat2_div || 1));
-        base += dadd2;
-        dmgFparts.push(eff.stat2.toUpperCase()+' '+statVal2+' ÷ '+(+eff.stat2_div||1)+' = +'+dadd2);
+      if(eff.stat2){
+        if(actor){
+          var statVal2 = actor[eff.stat2] || 0;
+          var dadd2 = Math.floor(statVal2 / (+eff.stat2_div || 1));
+          base += dadd2;
+          dmgFparts.push(eff.stat2.toUpperCase()+' '+statVal2+' ÷ '+(+eff.stat2_div||1)+' = +'+dadd2);
+        } else {
+          noActorFormula += '+'+fmt.statScale(eff.stat2, eff.stat2_div);
+        }
       }
       // [Compound] damage scaling — fold the live count into the preview.
       if(compoundN && +eff.compoundDmg){
@@ -771,7 +965,17 @@ function _effectLiveText(eff, actor, opponent, extraCrit, compoundN){
       var dmgFormula = dmgFparts.length ? (dmgFbase+' base   '+dmgFparts.join('   ')+'   →   '+base) : null;
       var hits = +eff.hits || 1;
       if(compoundN && +eff.compoundHits) hits += (+eff.compoundHits) * compoundN;
-      var txt = 'Deal '+svf(base, dmgFormula)+' damage';
+      // Compose damage display: live resolved value with formula tooltip,
+      // OR (no actor) inline formula like "10+STR÷4".
+      var dmgDisplay;
+      if(noActorFormula){
+        // Strip leading "+" when base is 0 (e.g. "WIS÷2" not "0+WIS÷2").
+        var bodyStr = (base === 0) ? noActorFormula.replace(/^\+/,'') : (base + noActorFormula);
+        dmgDisplay = sv(bodyStr);
+      } else {
+        dmgDisplay = svf(base, dmgFormula);
+      }
+      var txt = 'Deal '+dmgDisplay+' damage';
       if(hits > 1) txt += ' × '+sv(hits)+' hits';
       // Base crit — merge the printed % with any external bonus (mods,
       // item.critBonus from Markup copies, auras) into one [Crit] total.
@@ -812,8 +1016,12 @@ function _effectLiveText(eff, actor, opponent, extraCrit, compoundN){
         var condLabel = condLabels[eff.condition] || (eff.condition||'').replace(/_/g,' ');
         var bonusVal = +eff.on_true_val || 0;
         if(eff.on_true === 'bonus_dmg'){
+          // Active (live, condition met): show the boosted total. Inactive
+          // (no-actor / condition unmet): show the RULE as a delta — "deal N
+          // additional damage" — clearer than a flat total and matches the
+          // registry effectText + the dynamic-source convention.
           if(condMet) txt = 'Deal '+sv(base + bonusVal)+' damage'+(hits>1?' × '+sv(hits)+' hits':'') + ' ⚡';
-          else txt += '.<br><span class="card-inactive">'+condLabel+': '+sv(base + bonusVal)+' damage</span>';
+          else txt += '.<br><span class="card-inactive">'+condLabel+': deal '+sv(bonusVal)+' additional damage</span>';
         } else if(eff.on_true === 'crit'){
           if(condMet) txt += '. [Crit]: '+sv(bonusVal)+'% ⚡';
           else txt += '.<br><span class="card-inactive">'+condLabel+': [Crit] '+sv(bonusVal)+'%</span>';
@@ -826,35 +1034,61 @@ function _effectLiveText(eff, actor, opponent, extraCrit, compoundN){
       var base = +eff.base || 0;
       var mult = +eff.mult || 1;
       var sourceVal = 0;
-      var sourceLabel = '';
       var who = (eff.check === 'opponent') ? opponent : actor;
+
+      // Resolve live source value if actor present (needed for both
+      // formula tooltip and stat-source math notation).
       if(who){
         switch(eff.source){
-          case 'hand_size':    sourceVal = who.hand ? who.hand.length : 0; sourceLabel = 'cards in hand'; break;
-          case 'discard_size': sourceVal = who.discardPile ? who.discardPile.length : 0; sourceLabel = 'discarded'; break;
-          case 'missing_hp':   sourceVal = (who.maxHp||0) - (who.hp||0); sourceLabel = 'missing HP'; break;
-          case 'shield':       sourceVal = who.shield || 0; sourceLabel = 'Shield'; break;
-          case 'missing_mana': sourceVal = (who.maxMana||0) - (who.mana||0); sourceLabel = 'missing mana'; break;
-          case 'cards_played': sourceVal = who.cardsPlayed || 0; sourceLabel = 'cards played'; break;
-          case 'purged_count': sourceVal = (ctx && ctx._purgedCount) || 0; sourceLabel = 'cards purged'; break;
+          case 'hand_size':    sourceVal = who.hand ? who.hand.length : 0; break;
+          case 'discard_size': sourceVal = who.discardPile ? who.discardPile.length : 0; break;
+          case 'missing_hp':   sourceVal = (who.maxHp||0) - (who.hp||0); break;
+          case 'shield':       sourceVal = who.shield || 0; break;
+          case 'missing_mana': sourceVal = (who.maxMana||0) - (who.mana||0); break;
+          case 'cards_played': sourceVal = who.cardsPlayed || 0; break;
+          case 'purged_count': sourceVal = (ctx && ctx._purgedCount) || 0; break;
           case 'stat':
             var sn = eff.stat || 'str';
             sourceVal = Math.floor((who[sn]||0) / (+eff.stat_div||1));
-            sourceLabel = sn.toUpperCase()+'÷'+(eff.stat_div||1);
             break;
         }
       }
-      var total = base + (sourceVal * mult);
-      var scaleFormula = sourceLabel ? (base+' base   +   '+sourceVal+' '+sourceLabel+' × '+mult+'   →   '+total) : null;
-      return 'Deal '+svf(total, scaleFormula)+' damage.';
+
+      // Stat source — STATIC equation, math notation ("10+STR÷4 damage").
+      if(eff.source === 'stat'){
+        var sn2 = eff.stat || 'str';
+        var sd2 = +eff.stat_div || 1;
+        var total = base + (sourceVal * mult);
+        if(who){
+          var statFormula = base+' base   +   '+sn2.toUpperCase()+'÷'+sd2+' × '+mult+'   →   '+total;
+          return 'Deal '+svf(total, statFormula)+' damage.';
+        }
+        var statBody = sn2.toUpperCase()+'÷'+sd2;
+        if(mult > 1) statBody = mult+'×'+statBody;
+        if(base > 0) statBody = base+' + '+statBody;
+        return fmt.dmg(sv(statBody));
+      }
+
+      // Dynamic source — MTG-style "Deal BASE + X damage (M per UNIT)."
+      //   Live  : X is replaced by the resolved scaling value (sv-wrapped).
+      //   No-actor: X stays literal — the rule reads as a template.
+      // Both paths share the same shape via fmt.dmgScalingText; only the
+      // xLabel arg differs.
+      var xLabel = who ? sv(sourceVal * mult) : undefined;
+      return fmt.dmgScalingText(base, mult, eff.source, eff.check, sv, xLabel);
     }
 
     case 'mana_burn': {
       var val = +eff.value || 0;
-      if(eff.stat && eff.stat !== 'none' && actor){
-        val += Math.floor((actor[eff.stat]||0) / (+eff.stat_div||4));
+      if(eff.stat && eff.stat !== 'none'){
+        if(actor){
+          val += Math.floor((actor[eff.stat]||0) / (+eff.stat_div||4));
+        } else {
+          // No-actor — inline formula like "Mana Burn 10 + WIS÷4."
+          return fmt.manaBurn(sv(val+' + '+fmt.statScale(eff.stat, eff.stat_div)));
+        }
       }
-      return 'Mana Burn '+sv(val)+'.';
+      return fmt.manaBurn(sv(val));
     }
 
     case 'apply_status': {
@@ -889,27 +1123,76 @@ function _effectLiveText(eff, actor, opponent, extraCrit, compoundN){
         if(auraShMult){ val = Math.round(val * auraShMult); valModified = true; }
       }
 
-      var dur = durSec ? ' '+durSec+'s' : '';
-      if(durModified) dur = ' <span class="card-mod-text">'+durSec+'s</span>';
-
-      // Format based on status type. Round 67r: all statuses keyword-first
-      // — Shield and Poison flipped to "Gain [Shield] X" / "Apply [Poison] X".
-      if(status === 'shield') return 'Gain [Shield] '+(valModified?'<span class="card-mod-text">'+sv(val)+'</span>':svf(val,valFormula))+dur+'.';
-      if(status === 'haste') return '[Haste] '+sv(Math.round(((+eff.value||0)+_cVal)*100))+'%'+(eff.target==='both'?' to both':'')+dur+'.'+(+eff.crit?' [Crit]: '+sv(+eff.crit)+'%':'');
-      if(status === 'poison') return 'Apply [Poison] '+svf(val,valFormula)+dur+'.';
-      if(status === 'burn') return 'Apply [Burn]'+dur+'.';
-      if(status === 'weaken') return '[Weaken]'+dur+'.';
-      if(status === 'slow') return '[Slow] '+sv(Math.round((+eff.value||0.5)*100))+'%'+dur+'.';
-      if(status === 'stun') return '[Stun] 1s.';
-      if(status === 'bleed'){
-        var _bv = val + _bleedHem;
-        var _bf = _bleedHem ? (val+' base   STR '+(actor.str||0)+' ÷ '+_bleedDiv+' = +'+_bleedHem+'   →   '+_bv) : null;
-        return 'Apply [Bleed] '+svf(_bv,_bf)+dur+'.';
+      // Bleed adjustment from Hemorrhage aura — fold into val/formula so the
+      // shared rendering path below picks it up.
+      if(status === 'bleed' && _bleedHem){
+        var _bvBase = val;
+        val = val + _bleedHem;
+        valFormula = (valFormula ? valFormula+'   ' : (_bvBase+' base   '))
+                   + 'STR '+(actor.str||0)+' ÷ '+_bleedDiv+' = +'+_bleedHem+'   →   '+val;
       }
-      if(status === 'thorns') return '[Thorns] '+sv(val)+dur+'.';
-      if(status === 'dodge') return '[Dodge]'+dur+'.';
-      if(status === 'frenzy') return '[Frenzy] '+sv(val)+dur+'.';
-      return status.charAt(0).toUpperCase()+status.slice(1)+' '+sv(val)+dur+'.';
+
+      // Look up the format rules for this status (drives showVal/showDur/asPct/gain).
+      var sdef = fmt.STATUS_FMT[status];
+
+      // Pre-wrap the duration value for live styling. Skip entirely when
+      // the status type doesn't show a duration (e.g. Frenzy).
+      var durDisplay = '';
+      if(durSec && (!sdef || sdef.showDur !== false)){
+        durDisplay = durModified
+          ? '<span class="card-mod-text">'+durSec+'</span>'
+          : sv(durSec);
+      }
+      if(!sdef){
+        // Unknown status — capitalised fallback. Keeps the renderer alive
+        // for any new status added without its STATUS_FMT entry.
+        var fbName = status.charAt(0).toUpperCase()+status.slice(1);
+        return fmt.applyKw(fbName, sv(val), durDisplay);
+      }
+
+      // Stun has a fixed 1s duration in mechanics; render that explicitly
+      // rather than reading eff.dur (which is unused for stun).
+      if(status === 'stun'){
+        var stunTgt = eff.target==='both' ? ' to both' : eff.target==='self' ? ' to self' : '';
+        return 'Apply '+fmt.kw('Stun')+stunTgt+' '+fmt.dur(sv(1))+'.';
+      }
+
+      // Compose the value string with sv/svf wrapping + mod styling.
+      var valWrapped = '';
+      if(sdef.showVal){
+        if(sdef.asPct){
+          // Haste/Slow are stored as fractions (0.20, 0.50). Slow defaults
+          // to 0.5 if value missing — matches pre-fmt behaviour.
+          var rawV = (status === 'slow') ? (+eff.value || 0.5) : (+eff.value || 0);
+          var pctNum = Math.round((rawV + _cVal) * 100);
+          valWrapped = sv(pctNum+'%');
+        } else if(valModified){
+          valWrapped = '<span class="card-mod-text">'+sv(val)+'</span>';
+        } else if(eff.stat && !actor){
+          // No-actor path — inline formula instead of resolved value.
+          var baseV = +eff.value || 0;
+          var formStr = baseV ? (baseV+' + '+fmt.statScale(eff.stat, eff.stat_div))
+                              : fmt.statScale(eff.stat, eff.stat_div);
+          valWrapped = sv(formStr);
+        } else {
+          valWrapped = svf(val, valFormula);
+        }
+      }
+
+      // Target qualifier (Haste-to-both, Bleed-to-both, etc.)
+      var tgtQual = (eff.target === 'both') ? ' to both' : '';
+
+      // Crit tag — currently only Haste cards use this in practice.
+      var critTag = (+eff.crit) ? ' [Crit]: '+sv(+eff.crit)+'%' : '';
+
+      // Final composition.
+      var line = sdef.gain
+        ? fmt.gainKw(sdef.name, valWrapped, durDisplay)
+        : fmt.applyKw(sdef.name, valWrapped, durDisplay);
+
+      // Inject "to both" before the trailing period if present.
+      if(tgtQual){ line = line.replace(/\.$/, tgtQual+'.'); }
+      return line + critTag;
     }
 
     case 'cleanse': {
@@ -921,16 +1204,27 @@ function _effectLiveText(eff, actor, opponent, extraCrit, compoundN){
     case 'heal': {
       var healVal = +eff.amt || 0;
       var healFormula = null;
-      if(eff.stat && eff.stat !== 'none' && actor){
-        var hbase = healVal;
-        var hadd = Math.floor((actor[eff.stat] || 0) / (+eff.stat_div || 4));
-        healVal += hadd;
-        healFormula = hbase+' base   '+eff.stat.toUpperCase()+' '+(actor[eff.stat]||0)+' ÷ '+(+eff.stat_div||4)+' = +'+hadd+'   →   '+healVal;
+      if(eff.stat && eff.stat !== 'none'){
+        if(actor){
+          var hbase = healVal;
+          var hadd = Math.floor((actor[eff.stat] || 0) / (+eff.stat_div || 4));
+          healVal += hadd;
+          healFormula = hbase+' base   '+eff.stat.toUpperCase()+' '+(actor[eff.stat]||0)+' ÷ '+(+eff.stat_div||4)+' = +'+hadd+'   →   '+healVal;
+        } else {
+          // No-actor — inline formula like "Heal 5 + STR÷4 HP."
+          return fmt.heal(sv(healVal+' + '+fmt.statScale(eff.stat, eff.stat_div)));
+        }
       }
-      return 'Heal '+svf(healVal, healFormula)+' HP.';
+      return fmt.heal(svf(healVal, healFormula));
     }
 
-    case 'churn': return '[Churn] '+sv(+eff.count||1)+'.';
+    case 'churn': {
+      var cBase = +eff.count||1;
+      var cBonus = (actor && typeof getAura === 'function') ? (getAura(actor,'churnBonus')||0) : 0;
+      var cTotal = cBase + cBonus;
+      var cFormula = cBonus ? (cBase+' base   +   '+cBonus+' (Tending)   →   '+cTotal) : null;
+      return '[Churn] '+svf(cTotal, cFormula)+'.';
+    }
 
     case 'churn_all_damage': {
       var handSize = actor && actor.hand ? actor.hand.length : '?';
@@ -948,13 +1242,13 @@ function _effectLiveText(eff, actor, opponent, extraCrit, compoundN){
 
     case 'draw_cards': return 'Draw '+sv(+eff.count||1)+'.';
 
-    case 'gain_mana': return 'Gain '+sv(+eff.amt||0)+' mana.';
-    case 'frenzy': { var fn=+eff.stacks||1; return 'Gain '+sv(fn)+' [Frenzy] stack'+(fn>1?'s':'')+'.'; }
+    case 'gain_mana': return 'Gain '+fmt.mana(sv(+eff.amt||0))+'.';
+    case 'frenzy': { var fn=+eff.stacks||1; return fmt.gainKw('Frenzy', sv(fn)); }
     case 'compound_advance': return '[Compound] '+(eff.show||'')+(compoundN>0?' <span class="card-mod-text">×'+compoundN+'</span>':'');
     case 'compound_hand': return '[Compound] all cards in hand.';
     case 'buff_hand_attacks': return 'Attack cards in hand: +'+sv(+eff.amt||0)+' damage (next play).';
     case 'temper_universals': return 'Universal cards gain [Sorcery] [10]: Draw 1.';
-    case 'markup_conjure': return 'On [Crit]: conjure a [Banish] copy.';
+    case 'markup_conjure': return 'Conjure a [Banish] copy of the played card.';
     case 'dmg_self': return 'Deal '+sv(+eff.amt||0)+' damage to self.';
     case 'create_card_in_deck': {
       var cdc = CARDS[eff.cardId];
@@ -1026,11 +1320,77 @@ function _effectLiveText(eff, actor, opponent, extraCrit, compoundN){
   }
 }
 
+// Standard play-event triggers we render as inline notes on cards.
+// Reactive triggers (on_hit_while_shielded, on_pre_damage,
+// on_opponent_attack, on_opponent_dot_tick) are NOT included — they
+// don't fire from card plays so they don't belong on card text.
+var _INNATE_TRIGGER_EVENT_INFO = {
+  on_attack:     { label:'On attack',     applies: function(c){ return c && c.type === 'attack'; } },
+  on_card:       { label:'On play',       applies: function(){ return true; } },
+  on_draw:       { label:'On draw',       applies: function(){ return true; } },
+  on_discard:    { label:'On discard',    applies: function(){ return true; } },
+  on_hit:        { label:'On hit',        applies: function(c){ return c && c.type === 'attack'; } },
+  on_crit:       { label:'On crit',       applies: function(c){
+    if(!c) return false;
+    // Attacks can crit even without a printed %, via mods / auras /
+    // Shadow Mark. Non-damage cards only crit if they have a printed
+    // [Crit] field (generalised crit — Merchant's Rush Order pattern).
+    if(c.type === 'attack') return true;
+    return typeof _cardPrintedCrit === 'function' && _cardPrintedCrit(c) > 0;
+  } },
+  on_hand_empty: { label:'On hand empty', applies: function(){ return true; } },
+};
+
+// Render the actor's innate triggers as inline notes on the card —
+// so cards self-describe what their owner's innate grants them. E.g.
+// a Rat's on_attack → Frenzy shows on Rat attack cards as
+// "[On attack]: Gain 1 [Frenzy] stack." Player doesn't need to read
+// the innate description separately.
+function _innateCardTriggerLines(actor, card, opponent){
+  if(!actor || !card || !actor.creature || !actor.creature.innate) return [];
+  var innate = actor.creature.innate;
+  // Triggers: try inline first, then the protected INNATE_TRIGGERS registry.
+  var triggers = innate.triggers;
+  if(!triggers || !triggers.length){
+    triggers = (typeof INNATE_TRIGGERS !== 'undefined') ? INNATE_TRIGGERS[innate.id] : null;
+  }
+  if(!triggers || !triggers.length) return [];
+  var lines = [];
+  triggers.forEach(function(trigger){
+    var info = _INNATE_TRIGGER_EVENT_INFO[trigger.on];
+    if(!info) return;                  // reactive / unrecognized — skip
+    if(!info.applies(card)) return;    // event doesn't fit this card
+    if(!trigger.effect || !trigger.effect.type) return;
+    // Per-effect filter (e.g. temper_universals only touches universals,
+    // so its trigger note should only show on universal cards — not
+    // M'bur's own champion cards).
+    var effType = EFFECT_TYPES[trigger.effect.type];
+    if(effType && typeof effType.appliesToCard === 'function' && !effType.appliesToCard(card)) return;
+    // Try the live-text renderer; fall back to the registry's effectText
+    // if _effectLiveText returned the raw "type." default (i.e. no case).
+    var effText = _effectLiveText(trigger.effect, actor, opponent);
+    if(effText === trigger.effect.type + '.' &&
+       EFFECT_TYPES[trigger.effect.type] &&
+       typeof EFFECT_TYPES[trigger.effect.type].effectText === 'function'){
+      effText = EFFECT_TYPES[trigger.effect.type].effectText(trigger.effect);
+    }
+    if(!effText) return;
+    var condText = trigger.condition ? ' ('+String(trigger.condition).replace(/_/g,' ')+')' : '';
+    lines.push('['+info.label+condText+']: '+effText);
+  });
+  return lines;
+}
+
 // Generate full card display text from effects array
 // Returns array of {layer, html} objects
 function generateCardText(actor, cardId, item){
   var resolved = resolveCardEffects(actor, cardId, item);
-  var allEffects = resolved.effects.concat(resolved.appendedEffects);
+  // Mod-appended effects render via the 'mod' layer below (in green).
+  // Don't concat them here, or they'd double-render — once in their
+  // natural layer (sorcery / normal / hellbent), once via the mod
+  // layer. M'bur's universals showed duplicated "[Sorcery] 10: Draw 1"
+  // lines from exactly this bug.
+  var allEffects = resolved.effects;
   var opponent = actor ? getOpponent(actor) : null;
   // Live [Compound] count for this card (per-card-id, on the actor).
   var compoundN = (actor && actor._compound && cardId && actor._compound[cardId]) || 0;
@@ -1160,6 +1520,16 @@ function generateCardText(actor, cardId, item){
     sections.push({layer:'banish', html:'[Banish]'});
   }
 
+  // Innate trigger notes — show the actor's standard play-event
+  // triggers inline on cards they fit (e.g. Rat's on_attack frenzy
+  // shows on attack cards). Cards self-describe what the innate grants.
+  if(actor && card){
+    var innateLines = _innateCardTriggerLines(actor, card, opponent);
+    if(innateLines && innateLines.length){
+      sections.push({layer:'innate', html:'<span class="card-innate-text">'+innateLines.join('<br>')+'</span>'});
+    }
+  }
+
   return sections;
 }
 
@@ -1167,6 +1537,74 @@ function generateCardText(actor, cardId, item){
 function generateCardTextHTML(actor, cardId, item){
   var sections = generateCardText(actor, cardId, item);
   return sections.map(function(s){ return s.html; }).join('<div class="card-layer-sep"></div>');
+}
+
+// ══════════════════════════════════════════════════════════════
+// SHARED CARD-DISPLAY HELPERS
+// ══════════════════════════════════════════════════════════════
+// Single entry point used by deck_builder, town/bestiary, dialog
+// chips, and the audit page. Prefers the generator (effects[]
+// array) and falls back to the hand-written effect: string for
+// cards that haven't been migrated yet. Returns kw-processed HTML.
+//
+// As we migrate cards (drift → match → delete effect:), nothing
+// in those call sites needs to change — the helper transparently
+// routes to whichever source is available.
+//
+//   cardId — the card id
+//   opts:
+//     actor     — actor for live values; null/omit for design-time text
+//     item      — hand item (for crit bonuses, mods)
+//     joiner    — separator between effect lines (default '<br>')
+//     firstLine — return only the first chunk (compact tiles)
+// ══════════════════════════════════════════════════════════════
+function getCardDisplayHTML(cardId, opts){
+  opts = opts || {};
+  var c = (typeof CARDS !== 'undefined') ? CARDS[cardId] : null;
+  if(!c) return '';
+  var joiner = (opts.joiner !== undefined) ? opts.joiner : '<br>';
+  var sepRe = /<div\s+class="card-(?:line|layer)-sep"[^>]*><\/div>/g;
+  var out = null;
+
+  // Generator path
+  if(c.effects && c.effects.length){
+    try {
+      if(opts.firstLine){
+        var sections = generateCardText(opts.actor || null, cardId, opts.item || null);
+        if(sections && sections.length && sections[0] && sections[0].html){
+          out = sections[0].html.split(/<br\s*\/?>/i)[0];
+        }
+      } else {
+        var html = generateCardTextHTML(opts.actor || null, cardId, opts.item || null);
+        if(html){
+          out = (joiner === '<br>') ? html : html.replace(sepRe, joiner);
+        }
+      }
+    } catch(e){ /* fall through to static */ }
+  }
+
+  // Static fallback
+  if(out == null){
+    var raw = String(c.effect||'');
+    if(opts.firstLine) raw = raw.split('\n')[0];
+    out = raw.replace(/\n/g, joiner);
+  }
+  return (typeof renderKeywords === 'function') ? renderKeywords(out) : out;
+}
+
+// Plain-text variant — strips HTML, used for keyword scanning and
+// string matching (e.g., the deck builder's keyword tooltip list).
+function getCardDisplayText(cardId, opts){
+  opts = opts || {};
+  var c = (typeof CARDS !== 'undefined') ? CARDS[cardId] : null;
+  if(!c) return '';
+  if(c.effects && c.effects.length){
+    try {
+      var html = generateCardTextHTML(opts.actor || null, cardId, opts.item || null);
+      if(html) return String(html).replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+    } catch(e){ /* fall through */ }
+  }
+  return String(c.effect||'');
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1382,12 +1820,17 @@ var EFFECT_TYPES = {
       {id:'stat_div', label:'Stat divisor', type:'number', default:1, min:1}
     ],
     effectText: function(v){
-      var sourceMap = {hand_size:'hand size',discard_size:'discard pile',missing_hp:'missing HP',
-        shield:'[Shield]',missing_mana:'missing mana',cards_played:'cards played',
-        purged_count:'cards purged',
-        stat:(v.stat||'STR').toUpperCase()+'÷'+(v.stat_div||1)};
-      var src = sourceMap[v.source] || v.source;
-      return 'Deal ' + v.base + ' + ' + src + ' × ' + v.mult + ' damage.';
+      var base = +v.base || 0;
+      var mult = +v.mult || 1;
+      // Stat source — math notation (static equation convention).
+      if(v.source === 'stat'){
+        var statBody = (v.stat||'STR').toUpperCase()+'÷'+(v.stat_div||1);
+        if(mult > 1) statBody = mult+'×'+statBody;
+        if(base > 0) statBody = base+' + '+statBody;
+        return 'Deal '+statBody+' damage.';
+      }
+      // Dynamic source — English descriptive (dynamic equation convention).
+      return fmt.dmgScalingText(base, mult, v.source, v.check);
     },
     typeHint:'attack',
     run: function(v,ctx){
@@ -1581,7 +2024,11 @@ var EFFECT_TYPES = {
     label:'Discard Own', cat:'utility',
     desc:'Discard cards from own hand.',
     fields:[{id:'count', label:'Cards to discard (number or "all")', type:'text', default:'1'}],
-    effectText: function(v){ return 'Discard '+(v.count==='all'?'entire hand':v.count+' card'+(+v.count>1?'s':''))+'.'; },
+    effectText: function(v){
+      if(v.count === 'all') return 'Discard entire hand.';
+      var n = +v.count||1;
+      return 'Discard '+n+' '+fmt.pl(n,'card')+'.';
+    },
     typeHint:'utility',
     run: function(v,ctx){
       var actor = ctx.actor;
@@ -1733,22 +2180,35 @@ var EFFECT_TYPES = {
       {id:'dur',      label:'Dur (s)',    type:'number', default:8}
     ],
     effectText: function(v){
-      var targetStr = v.target === 'self' ? 'Gain' : 'Apply';
-      var valStr = '' + (v.value || 0);
-      if (v.stat && v.stat !== 'none') {
-        valStr = (v.value ? v.value + ' + ' : '') + v.stat.toUpperCase() + ' ÷ ' + (v.stat_div || 4);
+      var sdef = fmt.STATUS_FMT[v.status];
+      if(!sdef){
+        // Unknown status — fallback to capitalised name.
+        var fbName = (v.status||'').charAt(0).toUpperCase()+(v.status||'').slice(1);
+        var fbVerb = v.target === 'self' ? 'Gain' : 'Apply';
+        return fbVerb+' '+fbName+'.';
       }
-      var statusMap = {
-        poison: targetStr + ' [Poison] ' + valStr + ' for ' + v.dur + 's.',
-        burn:   targetStr + ' ' + valStr + ' [Burn] for ' + v.dur + 's.',
-        weaken: targetStr + ' [Weaken] for ' + v.dur + 's.',
-        slow:   targetStr + ' [Slow] for ' + v.dur + 's.',
-        haste:  'Gain [Haste] ' + valStr + '% for ' + v.dur + 's.',
-        thorns: 'Gain [Thorns] (' + valStr + ') for ' + v.dur + 's.',
-        dodge:  'Gain [Dodge].',
-        frenzy: 'Gain ' + valStr + ' [Frenzy] stack' + (+v.value > 1 ? 's' : '') + '.'
-      };
-      return statusMap[v.status] || (targetStr + ' ' + v.status + '.');
+      // Stun: fixed 1s mechanic; render that explicitly.
+      if(v.status === 'stun'){
+        return fmt.applyKw('Stun', null, 1);
+      }
+      // Compose value string (with optional stat scaling).
+      var valStr = null;
+      if(sdef.showVal){
+        if(sdef.asPct){
+          var rawV = (v.status === 'slow') ? (+v.value || 0.5) : (+v.value || 0);
+          valStr = fmt.pct(rawV);
+        } else if(v.stat && v.stat !== 'none'){
+          valStr = ((+v.value) ? v.value+' + ' : '')+fmt.statScale(v.stat, v.stat_div);
+        } else {
+          valStr = +v.value || 0;
+        }
+      }
+      var dur = sdef.showDur ? v.dur : null;
+      // Self-target overrides the sdef default (e.g. Apply [Poison] to self).
+      var useGain = sdef.gain || v.target === 'self';
+      return useGain
+        ? fmt.gainKw(sdef.name, valStr, dur)
+        : fmt.applyKw(sdef.name, valStr, dur);
     },
     typeHint: function(v){ return v.target === 'self' ? 'utility' : 'debuff'; },
     run: function(v,ctx){
@@ -1818,7 +2278,12 @@ var EFFECT_TYPES = {
           break;
 
         case 'burn':
-          _applyBurn(val, dur);
+          // Route by targetSide — _applyBurn pushes to enemy,
+          // _applyBurnToPlayer pushes to player. Previously this
+          // always called _applyBurn, which masked an inverted
+          // trigger config on Cursed Retribution.
+          if(targetSide === 'player') _applyBurnToPlayer(val, dur);
+          else _applyBurn(val, dur);
           addLog(ctx.cardName + '! Burn +' + val + '/s.', 'debuff');
           // [Accrue] hook — any Burn application (from any source) feeds
           // burn-triggered accrue cards held in either hand (e.g. Smite).
@@ -1848,8 +2313,14 @@ var EFFECT_TYPES = {
           var bleedList = gs.statusEffects[targetSide];
           var existingBleed = bleedList.findIndex(function(s){ return s.id === 'bleed'; });
           if(existingBleed !== -1){
-            bleedList[existingBleed].remaining = dur;
-            bleedList[existingBleed].maxRemaining = dur;
+            var _bs = bleedList[existingBleed];
+            _bs.remaining = dur;
+            _bs.maxRemaining = dur;
+            // Stronger Bleed replaces weaker (mirrors Burn).
+            if(val > (_bs.dpt||0)){
+              _bs.dpt  = val;
+              _bs.desc = 'Bleed: takes '+val+' damage each time a card is played.';
+            }
           } else {
             bleedList.push({id:'bleed', label:'Bleed', cls:'debuff', stat:'bleed',
               remaining:dur, maxRemaining:dur, dot:false, dpt:val,
@@ -2142,7 +2613,11 @@ var EFFECT_TYPES = {
     tooltipText: function(v){ return 'Churn '+v.count+': discard '+v.count+' random, draw '+v.count+'.'; },
     typeHint:'utility',
     run: function(v,ctx){
-      var n=+v.count;
+      // Tending (Groll innate) and any future relics that boost Churn
+      // contribute to the churnBonus aura key. Folded in here so every
+      // Churn source picks up the bonus.
+      var bonus = (ctx.actor && typeof getAura === 'function') ? (getAura(ctx.actor,'churnBonus')||0) : 0;
+      var n = (+v.count||0) + bonus;
       var discarded=0;
       if(ctx.isEnemy){
         // Churn enemy hand
@@ -2151,13 +2626,16 @@ var EFFECT_TYPES = {
           var ri=Math.floor(Math.random()*gs.enemyHand.length);
           var disc=gs.enemyHand.splice(ri,1)[0];
           gs.enemyDiscardPile.push(disc);
+          // Fire the discarded card's [Echo] in the enemy's frame.
+          var _discId = disc && (disc.id || disc);
+          if(typeof handleCardDiscard === 'function') handleCardDiscard(_discId, ctx.actor);
           // Fire on_discard innate triggers for enemy (e.g. Toxic Cloud)
           if(ctx.actor && typeof fireInnateTriggers === 'function'){
             fireInnateTriggers(ctx.actor, 'on_discard', {
               actor: ctx.actor,
               opponent: ctx.opponent || (typeof getOpponent === 'function' ? getOpponent(ctx.actor) : null),
               pdmg: function(b){ return Math.max(1,b); },
-              cardId: disc.id || disc
+              cardId: _discId
             });
           }
           discarded++;
@@ -2185,7 +2663,7 @@ var EFFECT_TYPES = {
           var disc=gs.hand.splice(ri,1)[0];
           if(!disc.ghost){
             gs.discardPile.push(disc.id);
-            handleCardDiscard(disc.id);
+            handleCardDiscard(disc.id, ctx.actor);
             // Fire on_discard innate triggers (e.g. Toxic Cloud)
             if(ctx.actor && typeof fireInnateTriggers === 'function'){
               fireInnateTriggers(ctx.actor, 'on_discard', {
@@ -2334,7 +2812,7 @@ var EFFECT_TYPES = {
       {id:'stat', label:'Stat scale', type:'select', default:'none', options:['none','str','agi','wis']},
       {id:'stat_div', label:'Stat div', type:'number', default:4, min:1}
     ],
-    effectText:  function(v){ return 'Heal '+v.amt+' HP.'; },
+    effectText:  function(v){ return fmt.heal(+v.amt||0); },
     tooltipText: function(v){ return ''; },
     typeHint:'defense',
     run: function(v,ctx){
@@ -2374,7 +2852,7 @@ var EFFECT_TYPES = {
     label:'Draw Cards', cat:'utility',
     desc:'Immediately draw extra cards into hand.',
     fields:[{id:'count', label:'Cards to draw', type:'number', default:2, min:1, max:4}],
-    effectText:  function(v){ return 'Draw '+v.count+' card'+(+v.count>1?'s':'')+'.'; },
+    effectText:  function(v){ var n=+v.count||1; return 'Draw '+n+' '+fmt.pl(n,'card')+'.'; },
     tooltipText: function(v){ return ''; },
     typeHint:'utility',
     run: function(v,ctx){
@@ -2439,7 +2917,7 @@ var EFFECT_TYPES = {
     label:'Frenzy', cat:'status',
     desc:'Gain stacking Frenzy — a manabound draw-speed buff.',
     fields:[{id:'stacks', label:'Stacks', type:'number', default:1}],
-    effectText: function(v){ var n=+v.stacks||1; return 'Gain '+n+' [Frenzy] stack'+(n>1?'s':'')+'.'; },
+    effectText: function(v){ return fmt.gainKw('Frenzy', +v.stacks||1); },
     typeHint:'utility',
     run: function(v,ctx){
       var actor = ctx.actor;
@@ -2718,7 +3196,7 @@ var EFFECT_TYPES = {
     label:'Discard Random', cat:'utility',
     desc:'Discard random cards from hand.',
     fields:[{id:'count', label:'Cards', type:'number', default:1}],
-    effectText: function(v){ return 'Discard '+v.count+' random card'+(+v.count>1?'s':'')+'.'; },
+    effectText: function(v){ var n=+v.count||1; return 'Discard '+n+' random '+fmt.pl(n,'card')+'.'; },
     typeHint:'utility',
     run: function(v,ctx){
       var actor = ctx.actor;
@@ -2771,7 +3249,7 @@ var EFFECT_TYPES = {
     label:'Gain Mana', cat:'utility',
     desc:'Restore mana to the caster.',
     fields:[{id:'amt',label:'Amount',type:'number',default:20}],
-    effectText: function(v){ return 'Gain '+(+v.amt||0)+' mana.'; },
+    effectText: function(v){ return 'Gain '+fmt.mana(+v.amt||0)+'.'; },
     typeHint:'utility',
     run: function(v,ctx){
       var amt = +v.amt || 0;
@@ -2833,21 +3311,24 @@ var EFFECT_TYPES = {
   //    Compounded copies of Shtole's Treasure ──
   vault_hoard: {
     label:'Vault Hoard', cat:'card_create',
-    desc:'Discard the hand; fill it with Ethereal Compounded Treasures.',
+    desc:'Discard the hand; create one Ethereal Compounded Treasure for each card discarded.',
     fields:[],
-    effectText: function(v){ return 'Discard hand. Fill with [Ethereal] Treasures.'; },
+    effectText: function(v){ return 'Discard your hand. For each card discarded this way, create an [Ethereal] {{vault_keeper_treasure}}.'; },
     typeHint:'utility',
     run: function(v,ctx){
       var actor = ctx.actor;
       if(!actor || !actor.hand) return;
-      // Discard the entire hand (ghosts vanish; real cards to the discard pile)
+      // Discard the entire hand (ghosts vanish; real cards to the discard
+      // pile). Count discards so we make one Treasure per card discarded
+      // — keeps the swap 1-for-1 instead of always topping up to HAND_SIZE.
+      var discarded = 0;
       while(actor.hand.length){
         var it = actor.hand.pop();
         if(it && !it.ghost && actor.discardPile) actor.discardPile.push(it.id);
+        discarded++;
       }
-      // Fill the hand with Ethereal, Compounded Treasures
-      var cap = (typeof HAND_SIZE === 'number') ? HAND_SIZE : 7;
-      for(var i=0;i<cap;i++){
+      // One Ethereal Compounded Treasure per card discarded this way.
+      for(var i=0;i<discarded;i++){
         actor.hand.push({ id:'vault_keeper_treasure', ghost:true, _new:true, _compounded:true });
       }
       if(actor.side === 'player'){
@@ -2891,6 +3372,13 @@ var EFFECT_TYPES = {
     desc:'Universal cards in hand gain a Draw-1 cantrip Sorcery.',
     fields:[],
     effectText: function(v){ return 'Universal cards gain [Sorcery] [10]: Draw 1.'; },
+    // Suppress the innate-trigger card-text note entirely. The temper's
+    // result is *already visible* on the affected card (the appended
+    // [Sorcery] [10]: Draw 1 renders in the green mod layer). An "[On
+    // draw]: Universal cards gain..." note on top just restates what
+    // the card already shows. General principle: effects that MODIFY
+    // the card don't need a trigger note; their result speaks for them.
+    appliesToCard: function(){ return false; },
     typeHint:'utility',
     run: function(v,ctx){
       var actor = ctx.actor;
@@ -2915,7 +3403,7 @@ var EFFECT_TYPES = {
     label:'Markup', cat:'card_create',
     desc:'On crit: conjure a sharper Banish copy of the card into the deck.',
     fields:[],
-    effectText: function(v){ return 'On [Crit]: conjure a [Banish] copy.'; },
+    effectText: function(v){ return 'Conjure a [Banish] copy of the played card.'; },
     typeHint:'utility',
     run: function(v,ctx){
       var actor = ctx.actor, cid = ctx.cardId;
@@ -3070,6 +3558,87 @@ var EFFECT_TYPES = {
 
 }; // end EFFECT_TYPES
 
+// ══════════════════════════════════════════════════════════════
+// EFFECT_TYPES registry validator
+// ══════════════════════════════════════════════════════════════
+// Runs once at load. Logs to console any EFFECT_TYPE missing
+// effectText() or run() — those produce blank cards / dead effects.
+// Forward-looking contract: any new effect type MUST supply both.
+// ══════════════════════════════════════════════════════════════
+function validateEffectRegistry(){
+  if(typeof EFFECT_TYPES === 'undefined') return;
+  var missing = { effectText:[], run:[] };
+  Object.keys(EFFECT_TYPES).forEach(function(k){
+    var et = EFFECT_TYPES[k];
+    if(!et) return;
+    if(typeof et.effectText !== 'function') missing.effectText.push(k);
+    if(typeof et.run !== 'function')        missing.run.push(k);
+  });
+  if(missing.effectText.length){
+    console.warn('[card_effects] effectText missing on: '+missing.effectText.join(', '));
+  }
+  if(missing.run.length){
+    console.warn('[card_effects] run missing on: '+missing.run.join(', '));
+  }
+  if(!missing.effectText.length && !missing.run.length){
+    console.log('[card_effects] registry validated — '+Object.keys(EFFECT_TYPES).length+' effect types, all complete.');
+  }
+}
+try { validateEffectRegistry(); } catch(e){ /* boot order: registry may not be reachable yet — ignore */ }
+
+// ══════════════════════════════════════════════════════════════
+// Card-text drift logger
+// ══════════════════════════════════════════════════════════════
+// For every card, generate text from its effects array and compare
+// against the hand-written `effect:` field. Logs any divergence —
+// the audit, but automated. Run after cards.js loads (setTimeout
+// defers past the current synchronous script chain).
+//
+// Enabled by default in dev. To silence:
+//   localStorage.setItem('fmtDriftLog', 'off')
+// To force-run after disabling:
+//   auditCardText()
+// ══════════════════════════════════════════════════════════════
+function auditCardText(){
+  if(typeof CARDS === 'undefined' || typeof generateCardText !== 'function'){
+    console.warn('[card-text-audit] CARDS or generateCardText unavailable — audit skipped');
+    return;
+  }
+  var stripHtml = function(s){ return String(s||'').replace(/<[^>]+>/g, ''); };
+  var norm      = function(s){ return stripHtml(s).replace(/\s+/g,' ').trim(); };
+  var drifts = [];
+  Object.keys(CARDS).forEach(function(id){
+    var c = CARDS[id];
+    if(!c || !c.effect || !c.effects) return; // skip cards without both
+    var sections;
+    try { sections = generateCardText(null, id, null); }
+    catch(e){ drifts.push({id:id, err:e.message}); return; }
+    if(!sections || !sections.length) return;
+    var gen = sections.map(function(s){ return s.html||''; }).join(' ');
+    var a = norm(gen);
+    var b = norm(c.effect);
+    if(a !== b) drifts.push({id:id, hand:b, gen:a});
+  });
+  if(!drifts.length){
+    console.log('[card-text-audit] '+Object.keys(CARDS).length+' cards — no drift.');
+    return;
+  }
+  console.group('[card-text-audit] '+drifts.length+' card(s) differ from generated text');
+  drifts.forEach(function(d){
+    if(d.err){ console.warn(d.id+' — generator error: '+d.err); return; }
+    console.warn(d.id+'\n  hand: '+d.hand+'\n  gen:  '+d.gen);
+  });
+  console.groupEnd();
+}
+// Defer to next tick so cards.js has loaded and CARDS is populated.
+// Skip entirely if the user has opted out.
+setTimeout(function(){
+  try {
+    if(typeof localStorage !== 'undefined' && localStorage.getItem('fmtDriftLog') === 'off') return;
+    auditCardText();
+  } catch(e){ /* localStorage unavailable in some contexts — fine */ }
+}, 200);
+
 // Build display text for a sorcery bonus given its field values
 
 // Build an inner effect object from sorcery fields, for dispatch through EFFECT_TYPES
@@ -3168,63 +3737,34 @@ function _updateFrenzyTag(side, stacks){
 }
 
 
-function executeEffects(effects, pdmgFn, cardId, isAuto, isGhost, markedCrit){
-  var s=gs.stats;
-  var ctx={
-    pdmg:pdmgFn, str:s.str, agi:s.agi, wis:s.wis,
-    isAuto:isAuto, isGhost:isGhost, markedCrit:markedCrit,
-    cardId:cardId,
-    cardName:(CARDS[cardId]&&CARDS[cardId].name)||cardId,
-    // Bridge: add actor/opponent refs if actors system is active
-    actor: (gs.actors && gs.actors.player) || null,
-    opponent: (gs.actors && gs.actors.enemy) || null,
-    isEnemy: false,
-  };
-  effects.forEach(function(e){
-    var def=EFFECT_TYPES[e.type];
-    if(def) def.run(e,ctx);
-    else addLog('Unknown effect type: '+e.type,'sys');
-  });
-}
-
-// Enemy-side effect execution — damage targets player, buffs target enemy
-// Used by new-format creature cards dispatched through CARDS + EFFECT_TYPES
-function executeEnemyEffects(effects, ePdmgFn, cardName, enemy, debuffDurMult){
-  debuffDurMult=debuffDurMult||1;
-  var eStats=enemy||{};
-  var ctx={
-    pdmg: ePdmgFn,
-    str:  eStats.str||10,
-    agi:  eStats.agi||10,
-    wis:  eStats.wis||10,
-    isAuto:false, isGhost:false, markedCrit:false,
-    cardName: cardName||'Enemy',
-    isEnemy: true,
-    debuffDurMult: debuffDurMult,
-    // Bridge: add actor/opponent refs if actors system is active
-    actor: (gs.actors && gs.actors.enemy) || null,
-    opponent: (gs.actors && gs.actors.player) || null,
-  };
-  effects.forEach(function(eff){
-    var def=EFFECT_TYPES[eff.type];
-    if(!def){ addLog('Unknown enemy effect: '+eff.type,'sys'); return; }
-    // For enemy execution: damage effects target player, debuffs target player,
-    // buffs/shields target enemy. The EFFECT_TYPES.run functions check ctx.isEnemy.
-    def.run(eff, ctx);
-  });
-}
-
 // Fires when a card enters the discard pile without being played.
 // Called from doDraw (hand overflow auto-play), forceAutoplay,
 // discard_hand effect, and activateInnate (Starfall discards).
-function handleCardDiscard(cardId){
-  var c=CARDS[cardId];
-  if(!c||!c.onDiscard||!c.onDiscard.length) return;
-  // Echo visual — burst at discard pile
+// Fires an [Echo]: runs card.onDiscard for the actor who owned the
+// discarded card. `actor` is optional — defaults to gs.actors.player
+// so legacy callers (player-side discards) keep working. The enemy
+// churn branch passes ctx.actor explicitly so an enemy's [Echo]
+// resolves in the enemy's frame (target:'self' = enemy hand, etc).
+function handleCardDiscard(cardId, actor){
+  var c = CARDS[cardId];
+  if(!c || !c.onDiscard || !c.onDiscard.length) return;
   spawnEchoFloat(cardId);
-  // Minimal pdmg for on-discard context — no Shadow Mark, no Bulwark bonuses
-  function discardPdmg(base){ return Math.max(1,base); }
-  executeEffects(c.onDiscard, discardPdmg, cardId, false, false, false);
+  actor = actor || (gs.actors && gs.actors.player);
+  if(!actor) return;
+  var opponent = (typeof getOpponent === 'function') ? getOpponent(actor) : null;
+  var ctx = {
+    actor: actor,
+    opponent: opponent,
+    cardId: cardId,
+    cardName: c.name,
+    str: actor.str, agi: actor.agi, wis: actor.wis,
+    pdmg: function(b){ return Math.max(1, b); },
+    isGhost: false, critBonus: 0,
+    isEnemy: actor.side === 'enemy',
+  };
+  c.onDiscard.forEach(function(eff){
+    if(EFFECT_TYPES[eff.type]) EFFECT_TYPES[eff.type].run(eff, ctx);
+  });
 }
 
 

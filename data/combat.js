@@ -510,119 +510,15 @@ function actorDiscard(actor, handIndex, silent) {
 }
 
 
-// Tick one actor's systems (called every frame, ms = elapsed)
-function tickActor(actor, ms) {
-  if (!actor || actor.hp <= 0) return;
-
-  // Mana regen
-  actor.manaAccum += actor.manaRegen * ms / 1000;
-  var manaGain = Math.floor(actor.manaAccum);
-  if (manaGain >= 1) {
-    actor.manaAccum -= manaGain;
-    actor.mana = Math.min(actor.maxMana, actor.mana + manaGain);
-  }
-
-  // Frenzy mana drain (3/s per stack)
-  if (actor.frenzyStacks > 0) {
-    var frenzyDrain = 3 * actor.frenzyStacks * ms / 1000;
-    actor.mana = Math.max(0, actor.mana - frenzyDrain);
-  }
-
-  // Draw timer
-  var interval = actor.drawInterval / actor.drawSpeedMult;
-  actor.drawTimer += ms;
-  if (actor.drawTimer >= interval) {
-    actor.drawTimer = 0;
-    actorDraw(actor, null, false);
-  }
-
-  // Status effect tick (timers, DoTs)
-  tickActorStatuses(actor, ms);
-
-  // Innate cooldown
-  if (actor.innateCooldown > 0) {
-    actor.innateCooldown = Math.max(0, actor.innateCooldown - ms);
-  }
-
-  // Manabound check
-  if (actor.mana <= 0) {
-    checkActorManabound(actor);
-  }
-}
-
-
-// Tick status effects for one actor
-function tickActorStatuses(actor, ms) {
-  for (var i = actor.statusEffects.length - 1; i >= 0; i--) {
-    var s = actor.statusEffects[i];
-
-    // DoT tick
-    if (s.dot && s.dpt) {
-      s.tickAcc = (s.tickAcc || 0) + ms;
-      var tickMs = s.tickMs || 1000;
-      while (s.tickAcc >= tickMs) {
-        s.tickAcc -= tickMs;
-        // DoTs bypass shield
-        actor.hp = Math.max(0, actor.hp - s.dpt);
-        spawnFloatNum(actor.side, '-' + s.dpt, false, 'dmg-num');
-      }
-    }
-
-    // Timer countdown
-    if (s.remaining !== undefined && s.remaining !== null) {
-      s.remaining -= ms;
-      if (s.remaining <= 0) {
-        var label = s.label;
-        var statusId = s.id;
-
-        // Shield expiry
-        if (statusId === 'shield') {
-          actor.shield = 0;
-          if (typeof s._onExpiry === 'function') s._onExpiry();
-        }
-
-        // Frenzy expiry — collapse all stacks
-        if (statusId === 'frenzy') {
-          actor.frenzyStacks = 0;
-          actor.drawSpeedMult = Math.max(1.0, actor.drawSpeedMult); // recalc needed
-          addLog('Frenzy collapsed!', 'sys');
-        }
-
-        actor.statusEffects.splice(i, 1);
-        removeTagByLabel(actor.side, label);
-      }
-    }
-  }
-}
-
-
-// Manabound check for one actor — purge Shield, Dodge, Frenzy, Thorns at 0 mana
-function checkActorManabound(actor) {
-  if (actor.mana > 0) return;
-  var purged = false;
-
-  for (var i = actor.statusEffects.length - 1; i >= 0; i--) {
-    var s = actor.statusEffects[i];
-    var isManabound = (s.id === 'shield' || s.id === 'frenzy' || s.stat === 'thorns' || s.id === 'dodge');
-    if (isManabound) {
-      var label = s.label || s.id;
-      if (s.id === 'shield') actor.shield = 0;
-      if (s.id === 'frenzy') {
-        actor.frenzyStacks = 0;
-        actor.drawSpeedMult = 1.0;
-      }
-      if (s.id === 'dodge') actor.dodge = false;
-      actor.statusEffects.splice(i, 1);
-      removeTagByLabel(actor.side, label);
-      purged = true;
-    }
-  }
-
-  if (purged) {
-    addLog('⚡ Manabound purge — mana depleted.', 'sys');
-  }
-}
-
+// Round 67s: removed tickActor() / tickActorStatuses() /
+// checkActorManabound() — they were a planned actor-based tick
+// system that was never wired into gameTick(). The live game runs
+// on game.js gameTick() with gs.statusEffects.player|enemy + the
+// per-side draw / manabound code there. Keeping the dead actor-
+// tick block around suggested two parallel combat systems existed,
+// which they never did. The actor frenzy + draw paths now go
+// through the shared _applyFrenzy / EFFECT_TYPES.frenzy added in
+// Round 67s and the gameTick frenzy drain.
 
 // ── LAYER 3: INNATE TRIGGER SYSTEM ────────────────────────────
 //
@@ -716,12 +612,21 @@ function actorActivateInnate(actor) {
   }
   if (!effectArr || !effectArr.length) return false;
 
-  // Check mana and cooldown
+  // Check mana, HP cost, and cooldown
   if (actor.mana < (innate.cost || 0)) return false;
   if (actor.innateCooldown > 0) return false;
+  // Self-sacrifice innates (the Cultist faction): cost is a % of MAX HP,
+  // gated exactly like mana — must have strictly MORE HP than the cost so
+  // it can never self-kill. Reusable for any blood-cost creature.
+  var hpCost = innate.costHp ? Math.max(1, Math.round(actor.maxHp * innate.costHp)) : 0;
+  if (hpCost && actor.hp <= hpCost) return false;
 
-  // Spend mana and start cooldown
+  // Pay costs and start cooldown
   actor.mana -= (innate.cost || 0);
+  if (hpCost) {
+    actor.hp = Math.max(1, actor.hp - hpCost);
+    if (typeof spawnFloatNum === 'function') spawnFloatNum(actor.side, '-' + hpCost, false, 'dmg-num');
+  }
   actor.innateCooldown = innate.cooldown || 0;
 
   // Execute innate effects
@@ -871,6 +776,17 @@ function playCardForActor(actor, cardIndex) {
 
   // Consume next_play mods after card is played
   consumeNextPlayMods(actor, item.id);
+
+  // Sap (Tree Sprite innate) — every [Ethereal] card the actor plays
+  // also Mana Burns the opponent for the aura value. Hook is item.ghost
+  // (the per-hand-item flag), not card.ethereal, so conjured-as-ghost
+  // copies of any card trigger it too.
+  if (item.ghost && typeof getAura === 'function') {
+    var sapBurn = getAura(actor, 'etherealManaBurn') || 0;
+    if (sapBurn > 0 && EFFECT_TYPES.mana_burn) {
+      EFFECT_TYPES.mana_burn.run({value: sapBurn}, ctx);
+    }
+  }
 
   // Fire post-play innate triggers (rewards like Frenzy)
   fireInnateTriggers(actor, 'on_card', ctx);

@@ -6,6 +6,25 @@ Browser-based real-time roguelite deckbuilder. Solo dev (J). Vanilla HTML/CSS/JS
 
 `../Noporogue Additional/Session_Notes.txt` — the real changelog. Other docs in that folder describe intent; **when code and docs disagree, code wins.** Append to Session_Notes after non-trivial changes under the current session header.
 
+**Before designing any creature, innate, or card, MANDATORY read:** `../Noporogue Additional/CREATURE_CARD_CREATION.txt` — the single master guide (philosophy, design order, power tiers, archetype catalogue, innate/kit/keyword rules, Queen rule, card-text conventions, effect-type vocab, validation checklist, worked example). It supersedes the older split docs (`Creature_Deck_Archetype_Design_Document.txt`, `Card_Design_Document.txt`, `Creature_Type_Reference.txt`, `Creature_Design_Rules.txt`) — those are pending retirement; do not edit them. `Creature_Design_Reference.txt` (per-creature status tracker) stays separate.
+
+## Creature & card design — hard constraints
+
+Full rationale in `CREATURE_CARD_CREATION.txt`. The non-negotiables:
+
+- **Role symmetry + playability.** There is no "enemy creature" vs "champion creature." Each creature is defined ONCE and must work in both seats — champion (player plays it) and opponent (player fights it). Same stats/innate/cards both ways. The only seat difference is leveling math (opponent uses the `growth` field; champion uses ascension). **Everything is playable except bosses** — the test for boss-only is "would a player wielding this kit be broken in a bad way?"
+- **Power tiers — PROVISIONAL (base total / growth total):** Common `~30–37 / 3–5`, Uncommon `~38–40 / 4–6`, Legendary `~50 / 6` ("topaz stats": primary 20–24, secondary 14–16, tertiary 10–12, growth 3/2/1). Descriptive of the current small roster, NOT law — guide-rails, refine as roster grows; Common/Uncommon boundary is soft. Tier = how STRONG the creature is (role-agnostic). **Bosses are NOT a quantified tier** — bespoke, norm-breaking, non-playable; defined ad hoc (we currently have none; dire_wolf 60/9 is just a strong normal creature).
+- **Stat conversions:** HP=STR×5, max mana=WIS×5, mana regen=WIS×0.8+2/s, draw interval=2000+6000/(1+AGI×0.08)ms. AGI's draw contribution is *diminishing* — AGI's real value is card-scaling + Crit/Haste/Frenzy multipliers, not raw draw speed.
+- **Stat floor: never below 10.** (plagued_one/infernal_beast predate this — grandfathered, don't copy.)
+- **Identity = the innate** (mechanically unique). Stats are NOT identity and NOT subject to the Queen rule. Archetype (beast=fast/Crit/simple, human=even/complex, construct=tanky/slow, caster=WIS engine) is a breakable creative SEED that suggests stat lean + flavor + complexity.
+- **Primary stat sets the kit family.** STR=bruiser/tank (damage, Shield, Bleed, Thorns), AGI=tempo (multi-hit, Crit, Haste, Frenzy, draw/Churn), WIS=caster/engine (mana, Sorcery, DoT, card-create, Ethereal). STR primaries run higher (24) — STR is a linear stat-stick (HP+flat damage) with no compounding loop, so it's point-compensated vs the AGI/WIS engines.
+- **Stat split is a PLAYABILITY choice (not identity/Queen).** Curve (20/14/10) over spike (30/10/10) or flat (17/17/16): a strong-but-capped primary keeps off-stat card splashing viable.
+- **Structure: 1 innate + 3 cards.** Innate is the thesis (Common = passive single-trigger; Legendary = active payoff with cost+cooldown that beats "just play cards", OR a passive engine). Cards = on-thesis / second-mode / flex.
+- **Keyword economy: one primary keyword, at most one bridge.** Three+ = soup. Pick bridges with real synergy (Churn+Drawn, Ethereal+Sorcery, Bleed+Drawn). Watch anti-synergies (Bleed+own fast draw wastes it; Frenzy on a speed-punished kit; Manabound buffs + mana-hungry Sorcery).
+- **Universal applicability.** Every card must be balanced standalone — any creature can wield any card. A card degenerate under a *foreign* innate is a bug. (Grub/Frenzy is the cautionary tale.)
+- **Queen rule (no strictly-better cards).** Two cards may share an effect only if they scale differently so each has a wielder where it wins. Same effect + same scaling stat + same divisor + same riders = dead card, don't ship. Differentiation axes (priority): scaling stat → divisor magnitude → static-vs-dynamic source → rider → cost. Hold cost symmetric when differentiating by stat. Flat/universal cards are the neutral baseline — keep only one flat version per effect; unique creature cards should scale.
+- **Base deck never has `[Ethereal]`** — only created/conjured cards are Ethereal.
+
 ## File architecture
 
 Root: `index.html` `style.css` `game.js` `town.js` `deck_builder.js` `audio.js` `init.js`.
@@ -48,6 +67,12 @@ Loading order set in `index.html`:
 
 ## Conventions worth knowing
 
+- **Card text — static vs dynamic equations.** Card mechanics that scale off something get rendered differently depending on what that something is:
+  - **Static** (fixed properties — stat scaling like `STR÷4`, `AGI÷2`): math notation. "Deal 10 + STR÷4 damage." Reads like a formula because it IS one — the stat doesn't change moment-to-moment.
+  - **Dynamic** (in-combat state — hand size, discard pile, missing HP, Shield, missing mana, cards played, cards purged): descriptive English. "Deal 1 damage per card in your discard pile." Reads like rules text because the value fluctuates during play and the player needs to see WHAT it's coming from.
+  - Both forms are produced automatically by `fmt.dmgScalingText` (dynamic) and the math-notation path in `dmg_scaling` (static). Do NOT hand-write `Deal 10 + hand size × 2 damage.` style for dynamic sources — let the generator emit the English form.
+  - Perspective: dynamic-source text flips between "your" (when `check:'self'`) and "the enemy's" (when `check:'opponent'`) automatically from `fmt.SOURCE_DESC`. Always from the caster's POV.
+- **Card text is generated from `effects:[]`, not hand-written.** New cards should NOT have an `effect:` field — the generator (via `_effectLiveText` → `fmt`) produces the canonical text. Existing cards with hand-written `effect:` strings appear as "drift" in `audit.html`; the migration is to delete the static string once the generator output is correct. Style rules live in code (`fmt` primitives), not in prose.
 - Palette: `#1a1208 / #120802` panels, `#2a1808 / #3a2010` borders, `#d4a843 / #c09030` gold, `#e8d7a8 / #c0a060` parchment. Stat colors: `#e88060` STR, `#9adc7e` AGI, `#9ad8e8` WIS.
 - Fonts: Cinzel headings, Crimson Text body, Press Start 2P pixel UI (combat).
 - Building panels: `.town-panel-bg` overlay (toggle `.show`), `85vh × min(1100px,95vw)`. Layout: NPC greeting → level/XP → tabs → content.

@@ -14,8 +14,8 @@ CREATURES.bandit = {
   
   altSprites: ['_alt_1'],
 			spriteWeights: [
-			  { sprite: 'default', weight: 98 },
-			  { sprite: '_alt_1',  weight: 2 }
+			  { sprite: 'default', weight: 70 },
+			  { sprite: '_alt_1',  weight: 30 }
 			],
 
   innate: {

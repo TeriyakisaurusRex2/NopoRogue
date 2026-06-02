@@ -664,7 +664,7 @@ button.locked-btn:hover{background:rgba(20,12,4,.6)!important;transform:none!imp
 /* Round 67p: card size bumped 158×220 → 200×280 (proportional ~5:7
    aspect). Pairs with the bumped hand-cards container height (260→340)
    and the fan-spacing bump in game.js (xOffset 150→175). */
-.card{width:240px;height:336px;background:linear-gradient(170deg,#251508,#140b02);border:1px solid #6a3f18;border-radius:9px;display:flex;flex-direction:column;cursor:pointer;user-select:none;transition:border-color .15s,box-shadow .2s ease,transform .25s ease-out,opacity .2s ease;transform-origin:bottom center;position:absolute;bottom:14px;left:50%;overflow:hidden;}
+.card{width:240px;height:336px;background-size:100% 100%;background-repeat:no-repeat;image-rendering:pixelated;cursor:pointer;user-select:none;transition:box-shadow .2s ease,transform .25s ease-out,opacity .2s ease;transform-origin:bottom center;position:absolute;bottom:14px;left:50%;overflow:hidden;}
 .card:hover{border-color:#d4a843;box-shadow:0 -12px 32px rgba(200,150,40,.3);}
 .card-arriving{opacity:0;pointer-events:none;transition:none;}
 .card.card-fadein{animation:cardFadeIn 0.25s ease-out forwards;}
@@ -676,15 +676,15 @@ button.locked-btn:hover{background:rgba(20,12,4,.6)!important;transform:none!imp
    renderHand) is always authoritative. */
 @keyframes cardFadeIn{0%{opacity:0;}100%{opacity:1;}}
 /* Title — fixed height, small font to fit Press Start 2P */
-.card-title{font-size:13px;color:#d4a843;text-align:center;padding:6px 6px 3px;letter-spacing:.2px;line-height:1.3;border-bottom:none;min-height:28px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
-.card-identity{font-size:10px;color:#7a5828;text-align:center;padding:0 6px 4px;letter-spacing:.5px;line-height:1.2;border-bottom:1px solid #3a1e08;flex-shrink:0;}
+.card-title{position:absolute;top:16px;left:9px;right:9px;height:30px;display:flex;align-items:center;justify-content:center;font-family:'Press Start 2P',monospace;color:#e8d7a8;text-align:center;line-height:1.3;overflow:hidden;z-index:3;}
+.card-identity{display:none;}
 /* Art — reduced so effect area gets more room */
-.card-art{height:76px;display:flex;align-items:center;justify-content:center;font-size:48px;background:rgba(0,0,0,.25);border-bottom:1px solid #2a1506;flex-shrink:0;position:relative;overflow:hidden;}
+.card-art{position:absolute;top:56px;left:50%;transform:translateX(-50%);width:96px;height:96px;display:flex;align-items:center;justify-content:center;overflow:hidden;z-index:2;}
 .card-champ-art{position:absolute;bottom:0;left:50%;transform:translateX(-50%) scaleX(-1);height:100%;width:auto;image-rendering:pixelated;pointer-events:none;}
-.card-emoji-icon{position:relative;z-index:1;}
+.card-emoji-icon{position:relative;z-index:1;font-size:54px;line-height:1;}
 /* Bespoke per-card art (assets/icons/cards/<id>.png, 64x64). Absolutely
    centred so the opacity:0 emoji fallback span doesn't shift it. */
-.card-art-sprite{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:64px;height:64px;image-rendering:pixelated;z-index:2;}
+.card-art-sprite{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:96px;height:96px;image-rendering:pixelated;z-index:2;}
 /* Combat screen background */
 #game-screen{transition:background-image .4s ease;}
 #game-screen::before{content:'';position:absolute;inset:0;background:rgba(0,0,0,.45);pointer-events:none;z-index:0;}
@@ -695,29 +695,29 @@ button.locked-btn:hover{background:rgba(20,12,4,.6)!important;transform:none!imp
 #game-screen .combat-body{transition:filter .22s ease;}
 #game-screen.combat-paused::before{backdrop-filter:grayscale(1) blur(2px);-webkit-backdrop-filter:grayscale(1) blur(2px);background:rgba(0,0,0,.62);}
 #game-screen.combat-paused .combat-body{filter:grayscale(.95) blur(2px);}
-.card-mana-badge{position:absolute;bottom:4px;right:5px;font-size:11px;color:#4060a0;background:rgba(0,0,0,.7);border:1px solid #2a3060;border-radius:3px;padding:0 5px;line-height:20px;}
+.card-mana-badge{position:absolute;top:3px;right:3px;font-size:11px;color:#9ad8e8;background:rgba(0,0,0,.7);border:1px solid #2a3060;border-radius:3px;padding:0 5px;line-height:20px;z-index:4;}
 .card-unique{display:none;}
 .card-mana{display:none;}
 .card-explain{display:none;}
-.card-effect{font-size:14px;color:#c0a060;text-align:left;padding:7px 9px 4px;line-height:1.6;flex:1;overflow-y:auto;overflow-x:hidden;scrollbar-width:none;word-break:break-word;}
+.card-effect{position:absolute;top:163px;left:19px;right:19px;bottom:16px;font-family:'Press Start 2P',monospace;color:#c0a060;text-align:left;line-height:1.9;overflow:hidden;word-break:break-word;z-index:3;}
 .stat-val{color:#70a0e0;font-weight:500;}
 /* Round 67r: a computed value with a formula breakdown — dotted underline
    marks it as hoverable; the kw-tooltip handler shows the breakdown. */
 .stat-formula{border-bottom:1px dotted #70a0e0;cursor:help;}
-.card-type-bar{padding:5px 8px;border-radius:0 0 8px 8px;flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:6px;background:rgba(0,0,0,.3);min-height:26px;}
+.card-type-bar{display:none;}
 .card-tag{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:3px;opacity:.85;}
 .card-tag-damage{background:rgba(100,20,20,.6);}
 .card-tag-debuff{background:rgba(80,50,10,.6);}
 .card-tag-buff{background:rgba(20,70,20,.6);}
 .card-tag-unique{background:rgba(60,20,100,.6);}
-.card.ghost{border-color:#602a9a;background:linear-gradient(170deg,#180828,#0e0518);}
-.card.ghost:hover{border-color:#c090f0;}
+.card.ghost{background-image:url(assets/ui/card_frame_ethereal.png);}
+.card.ghost:hover{filter:brightness(1.1);}
 .card.selected-card{border-color:#d4a843;border-width:2px;}
 .card *{pointer-events:none;}
 .ghost-badge{position:absolute;top:2px;right:2px;font-size:8px;color:#a060d0;pointer-events:none;}
 .card.new-card{animation:cardDraw .3s ease-out;}
-.card.conjured-card{border-color:rgba(60,160,160,.5);background:linear-gradient(170deg,#081815,#041210);box-shadow:0 0 8px rgba(60,160,160,.15);}
-.card.conjured-card:hover{border-color:rgba(100,200,200,.7);}
+.card.conjured-card{background-image:url(assets/ui/card_frame_conjured.png);box-shadow:0 0 8px rgba(60,160,160,.15);}
+.card.conjured-card:hover{box-shadow:0 0 12px rgba(60,180,170,.3);}
 .card-line-sep{height:1px;margin:3px 4px;background:rgba(180,140,60,.2);border-radius:1px;}
 .card-layer-sep{height:2px;margin:5px 4px;background:rgba(180,140,60,.4);border-radius:1px;}
 /* Round 67o: opacity-only (was translateY/scale, which fought with the
@@ -756,10 +756,10 @@ button.locked-btn:hover{background:rgba(20,12,4,.6)!important;transform:none!imp
 .empty-slot{width:158px;height:220px;border:1px dashed #2a1808;border-radius:9px;opacity:.12;flex-shrink:0;}
 
 /* ── CARD STAT IDENTITY BORDER ── */
-.card-stat-str{border-left:3px solid #c0392b;}
-.card-stat-agi{border-left:3px solid #27ae60;}
-.card-stat-wis{border-left:3px solid #2980b9;}
-.card-stat-none{border-left:3px solid #444;}
+.card-stat-str{background-image:url(assets/ui/card_frame_str.png);}
+.card-stat-agi{background-image:url(assets/ui/card_frame_agi.png);}
+.card-stat-wis{background-image:url(assets/ui/card_frame_wis.png);}
+.card-stat-none{background-image:url(assets/ui/card_frame_gold.png);}
 /* ── KEYWORD TAGS in card text ── */
 .kw{display:inline;font-weight:bold;border-radius:2px;padding:0 2px;margin:0 1px;cursor:help;white-space:nowrap;font-size:inherit;}
 .kw-burn{background:#7a2200;color:#ffaa66;}
@@ -775,6 +775,11 @@ button.locked-btn:hover{background:rgba(20,12,4,.6)!important;transform:none!imp
 .kw-webbed{background:#1a1a1a;color:#888888;}
 .kw-echo{background:#1a3d2a;color:#66ddaa;}
 .card-mod-text{color:#60c060;}
+/* Innate-trigger notes on cards — actor's standard play-event triggers
+   (Rat's on_attack frenzy, Snake's on_attack poison, etc.) render here
+   so cards self-describe what the innate grants. Italic + teal to read
+   as "passive, not the card's own effect." */
+.card-innate-text{color:#7ec0b8;font-style:italic;}
 .card-inactive{opacity:0.4;}
 /* ── KEYWORD TOOLTIP ── */
 #kw-tooltip{position:fixed;z-index:9999;background:#120a02;border:1px solid #c09030;border-radius:5px;padding:6px 10px;max-width:180px;font-size:10px;color:#d4a843;pointer-events:none;opacity:0;transition:opacity .15s;line-height:1.5;}
@@ -940,8 +945,7 @@ button.locked-btn:hover{background:rgba(20,12,4,.6)!important;transform:none!imp
    The two card-* font-size locks are kept because card text is
    tuned to fit specific card dimensions.
    :root --ts default kept at 1 for any historical references. */
-.card-title{font-size:13px!important;}
-.card-type-bar{font-size:11px!important;}
+.card-title{font-size:12px!important;}
 .log-entry{font-size:clamp(7px, calc(10px * var(--ts)), 14px)!important;}
 /* Tiny: keep card/innate readable, don't shrink below usable */
 /* Round 67p: removed clamp throttles on ov-title / ov-sub —
@@ -1056,14 +1060,14 @@ button.locked-btn:hover{background:rgba(20,12,4,.6)!important;transform:none!imp
 /* Read-only deck view — 2-pane: card grid + the editor's inspector. */
 .dv-body{display:flex;flex:1;min-height:0;overflow:hidden;}
 .dv-body > #dv-grid{flex:1;padding:14px 22px;}
-.dv-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px;padding:0 24px 8px;overflow-y:auto;flex:1;scrollbar-width:thin;scrollbar-color:#2a1808 transparent;justify-items:center;}
+.dv-grid{display:grid;grid-template-columns:repeat(auto-fill,180px);justify-content:center;gap:16px;padding:0 24px 8px;overflow-y:auto;flex:1;scrollbar-width:thin;scrollbar-color:#2a1808 transparent;justify-items:center;}
 .dv-wrap{display:flex;flex-direction:column;align-items:center;gap:4px;}
 /* Round 67q: .card is absolute-positioned for the combat hand-fan
    layout. Inside the deck view grid, that breaks the layout — cards
    stack on top of each other at bottom:14px;left:50%. Reset to flow
    normally here. width/height still come from .card. */
-.dv-grid .card{position:static;bottom:auto;left:auto;transform:none;cursor:default;}
-.dv-grid .card:hover{transform:none;}
+.dv-grid .card{position:absolute;top:0;left:0;bottom:auto;transform:scale(0.75);transform-origin:top left;pointer-events:none;cursor:default;}
+.dv-grid .card:hover{transform:scale(0.75);}
 .dv-cnt{font-size:11px;color:#9a7030;letter-spacing:1px;}
 /* Filler card first-time glow */
 @keyframes fillerGlow{0%,100%{box-shadow:0 0 8px rgba(200,80,20,.4);}50%{box-shadow:0 0 20px rgba(240,120,40,.8),0 0 40px rgba(200,80,20,.4);}}
@@ -1383,9 +1387,14 @@ button.locked-btn:hover{background:rgba(20,12,4,.6)!important;transform:none!imp
 /* Inspector — borrowed-card banner */
 .de-insp-shared-banner{font-size:12px;color:#d4a843;background:rgba(40,24,8,.5);border:1px solid #5a3a1a;border-left:3px solid #c09030;border-radius:3px;padding:8px 12px;letter-spacing:.5px;}
 .de-insp-source{font-size:11px;color:#7a6030;font-style:italic;letter-spacing:.5px;}
-.de-avail-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(186px,1fr));gap:14px;overflow-y:auto;flex:1;scrollbar-width:thin;scrollbar-color:#2a1808 transparent;align-content:start;min-height:0;}
-.de-acard{border-radius:6px;border:1px solid #2a1808;background:#1a1208;cursor:pointer;padding:11px;text-align:center;transition:all .15s;position:relative;border-top:3px solid #5a4020;}
-.de-acard:hover{border-color:#5a3a1a;transform:translateY(-1px);box-shadow:0 2px 8px rgba(0,0,0,.3);}
+.de-avail-grid{display:grid;grid-template-columns:repeat(auto-fill,180px);justify-content:center;gap:16px;overflow-y:auto;flex:1;scrollbar-width:thin;scrollbar-color:#2a1808 transparent;align-content:start;min-height:0;}
+.de-acard{position:relative;width:180px;height:252px;cursor:pointer;transition:transform .15s;}
+.de-acard:hover{transform:translateY(-3px);}
+/* Grid cards are real frame cards scaled down to a collection-thumbnail
+   size: the wrapper is the scaled box, the .card sits top-left at scale and
+   passes clicks through to the wrapper (inspect); buttons sit on top. */
+.de-acard .card{position:absolute;top:0;left:0;bottom:auto;transform:scale(0.75);transform-origin:top left;pointer-events:none;}
+.de-acard.de-acard-selected{outline:2px solid #d4a843;outline-offset:3px;border-radius:9px;}
 .de-acard.de-acard-champ{border-top-color:#7858a0;}
 .de-acard.de-acard-champ:hover{border-color:#8060c0;}
 .de-acard.de-acard-locked{opacity:.45;cursor:default;}
@@ -1413,7 +1422,7 @@ button.locked-btn:hover{background:rgba(20,12,4,.6)!important;transform:none!imp
 .de-lock-badge{position:absolute;top:5px;left:5px;font-size:10px;background:rgba(10,5,2,.8);border:1px solid #4a2010;border-radius:3px;padding:2px 6px;color:#7a3010;}
 .de-buy-badge{position:absolute;top:5px;right:5px;font-size:10px;background:rgba(10,8,2,.8);border:1px solid #5a4010;border-radius:3px;padding:2px 6px;color:#c09030;cursor:pointer;}
 .de-maxed-badge{position:absolute;top:5px;right:5px;font-size:10px;background:rgba(10,8,2,.8);border:1px solid #3a2010;border-radius:3px;padding:2px 6px;color:#5a4020;}
-.de-copy-count{font-size:10px;color:#5a4020;margin-top:2px;}
+.de-copy-count{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);font-size:11px;color:#e8d7a8;background:rgba(8,4,2,.88);border:1px solid #5a3a1a;border-radius:3px;padding:2px 9px;pointer-events:none;z-index:5;}
 /* Right — card inspector */
 .de-inspector{width:380px;flex-shrink:0;border-left:1px solid #2a1808;background:rgba(6,3,1,.4);overflow-y:auto;scrollbar-width:thin;scrollbar-color:#2a1808 transparent;padding:22px;}
 .de-insp-card{display:flex;justify-content:center;margin-bottom:18px;}
