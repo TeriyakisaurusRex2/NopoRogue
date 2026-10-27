@@ -1,0 +1,8 @@
+{
+  "name": "Noporogue",
+  "description": "Real-time roguelite deckbuilder in the browser. Fight creatures, then play as them.",
+  "type": "play",
+  "category": "game",
+  "created": "2026-04-13",
+  "tags": ["roguelite", "deckbuilder", "real-time"]
+}
